@@ -212,18 +212,27 @@ gate PASSES:
 
 ## Artifact record
 
-Fill this in from the Actions checksum job after a successful run:
+Produced by Actions run
+[36755155238](https://github.com/kdho77/VertexSlice/actions/runs/36755155238)
+on `windows-2022` from commit `a3732051731caed69186334dfbb764445b667386`.
+The job is marked **failure** only because the post-step
+`hashFiles('deps/**')` cache save timed out after the packages were already
+uploaded. Do not treat that red X as a missing installer.
 
-| Field | Value |
-|---|---|
-| Download | *(pending successful `windows-2022` run — first attempt failed, see above)* |
-| Source commit | *(from `BASELINE.txt` / `GITHUB_SHA`)* |
-| SHA-256 | *(from `SHA256SUMS.txt`)* |
+| Field | Installer (NSIS) | Portable zip |
+|---|---|---|
+| File | `ShidaoSlicer_Windows_Installer_V2.3.2-dev.exe` | `ShidaoSlicer_Windows_V2.3.2-dev_portable.zip` |
+| Download | [artifact 11121367048](https://github.com/kdho77/VertexSlice/actions/runs/36755155238/artifacts/11121367048) | [artifact 11121481978](https://github.com/kdho77/VertexSlice/actions/runs/36755155238/artifacts/11121481978) |
+| Size | 187,806,463 bytes | 209,402,102 bytes |
+| SHA-256 | `d7092e070c5a640f5b3c0c1056573a0e2c7367aea9f7f7c89a34d830180af4f7` | `fffc9803836c2f8922df18120efae75121b29d3ff6a62f0c717315937f26ce9e` |
 
-Until that job finishes, there is **no** Windows package from this fork’s
-Actions. The parent nightly at
+Checksum bundle (same hashes + `BASELINE.txt`):
+[artifact 11121586956](https://github.com/kdho77/VertexSlice/actions/runs/36755155238/artifacts/11121586956).
+
+Verified on download from that run: installer is a PE32 NSIS package; the
+portable zip contains `orca-slicer.exe`, `OrcaSlicer.dll`, `LICENSE.txt`, and
+`resources/profiles/IdeaFormer/` (IR3 V2 machine/process/filament JSONs).
+
+The parent nightly at
 https://github.com/tommasobbianchi/ShidaoSlicer/releases/tag/nightly
-(`ShidaoSlicer_Windows_Installer_V2.3.2-dev.exe`, published 2026-06-01) proves
-the **upstream-of-this-fork** Windows pipeline once worked. It is **not** a
-build of `kdho77/VertexSlice` at `b66d4e29ca` and must not be used as this
-baseline artifact.
+is **not** this baseline.
