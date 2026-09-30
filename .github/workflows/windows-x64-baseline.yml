@@ -1,0 +1,183 @@
+# Windows x64 baseline for this fork.
+#
+# Demonstrated blocker (run 36754464383): windows-latest now ships VS 2026
+# (MSBuild 18). The reusable Build-all path pins CMake ~3.28, which has no
+# "Visual Studio 18 2026" generator, then build_release_vs.bat still exits 0
+# and packs an empty deps zip. The slicer job then dies on fail-on-cache-miss.
+#
+# This workflow is self-contained so we can pin the documented toolchain
+# (VS 2022 + build_release_vs2022.bat) without changing the full Linux/macOS
+# matrix or adding a cron.
+name: Windows x64 baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      force-deps:
+        description: 'Rebuild Windows dependencies even if a cache hit exists'
+        type: boolean
+        default: false
+  push:
+    paths:
+      - '.github/workflows/windows-x64-baseline.yml'
+      - 'build_release_vs2022.bat'
+
+concurrency:
+  group: windows-x64-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build_windows:
+    name: Build Windows x64 (VS2022)
+    runs-on: windows-2022
+    timeout-minutes: 360
+    env:
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          lfs: 'true'
+
+      - uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~3.28.0"
+
+      - name: Setup MSBuild (VS 2022)
+        uses: microsoft/setup-msbuild@v2
+        with:
+          vs-version: '[17.0,18.0)'
+
+      - name: Restore deps cache
+        id: deps-cache
+        uses: actions/cache@v4
+        with:
+          path: deps/build/OrcaSlicer_dep
+          key: windows-2022-orcaslicer-deps-${{ hashFiles('deps/**') }}
+
+      - name: Build deps (VS 2022)
+        if: ${{ steps.deps-cache.outputs.cache-hit != 'true' || inputs.force-deps }}
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install strawberryperl --no-progress
+          cmd /c "build_release_vs2022.bat deps"
+          if ($LASTEXITCODE -ne 0) { throw "build_release_vs2022.bat deps failed ($LASTEXITCODE)" }
+          if (-not (Test-Path 'deps\build\OrcaSlicer_dep')) {
+            throw "deps/build/OrcaSlicer_dep is missing after a successful-looking deps step"
+          }
+
+      - name: Require deps prefix
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'deps\build\OrcaSlicer_dep')) {
+            throw "deps/build/OrcaSlicer_dep is missing (cache empty and deps step did not run or failed)"
+          }
+
+      - name: Setup Python for support_preprocess freeze
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Freeze support_preprocess (Windows)
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --upgrade pip
+          python -m pip install `
+            "pyinstaller==6.20.0" "numpy==2.4.6" "scipy==1.17.1" `
+            "trimesh==4.12.2" "manifold3d==3.5.0" "networkx==3.6.1" "shapely==2.1.2"
+          pyinstaller --onefile --name support_preprocess `
+            --collect-all scipy --collect-all trimesh `
+            --collect-all manifold3d --collect-all networkx `
+            --hidden-import scipy.sparse.csgraph --hidden-import shapely `
+            validation/support_preprocess.py
+          New-Item -ItemType Directory -Force -Path resources\validation | Out-Null
+          Copy-Item dist\support_preprocess.exe resources\validation\support_preprocess.exe
+          & resources\validation\support_preprocess.exe --help | Out-Null
+
+      - name: Install NSIS
+        run: choco install nsis --no-progress
+
+      - name: Get version
+        shell: pwsh
+        run: |
+          $versionContent = Get-Content version.inc -Raw
+          if ($versionContent -match 'set\(SoftFever_VERSION "(.*?)"\)') {
+              $ver = "V$($matches[1])"
+          } else {
+              throw "SoftFever_VERSION not found in version.inc"
+          }
+          echo "ver=$ver" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          echo "date=$(Get-Date -Format 'yyyyMMdd')" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+
+      - name: Build slicer (VS 2022)
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmd /c "build_release_vs2022.bat slicer"
+          if ($LASTEXITCODE -ne 0) { throw "build_release_vs2022.bat slicer failed ($LASTEXITCODE)" }
+
+      - name: Create NSIS installer
+        shell: pwsh
+        working-directory: ${{ github.workspace }}/build
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cpack -G NSIS
+          if ($LASTEXITCODE -ne 0) { throw "cpack NSIS failed ($LASTEXITCODE)" }
+
+      - name: Assemble release files and SHA-256
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          "source_commit=$env:GITHUB_SHA" | Set-Content release\BASELINE.txt
+          "repository=$env:GITHUB_REPOSITORY" | Add-Content release\BASELINE.txt
+          "ref=$env:GITHUB_REF" | Add-Content release\BASELINE.txt
+          $exes = Get-ChildItem -Path build -Filter 'ShidaoSlicer*.exe' -File
+          if (-not $exes) { throw "No ShidaoSlicer*.exe installer in build/" }
+          foreach ($exe in $exes) { Copy-Item $exe.FullName release\ }
+          if (-not (Test-Path 'build\OrcaSlicer')) { throw "build/OrcaSlicer portable tree is missing" }
+          $portable = "release\ShidaoSlicer_Windows_$($env:ver)_portable.zip"
+          if (Test-Path 'C:\Program Files\7-Zip\7z.exe') {
+            & 'C:\Program Files\7-Zip\7z.exe' a -tzip $portable '.\build\OrcaSlicer\*'
+          } else {
+            Compress-Archive -Path 'build\OrcaSlicer\*' -DestinationPath $portable
+          }
+          Get-ChildItem release -File | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)"
+          } | Set-Content release\SHA256SUMS.txt
+          Get-Content release\SHA256SUMS.txt
+          Get-ChildItem release | Format-Table Name, Length
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v5
+        with:
+          name: ShidaoSlicer_Windows_${{ env.ver }}
+          path: ${{ github.workspace }}/release/ShidaoSlicer*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Windows portable zip
+        uses: actions/upload-artifact@v5
+        with:
+          name: ShidaoSlicer_Windows_${{ env.ver }}_portable
+          path: ${{ github.workspace }}/release/ShidaoSlicer_Windows_${{ env.ver }}_portable.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload checksums
+        uses: actions/upload-artifact@v5
+        with:
+          name: ShidaoSlicer_Windows_baseline_checksums
+          path: ${{ github.workspace }}/release/
+          if-no-files-found: error
+          retention-days: 14

@@ -6,6 +6,10 @@ set WP=%CD%
 if "%1"=="pack" (
     setlocal ENABLEDELAYEDEXPANSION 
     cd %WP%/deps/build
+    if not exist OrcaSlicer_dep (
+        echo ERROR: deps/build/OrcaSlicer_dep is missing — deps build did not produce a prefix
+        exit /b 1
+    )
     for /f "tokens=2-4 delims=/ " %%a in ('date /t') do set build_date=%%c%%b%%a
     echo packing deps: OrcaSlicer_dep_win64_!build_date!_vs2022.zip
 
@@ -49,7 +53,9 @@ echo on
 REM Set minimum CMake policy to avoid <3.5 errors
 set CMAKE_POLICY_VERSION_MINIMUM=3.5
 cmake ../ -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=%build_type%
+if errorlevel 1 exit /b 1
 cmake --build . --config %build_type% --target deps -- -m
+if errorlevel 1 exit /b 1
 @echo off
 
 if "%1"=="deps" exit /b 0
@@ -63,9 +69,13 @@ cd %build_dir%
 echo on
 set CMAKE_POLICY_VERSION_MINIMUM=3.5
 cmake .. -G "Visual Studio 17 2022" -A x64 -DORCA_TOOLS=ON %SIG_FLAG% -DCMAKE_BUILD_TYPE=%build_type%
+if errorlevel 1 exit /b 1
 cmake --build . --config %build_type% --target ALL_BUILD -- -m
+if errorlevel 1 exit /b 1
 @echo off
 cd ..
 call scripts/run_gettext.bat
+if errorlevel 1 exit /b 1
 cd %build_dir%
 cmake --build . --target install --config %build_type%
+if errorlevel 1 exit /b 1
