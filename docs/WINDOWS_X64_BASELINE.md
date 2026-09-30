@@ -121,22 +121,24 @@ local VS2022 machine.
 Workflow: `.github/workflows/windows-x64-baseline.yml`
 
 - Trigger: **Actions → Windows x64 baseline → Run workflow**, or a push that
-  changes that workflow file.
-- Runner: `windows-latest` (GitHub-hosted, no paid/larger runners).
+  changes that workflow file / `build_release_vs2022.bat`.
+- Runner: **`windows-2022`** (GitHub-hosted, no paid/larger runners).
+  `windows-latest` currently exposes VS 2026; CMake 3.28 cannot generate for
+  it. First attempt (run
+  [36754464383](https://github.com/kdho77/VertexSlice/actions/runs/36754464383))
+  failed that way: `build_release_vs.bat` picked VS 2026, cmake printed the
+  generator list, the bat still exited 0, and the slicer job died on
+  `fail-on-cache-miss`.
+- Toolchain: `build_release_vs2022.bat` + MSBuild 17.x. The bat now fails if
+  cmake/build/install fails or if `pack` is asked to zip a missing prefix.
 - Platforms: Windows x64 only. No Linux/macOS/Flatpak matrix. No cron.
-- Reuses `.github/workflows/build_check_cache.yml` → `build_deps.yml` →
-  `build_orca.yml`. Dependencies are cached on `hashFiles('deps/**')`.
-- First run on this fork will **build deps from scratch** (hours). Later runs
-  should hit cache.
-- Packaging (already in `build_orca.yml` / CMake):
+- Dependencies are cached on `hashFiles('deps/**')`. First run builds deps
+  from scratch (hours). Later runs should hit cache.
+- Packaging:
   - Installer: `cpack -G NSIS` → `ShidaoSlicer_Windows_Installer_V<ver>.exe`
-  - Portable: contents of `build/OrcaSlicer` (zipped by the checksum job)
-- A follow-up job uploads `ShidaoSlicer_Windows_baseline_checksums` with
-  `SHA256SUMS.txt` and `BASELINE.txt` (exact `GITHUB_SHA`).
-
-If Actions has never been enabled on this fork, GitHub will not register or
-run the workflow. Enable Actions for `kdho77/VertexSlice`, then re-run
-**Windows x64 baseline**.
+  - Portable: `ShidaoSlicer_Windows_V<ver>_portable.zip`
+- Artifacts: installer, portable zip, and
+  `ShidaoSlicer_Windows_baseline_checksums` (`SHA256SUMS.txt` + `BASELINE.txt`).
 
 ### B. Local Windows x64 (VS2022)
 
@@ -214,7 +216,7 @@ Fill this in from the Actions checksum job after a successful run:
 
 | Field | Value |
 |---|---|
-| Download | *(Actions artifact URL for `ShidaoSlicer_Windows_V*` / installer exe)* |
+| Download | *(pending successful `windows-2022` run — first attempt failed, see above)* |
 | Source commit | *(from `BASELINE.txt` / `GITHUB_SHA`)* |
 | SHA-256 | *(from `SHA256SUMS.txt`)* |
 
