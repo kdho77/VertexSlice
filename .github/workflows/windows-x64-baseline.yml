@@ -12,6 +12,10 @@
 #
 # This workflow uses windows-2022 + build_release_vs2022.bat + CMake 3.28
 # and fails the job if cmake/build/install/packaging does not produce files.
+#
+# Demonstrated blocker (runs 36761113701 / 36755155238): actions/cache
+# key ${{ hashFiles('deps/**') }} exceeds the 120s hashFiles limit on this
+# tree. Use git tree SHAs of deps/ and deps_src/ instead.
 name: Windows x64 baseline
 
 on:
@@ -55,14 +59,22 @@ jobs:
         with:
           vs-version: '[17.0,18.0)'
 
+      - name: Compute deps cache key
+        id: deps-key
+        shell: bash
+        run: |
+          deps=$(git rev-parse HEAD:deps)
+          deps_src=$(git rev-parse HEAD:deps_src)
+          echo "key=windows-2022-orcaslicer-deps-${deps}-${deps_src}" >> "$GITHUB_OUTPUT"
+          echo "deps tree=${deps}"
+          echo "deps_src tree=${deps_src}"
+
       - name: Restore deps cache
         id: deps-cache
         uses: actions/cache@v4
         with:
           path: deps/build/OrcaSlicer_dep
-          key: windows-2022-orcaslicer-deps-${{ hashFiles('deps/**') }}
-          restore-keys: |
-            windows-2022-orcaslicer-deps-
+          key: ${{ steps.deps-key.outputs.key }}
 
       - name: Build deps (VS 2022)
         if: ${{ steps.deps-cache.outputs.cache-hit != 'true' || inputs.force-deps }}

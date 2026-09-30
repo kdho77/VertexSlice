@@ -146,8 +146,11 @@ Workflow: `.github/workflows/windows-x64-baseline.yml`
   does not produce a `ShidaoSlicer*.exe`. The `.bat` itself is unchanged so
   this PR does not trip `build_all.yml`’s path filter.
 - Platforms: Windows x64 only. No Linux/macOS/Flatpak matrix. No cron.
-- Dependencies are cached on `hashFiles('deps/**')`. First run builds deps from
-  scratch (hours). Later runs should hit cache.
+- Dependencies are cached on the git tree SHAs of `deps/` and `deps_src/`.
+  `hashFiles('deps/**')` is **not** used: runs 36761113701 and 36755155238
+  failed after the deps compile because that expression exceeds GitHub’s 120s
+  `hashFiles` limit. First run still builds deps from scratch (hours). Later
+  runs with unchanged `deps/` + `deps_src/` should hit cache.
 - After packaging, CI flattens the **system** IR3 V2 presets, slices
   `validation/test_models/box_10x10x10.stl`, and runs the belt gate. That step
   is `continue-on-error` so a known CLI `unprintable_height` failure cannot
