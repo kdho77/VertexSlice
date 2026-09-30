@@ -66,7 +66,7 @@ class GcodeValidator:
     def __init__(self, filepath, verbose=False):
         self.filepath = filepath
         self.verbose = verbose
-        self.lines = Path(filepath).read_text().splitlines()
+        self.lines = Path(filepath).read_text(encoding="utf-8", errors="replace").splitlines()
         self.results = []
         self.layer_count = 0
         self.slicer = detect_slicer(self.lines)

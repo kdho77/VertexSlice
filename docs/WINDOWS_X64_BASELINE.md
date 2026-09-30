@@ -103,9 +103,9 @@ Klipper config; they are **not** invented here:
 Moonraker URL. Do not treat Device-tab upload as configured until a real host
 is entered.
 
-`use_relative_e_distances` is `1` while start G-code emits `M82`. Whether the
-slicer later switches to `M83` is **not** re-verified until a G-code from this
-commit exists.
+`use_relative_e_distances` is `1` while start G-code emits `M82`. The Windows
+CLI G-code from this commit **does** switch to `M83` immediately after the
+start block (verified in `plate_1.gcode`).
 
 ## What this environment could and could not check
 
@@ -113,9 +113,9 @@ commit exists.
 |---|---|
 | Profile files exist and match C++ belt keys | **Done** (static; flatten audit) |
 | Firmware cfg axis limits and `FMS_*` macros | **Done** (static, from checked-in `printer.cfg`) |
-| Windows x64 compile / NSIS / portable package | **CI only** — this host is Linux |
-| Application launch (GUI) | **Not performed** on this host |
-| Slice + export from this commit | **CI step** `scripts/windows_ir3_cli_verify.py` after the Windows binary exists |
+| Windows x64 compile / NSIS / portable package | **Done** — Actions run 36774518246 |
+| Application launch (GUI / wizard) | **Not performed** (`orca-slicer.exe --help` and CLI slice only) |
+| Slice + export from this commit | **Done** (headless CLI on the Windows runner) |
 | Belt-aware preview | **Not performed** |
 | Physical print / firmware flash / host connect | **Not performed** (out of scope) |
 
@@ -234,18 +234,43 @@ gate PASSES:
 
 ## Artifact record
 
-Fill this in from the Actions checksum job after a successful run:
+From Actions run
+[36774518246](https://github.com/kdho77/VertexSlice/actions/runs/36774518246)
+at commit `2466fd38633a239b89f9152cd7f2d2b740fded09`. Artifacts expire after
+14 days. Login to GitHub is required to download.
 
 | Field | Value |
 |---|---|
-| Download | *(pending successful `windows-2022` run)* |
-| Source commit | *(from `BASELINE.txt` / `GITHUB_SHA`)* |
-| SHA-256 | *(from `SHA256SUMS.txt`)* |
+| Run | https://github.com/kdho77/VertexSlice/actions/runs/36774518246 |
+| Installer | [ShidaoSlicer_Windows_V2.3.2-dev](https://github.com/kdho77/VertexSlice/actions/runs/36774518246/artifacts/11129399931) (`ShidaoSlicer_Windows_Installer_V2.3.2-dev.exe`) |
+| Portable | [ShidaoSlicer_Windows_V2.3.2-dev_portable](https://github.com/kdho77/VertexSlice/actions/runs/36774518246/artifacts/11129389815) (`ShidaoSlicer_Windows_V2.3.2-dev_portable.zip`) |
+| Checksums + IR3 verify | [ShidaoSlicer_Windows_baseline_checksums](https://github.com/kdho77/VertexSlice/actions/runs/36774518246/artifacts/11130195839) |
+| Source commit | `2466fd38633a239b89f9152cd7f2d2b740fded09` |
+| SHA-256 installer | `cf4a31775215940394fabe41a5f7aacf19e6754921579309dad3d515153b1118` |
+| SHA-256 portable | `84bb11de55edac21eb5c6949a23248d9033a703b66f8082b2f527c680ec775db` |
 
-Until that job finishes, there is **no** Windows package from this branch.
 The parent nightly at
 https://github.com/tommasobbianchi/ShidaoSlicer/releases/tag/nightly
-(`ShidaoSlicer_Windows_Installer_V2.3.2-dev.exe`, published 2026-06-01) proves
-the **upstream-of-this-fork** Windows pipeline once worked. It is **not** a
-build of `kdho77/VertexSlice` at `b66d4e29ca` and must not be used as this
-baseline artifact.
+is **not** this baseline.
+
+### CLI slice + gate (this commit’s Windows binary)
+
+`scripts/windows_ir3_cli_verify.py` sliced `validation/test_models/box_10x10x10.stl`
+with the flattened system IR3 V2 machine / 0.20 mm process / Generic PLA
+presets. Header: belt=1, gantry 45°, layer step 0.283 mm, 70 layers.
+Start/end blocks are the IdeaFormer IR3 V2 macros (`FMS_on` / `FMS_off`,
+`BED_MESH_CLEAR`, bed 75 °C, nozzle 220/215 °C). First extrusion Y is
+0.30–0.70 mm (would satisfy R7). `M83` follows the start `M82`.
+
+CI’s gate step **crashed on Windows cp1252** (em-dash in the start-G-code
+comment). Re-run on Linux with UTF-8: **WARNING** (exit 2), not BLOCKED.
+
+| Rule | Result |
+|---|---|
+| R1–R5, R8, R9 | PASS |
+| R6 Y-hops | WARN (ratio 0.29 < 0.5) |
+| R7 first-layer Y | WARN (no Y on the first `;LAYER_CHANGE` block; first real print Y is 0.3 mm) |
+| R11 z_mach | WARN — 2 **travel** moves, no extrusion below the belt. Worst is end-G-code `G1 Y50` after `G28` (intentional nozzle lift), not a mid-print dive |
+
+Do **not** treat this as a physical-print PASS. Re-run the gate on any G-code
+you export from the GUI. Do not print if the gate is FAIL/BLOCKED.
