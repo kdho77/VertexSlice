@@ -1,0 +1,86 @@
+# Windows x64 baseline for this fork.
+# The Linux cloud environment cannot produce VS2022/NSIS packages, so this
+# workflow is the supported path. It is manual (and self-triggering when this
+# file changes) to avoid the full Linux/macOS/Flatpak matrix and the daily cron
+# in build_all.yml. Reuses the existing cache + deps + slicer reusable jobs.
+name: Windows x64 baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      force-deps:
+        description: 'Rebuild Windows dependencies even if a cache hit exists'
+        type: boolean
+        default: false
+  push:
+    paths:
+      - '.github/workflows/windows-x64-baseline.yml'
+
+concurrency:
+  group: windows-x64-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build_windows:
+    name: Build Windows x64
+    uses: ./.github/workflows/build_check_cache.yml
+    with:
+      os: windows-latest
+      force-build: ${{ inputs.force-deps || false }}
+    secrets: inherit
+
+  checksums:
+    name: Checksums and portable zip
+    needs: build_windows
+    if: ${{ !cancelled() && success() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: ShidaoSlicer_Windows_*
+          path: artifacts
+
+      - name: Zip portable tree and write SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          echo "source_commit=${GITHUB_SHA}" > release/BASELINE.txt
+          echo "repository=${GITHUB_REPOSITORY}" >> release/BASELINE.txt
+          echo "ref=${GITHUB_REF}" >> release/BASELINE.txt
+          echo "=== downloaded artifacts ==="
+          find artifacts -maxdepth 3 -type f | sort
+          # Installer (NSIS). CPack name is ShidaoSlicer_Windows_Installer_V*.
+          shopt -s nullglob
+          for exe in artifacts/ShidaoSlicer_Windows_*/*.exe; do
+            cp -v "$exe" release/
+          done
+          # Portable payload is uploaded as an unzipped tree.
+          for dir in artifacts/ShidaoSlicer_Windows_*_portable; do
+            [ -d "$dir" ] || continue
+            name="$(basename "$dir").zip"
+            (cd "$dir" && zip -rq "../../release/${name}" .)
+          done
+          if [ ! -e release/*.exe ] && [ ! -e release/*.zip ]; then
+            echo "ERROR: no Windows installer or portable package was produced" >&2
+            ls -laR artifacts || true
+            exit 1
+          fi
+          (cd release && sha256sum * > SHA256SUMS.txt)
+          echo "=== release ==="
+          ls -lh release
+          echo "=== SHA-256 ==="
+          cat release/SHA256SUMS.txt
+
+      - name: Upload checksum bundle
+        uses: actions/upload-artifact@v5
+        with:
+          name: ShidaoSlicer_Windows_baseline_checksums
+          path: release/
+          if-no-files-found: error
+          retention-days: 14
