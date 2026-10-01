@@ -274,3 +274,8 @@ comment). Re-run on Linux with UTF-8: **WARNING** (exit 2), not BLOCKED.
 
 Do **not** treat this as a physical-print PASS. Re-run the gate on any G-code
 you export from the GUI. Do not print if the gate is FAIL/BLOCKED.
+
+Do not print the 0.4 mm / PLA `plate_1.gcode` on a 1.0 mm / 75D TPU machine.
+Plain-language R6/R7/R11 notes, live-macro checklist, and the files needed
+before a compatible TPU test are in
+[`docs/IR3_V2_PRE_PRINT_GATES.md`](IR3_V2_PRE_PRINT_GATES.md).
