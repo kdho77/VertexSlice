@@ -126,7 +126,10 @@ not output from this commit:
 | File | Gate |
 |---|---|
 | `validation/orca_gcode/cube_aligned_final.gcode` | **FAIL** (R4, R7, R11) |
+| `validation/orca_gcode/cube_petg_final.gcode` | **FAIL** (R1, R4, R9) |
 | `test_cube_belt.gcode` | **FAIL** (R1, R2, R7, R9, R11) |
+| `Cube_PLA_10x10x10.gcode` | **FAIL** (R1, R2, R7, R9, R11) — Cartesian-like Y≈1000 / negative Z |
+| IdeaMaker `validation/reference_gcode/default-box_*.gcode` | Gate skips IdeaMaker (`SLICER-SKIP`) |
 
 Do **not** send those samples to the printer. Do **not** treat a gate PASS on
 IdeaMaker reference files as a ShidaoSlicer verification.
@@ -137,8 +140,14 @@ IdeaMaker reference files as a ShidaoSlicer verification.
 
 Workflow: `.github/workflows/windows-x64-baseline.yml`
 
-- Trigger: **Actions → Windows x64 baseline → Run workflow**, or a push that
-  changes that workflow / `scripts/windows_ir3_cli_verify.py`.
+- Trigger: **Actions → Windows x64 baseline → Run workflow**, or a **push to
+  `main`** that changes that workflow / `scripts/windows_ir3_cli_verify.py`.
+  Feature-branch pushes and pull requests do not run this job (no duplicate
+  PR validation). First attempt on `windows-latest` (run
+  [36754464383](https://github.com/kdho77/VertexSlice/actions/runs/36754464383))
+  failed because `build_release_vs.bat` picked VS 2026, cmake printed the
+  generator list, the bat still exited 0, and the slicer job died on
+  `fail-on-cache-miss`.
 - Runner: **`windows-2022`** (GitHub-hosted, no paid/larger runners).
   `windows-latest` currently exposes VS 2026; CMake 3.28 cannot generate for it.
 - Toolchain: documented `build_release_vs2022.bat` + MSBuild 17.x. The workflow
@@ -146,22 +155,26 @@ Workflow: `.github/workflows/windows-x64-baseline.yml`
   does not produce a `ShidaoSlicer*.exe`. The `.bat` itself is unchanged so
   this PR does not trip `build_all.yml`’s path filter.
 - Platforms: Windows x64 only. No Linux/macOS/Flatpak matrix. No cron.
+- Job timeout: **240 minutes** (documented long-build exception: measured
+  ~2 h with a deps cache hit, plus headroom for a cold-cache deps compile).
 - Dependencies are cached on the git tree SHAs of `deps/` and `deps_src/`.
   `hashFiles('deps/**')` is **not** used: runs 36761113701 and 36755155238
   failed after the deps compile because that expression exceeds GitHub’s 120s
   `hashFiles` limit. First run still builds deps from scratch (hours). Later
   runs with unchanged `deps/` + `deps_src/` should hit cache.
-- After packaging, CI flattens the **system** IR3 V2 presets, slices
-  `validation/test_models/box_10x10x10.stl`, and runs the belt gate. That step
-  is `continue-on-error` so a known CLI `unprintable_height` failure cannot
-  hide a successful installer. Read `ir3_verify/REPORT.txt` before claiming a
-  slice PASS.
+- After packaging, installer and portable artifacts are uploaded, then CI
+  flattens the **system** IR3 V2 presets, slices
+  `validation/test_models/box_10x10x10.stl`, and runs the belt gate. That
+  verify step is a **hard job failure** (no `continue-on-error`). A gate or
+  CLI failure does not hide a green build. Checksums / `ir3_verify/` still
+  upload on failure so the report is available. Read `ir3_verify/REPORT.txt`
+  before claiming a slice PASS.
 - Packaging:
   - Installer: `cpack -G NSIS` → `ShidaoSlicer_Windows_Installer_V<ver>.exe`
   - Portable: `ShidaoSlicer_Windows_V<ver>_portable.zip`
 - Artifacts: installer, portable zip, and
   `ShidaoSlicer_Windows_baseline_checksums` (`SHA256SUMS.txt` + `BASELINE.txt`
-  + `ir3_verify/`).
+  + `ir3_verify/`). Retention is **7 days**.
 
 ### B. Local Windows x64 (VS2022)
 
@@ -200,9 +213,10 @@ Do these on a Windows x64 machine. Stop before any USB/network print.
    (or eSun PLA White). Confirm Printer settings show belt / 45° / Klipper.
    If the default filament name does not resolve, pick the IR3 V2 PLA preset
    explicitly (see profile inconsistency above).
-3. **Import** — `inverted_L.3mf` (machine already baked) or
-   `validation/test_models/box_10x10x10.stl`. Place the keel / first contact
-   toward low Y. Do not rotate to “flat on a Cartesian bed.”
+3. **Import** — `inverted_L.3mf` (machine already baked),
+   `validation/test_models/box_10x10x10.stl`, or `test_cube_20mm.stl`. Place
+   the keel / first contact toward low Y. Do not rotate to “flat on a
+   Cartesian bed.”
 4. **Slice** — slice plate 0. If the GUI reports unprintable height, that is a
    known belt vs `printable_height` tension; the GUI path is supposed to allow
    the print button (README). Record the exact message if it still blocks.
@@ -236,8 +250,8 @@ gate PASSES:
 
 From Actions run
 [36774518246](https://github.com/kdho77/VertexSlice/actions/runs/36774518246)
-at commit `2466fd38633a239b89f9152cd7f2d2b740fded09`. Artifacts expire after
-14 days. Login to GitHub is required to download.
+at commit `2466fd38633a239b89f9152cd7f2d2b740fded09`. New baseline artifacts
+expire after 7 days. Login to GitHub is required to download.
 
 | Field | Value |
 |---|---|
@@ -252,6 +266,30 @@ at commit `2466fd38633a239b89f9152cd7f2d2b740fded09`. Artifacts expire after
 The parent nightly at
 https://github.com/tommasobbianchi/ShidaoSlicer/releases/tag/nightly
 is **not** this baseline.
+
+### Prior Windows packages (PR #1, not this survivor)
+
+Produced by Actions run
+[36755155238](https://github.com/kdho77/VertexSlice/actions/runs/36755155238)
+on `windows-2022` from commit `a3732051731caed69186334dfbb764445b667386`.
+The job is marked **failure** only because the post-step
+`hashFiles('deps/**')` cache save timed out after the packages were already
+uploaded. Do not treat that red X as a missing installer. Same-day “Build all”
+also compiled Windows on this commit (duplicate Windows work; see PR notes).
+
+| Field | Installer (NSIS) | Portable zip |
+|---|---|---|
+| File | `ShidaoSlicer_Windows_Installer_V2.3.2-dev.exe` | `ShidaoSlicer_Windows_V2.3.2-dev_portable.zip` |
+| Download | [artifact 11121367048](https://github.com/kdho77/VertexSlice/actions/runs/36755155238/artifacts/11121367048) | [artifact 11121481978](https://github.com/kdho77/VertexSlice/actions/runs/36755155238/artifacts/11121481978) |
+| Size | 187,806,463 bytes | 209,402,102 bytes |
+| SHA-256 | `d7092e070c5a640f5b3c0c1056573a0e2c7367aea9f7f7c89a34d830180af4f7` | `fffc9803836c2f8922df18120efae75121b29d3ff6a62f0c717315937f26ce9e` |
+
+Checksum bundle (same hashes + `BASELINE.txt`):
+[artifact 11121586956](https://github.com/kdho77/VertexSlice/actions/runs/36755155238/artifacts/11121586956).
+
+Verified on download from that run: installer is a PE32 NSIS package; the
+portable zip contains `orca-slicer.exe`, `OrcaSlicer.dll`, `LICENSE.txt`, and
+`resources/profiles/IdeaFormer/` (IR3 V2 machine/process/filament JSONs).
 
 ### CLI slice + gate (this commit’s Windows binary)
 

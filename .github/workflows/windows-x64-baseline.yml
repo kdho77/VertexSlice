@@ -16,6 +16,17 @@
 # Demonstrated blocker (runs 36761113701 / 36755155238): actions/cache
 # key ${{ hashFiles('deps/**') }} exceeds the 120s hashFiles limit on this
 # tree. Use git tree SHAs of deps/ and deps_src/ instead.
+#
+# CI usage (internal Bot CI usage policy, commit b5959d5):
+# - push is limited to main so feature-branch pushes and open PRs do not
+#   duplicate this ~2 h Windows job. Use workflow_dispatch for an explicit run.
+# - concurrency cancel-in-progress is safe: this workflow only builds,
+#   packages, verifies, and uploads disposable artifacts. No publish, signing,
+#   notarize, or release steps.
+# - timeout-minutes is a documented long-build exception (measured ~2 h with a
+#   deps cache hit; 240 minutes is that duration plus cold-cache headroom).
+# - IR3 CLI verify is a hard job failure (no continue-on-error). Installer and
+#   portable artifacts still upload if packaging succeeded.
 name: Windows x64 baseline
 
 on:
@@ -26,6 +37,8 @@ on:
         type: boolean
         default: false
   push:
+    branches:
+      - main
     paths:
       - '.github/workflows/windows-x64-baseline.yml'
       - 'scripts/windows_ir3_cli_verify.py'
@@ -41,7 +54,10 @@ jobs:
   build_windows:
     name: Build Windows x64 (VS2022)
     runs-on: windows-2022
-    timeout-minutes: 360
+    # Long-build exception (internal Bot CI usage policy, commit b5959d5):
+    # measured Windows baseline is ~2 h with a deps cache hit; first-run deps
+    # compile is longer. 240 minutes is 2 h plus headroom for a cold cache.
+    timeout-minutes: 240
     env:
       CMAKE_POLICY_VERSION_MINIMUM: "3.5"
     steps:
@@ -182,9 +198,24 @@ jobs:
           Get-Content release\SHA256SUMS.txt
           Get-ChildItem release | Format-Table Name, Length
 
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v5
+        with:
+          name: ShidaoSlicer_Windows_${{ env.ver }}
+          path: ${{ github.workspace }}/release/ShidaoSlicer*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Windows portable zip
+        uses: actions/upload-artifact@v5
+        with:
+          name: ShidaoSlicer_Windows_${{ env.ver }}_portable
+          path: ${{ github.workspace }}/release/ShidaoSlicer_Windows_${{ env.ver }}_portable.zip
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Headless IR3 V2 slice + gate
         id: ir3-verify
-        continue-on-error: true
         shell: pwsh
         working-directory: ${{ github.workspace }}
         run: |
@@ -204,23 +235,8 @@ jobs:
           }
           Get-Content release\BASELINE.txt
 
-      - name: Upload Windows installer
-        uses: actions/upload-artifact@v5
-        with:
-          name: ShidaoSlicer_Windows_${{ env.ver }}
-          path: ${{ github.workspace }}/release/ShidaoSlicer*.exe
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload Windows portable zip
-        uses: actions/upload-artifact@v5
-        with:
-          name: ShidaoSlicer_Windows_${{ env.ver }}_portable
-          path: ${{ github.workspace }}/release/ShidaoSlicer_Windows_${{ env.ver }}_portable.zip
-          if-no-files-found: error
-          retention-days: 14
-
       - name: Upload checksums and IR3 verify
+        if: success() || failure()
         uses: actions/upload-artifact@v5
         with:
           name: ShidaoSlicer_Windows_baseline_checksums
@@ -229,4 +245,4 @@ jobs:
             ${{ github.workspace }}/release/BASELINE.txt
             ${{ github.workspace }}/release/ir3_verify/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7

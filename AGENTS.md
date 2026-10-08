@@ -21,3 +21,15 @@ The history favors concise, sentence-style subject lines with optional issue ref
 
 ## Security & Configuration Tips
 Follow `SECURITY.md` for vulnerability reporting. Keep API tokens and printer credentials out of tracked configs; use `sandboxes/` for experimental settings. When touching third-party code in `deps_src/`, record the upstream commit or release in your PR description and run the relevant platform build script to confirm integration.
+
+## CI usage rules
+Pointer for bots and workers. Source: internal Bot CI usage policy, commit b5959d5. Do not keep a competing copy of that policy here.
+
+- Batch related edits, validate locally in the worker, then push one coherent checkpoint. Do not use GitHub Actions as the first debugger.
+- One active implementation branch/PR per objective unless separation is justified. Check existing PRs and runs before opening another.
+- Keep incomplete work in a draft PR. Draft status does not skip Actions; the workflow must implement the intended behavior.
+- Do not create empty commits, toggle draft/ready to retrigger checks, or rebase solely to start CI.
+- Do not retry blindly. Read the failed job first. Deterministic failures need a fix; evidenced transient runner failures get at most one retry of the same revision.
+- No routine CI polling or manager status loops. Record commands, results, the tested commit, and unresolved failures in the PR.
+- Keep required check names stable. Do not rename a required job to dodge branch protection.
+- Do not manufacture a green PR: no skip-CI directives, `continue-on-error` on required gates, blanket success, removed protections, or disabled security/schema checks. If a check is advisory, give it its own clearly named non-required job rather than masking failure.
