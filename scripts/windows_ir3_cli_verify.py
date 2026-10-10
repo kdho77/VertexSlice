@@ -5,8 +5,9 @@ Uses the just-built orca-slicer.exe and the system IdeaFormer IR3 V2 presets
 (flattened; the CLI does not follow `inherits`). Does not upload to a printer.
 
 Exit codes:
-  0 = G-code produced (gate result is recorded, even if BLOCKED)
-  2 = slicer missing / no G-code / unexpected error
+  0 = G-code produced and belt gate PASS
+  1 = gate FAIL (unsafe G-code; workflow must fail)
+  2 = gate WARN, or slicer missing / no G-code / timeout / unexpected error
 """
 from __future__ import annotations
 
@@ -140,10 +141,13 @@ def main() -> int:
     (outdir / "gate.txt").write_text(gate.stdout + "\n" + gate.stderr)
     if gate.returncode == 0:
         gate_status = "PASS"
+        exit_code = 0
     elif gate.returncode == 2:
         gate_status = "WARN"
+        exit_code = 2
     else:
         gate_status = "FAIL"
+        exit_code = 1
     lines += [
         f"gate_status={gate_status}",
         f"gate_exit={gate.returncode}",
@@ -159,7 +163,7 @@ def main() -> int:
         "elapsed_s": round(elapsed, 1),
     }
     (outdir / "report.json").write_text(json.dumps(summary, indent=2) + "\n")
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":
