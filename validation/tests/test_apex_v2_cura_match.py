@@ -22,6 +22,7 @@ from apex_cura_reference import (  # noqa: E402
     measure_gcode,
     parse_reference,
 )
+from apex_insole_densities import KENDON_DEFAULT_SPARSE_INFILL_PATTERN  # noqa: E402
 from orca_profile_flatten import flatten_profile  # noqa: E402
 
 REF = REPO / "validation/reference_gcode/apex_cura_insole_ref.gcode"
@@ -102,7 +103,7 @@ def test_flattened_preset_matches_ref() -> list[str]:
         "wall_loops": ("1", ref.wall_loops_owner),
         "infill_direction": ("0", ref.infill_direction_deg),
         "sparse_infill_density": ("20%", ref.infill_density_percent),
-        "sparse_infill_pattern": ("rectilinear", "rectilinear"),
+        "sparse_infill_pattern": (KENDON_DEFAULT_SPARSE_INFILL_PATTERN, KENDON_DEFAULT_SPARSE_INFILL_PATTERN),
     }
     for key, (exp, _) in checks.items():
         if str(p.get(key)) != exp:

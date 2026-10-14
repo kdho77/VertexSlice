@@ -8,7 +8,7 @@
     "compatible_printers": [
         "Vertex Apex V2 1.0 nozzle"
     ],
-    "notes": "VERTEX_APEX_CORE_95A \u2014 Kendon Extra Soft (14% rectilinear infill). Speeds match Cura-validated Soft baseline. Wall loops and sparse infill density are user-modifiable defaults (not locked); Kendon defaults: 1 wall; infill per hardness preset (14/20/26/32/38%).",
+    "notes": "VERTEX_APEX_CORE_95A \u2014 Kendon Extra Soft (14% gyroid infill). Speeds match Cura-validated Soft baseline. Wall loops and sparse infill density and pattern are user-modifiable defaults (not locked); Kendon defaults: 1 wall; infill per hardness preset (14/20/26/32/38%).",
     "sparse_infill_density": "14%",
     "outer_wall_speed": "35",
     "inner_wall_speed": "35",

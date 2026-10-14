@@ -36,7 +36,7 @@ class CuraRefMetrics:
     wall_loops_owner: int = 1
     infill_direction_deg: float = 0.0
     infill_density_note: str = (
-        "Kendon Soft 20% rectilinear (authoritative); Cura ref validated at this density."
+        "Kendon Soft 20% gyroid (Apex preset default); Cura ref gcode used rectilinear at same density for speed/temp validation."
     )
     infill_density_percent: float = 20.0
 
