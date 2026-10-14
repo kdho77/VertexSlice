@@ -5,7 +5,7 @@
     "instantiation": "false",
     "inherits": "fdm_process_common",
     "compatible_printers": [],
-    "notes": "Matched to Cura reference validation/reference_gcode/apex_cura_insole_ref.gcode (Apex insole). Owner override: 1 wall loop (Cura ref) + rectilinear infill at 0\u00b0. Infill density is set per Kendon preset (Extra Soft 14% \u2026 Extra Hard 38%); pair with VERTEX_APEX_CORE_95A unless noted.",
+    "notes": "Matched to Cura reference validation/reference_gcode/apex_cura_insole_ref.gcode (Apex insole). Owner override: 1 wall loop (Cura ref) + rectilinear infill at 0\u00b0. Infill density is set per Kendon preset (Extra Soft 14% \u2026 Extra Hard 38%); pair with VERTEX_APEX_CORE_95A unless noted. Wall loops and sparse infill density are user-modifiable defaults (not locked); Kendon defaults: 1 wall; infill per hardness preset (14/20/26/32/38%).",
     "layer_height": "0.42",
     "first_layer_height": "0.42",
     "line_width": "1.0",
