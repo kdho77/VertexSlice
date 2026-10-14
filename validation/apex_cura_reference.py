@@ -33,7 +33,7 @@ class CuraRefMetrics:
     part_fan_pwm: float = 127.5
     aux_fan_pwm: float = 64.0
     m204_values: tuple[int, ...] = (3000, 3500, 4000, 4500, 4750, 5000, 6500, 8249, 9999)
-    wall_loops_owner: int = 3
+    wall_loops_owner: int = 1
     infill_direction_deg: float = 0.0
     infill_density_note: str = (
         "Kendon Soft 20% rectilinear (authoritative); Cura ref validated at this density."
