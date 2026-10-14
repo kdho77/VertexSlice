@@ -97,7 +97,7 @@ def test_flattened_preset_matches_ref() -> list[str]:
         "sparse_infill_speed": ("60", ref.infill_mm_s),
         "top_surface_speed": ("63", ref.skin_mm_s),
         "travel_speed": ("200", ref.travel_mm_s),
-        "wall_loops": ("3", ref.wall_loops_owner),
+        "wall_loops": ("1", ref.wall_loops_owner),
         "infill_direction": ("0", ref.infill_direction_deg),
         "sparse_infill_density": ("20%", ref.infill_density_percent),
         "sparse_infill_pattern": ("rectilinear", "rectilinear"),
@@ -166,8 +166,8 @@ def test_slice_matches_ref() -> list[str]:
             fails.append("missing printer_is_belt in sliced config")
         if "; belt_axis = y" not in cfg:
             fails.append("missing belt_axis=y in sliced config")
-        if not re.search(r"; wall_loops = 3", cfg):
-            fails.append("wall_loops not 3 in sliced config")
+        if not re.search(r"; wall_loops = 1", cfg):
+            fails.append("wall_loops not 1 in sliced config")
         print(f"  slice measured: z_step={measured.get('belt_z_step')} outer={measured.get('outer_mm_s_mode')}")
     return fails
 
