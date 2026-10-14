@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Docker build proof: slice insole_sample.stl with Apex 95A and compare to Cura reference.
-Exits 0 on success; prints image size, slice time, peak memory.
+Docker build proof: slice validation STLs with Apex presets and compare to Cura reference.
+Exits 0 on success; prints JSON report with slice time, peak memory, bookends, and metrics.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -26,8 +27,10 @@ from apex_gcode_bookends import (  # noqa: E402
 from server.profile_registry import get_profile  # noqa: E402
 from server.slice_engine import slice_stl  # noqa: E402
 
-MODEL = REPO / "validation" / "test_models" / "insole_sample.stl"
+MODEL_SAMPLE = REPO / "validation" / "test_models" / "insole_sample.stl"
+MODEL_ORTHOCAD = REPO / "validation" / "test_models" / "orthocad_sample_top_insole.stl"
 REF = REPO / "validation" / "reference_gcode" / "apex_cura_insole_ref.gcode"
+STORE_GCODE = Path(os.environ.get("VERTEXSLICE_PROOF_GCODE_DIR", "/cursor/stores/self"))
 
 
 def docker_image_size_mb() -> float | None:
@@ -42,51 +45,144 @@ def docker_image_size_mb() -> float | None:
         return None
 
 
-def main() -> int:
-    profile = get_profile("apex-v2-insole-95a")
+def _layer_count(text: str) -> int:
+    return len(re.findall(r";LAYER_CHANGE|;LAYER:\d+", text))
+
+
+def _est_print_time(text: str) -> str | None:
+    m = re.search(r"; estimated printing time[^=]*=\s*([^\n]+)", text, re.I)
+    return m.group(1).strip() if m else None
+
+
+def _bookend_check(gcode_text: str) -> tuple[list[str], dict]:
+    fails: list[str] = []
+    detail = {"start_match": False, "end_match": False}
+    try:
+        start_fails = compare_bookends(
+            extract_sliced_start_bookend(gcode_text),
+            reference_start_bookend(REF),
+        )
+        end_fails = compare_bookends(
+            extract_sliced_end_bookend(gcode_text),
+            reference_end_bookend(REF),
+        )
+        fails.extend(start_fails)
+        fails.extend(end_fails)
+        detail["start_match"] = not start_fails
+        detail["end_match"] = not end_fails
+    except ValueError as exc:
+        fails.append(str(exc))
+    return fails, detail
+
+
+def _run_slice(
+    label: str,
+    stl: Path,
+    profile_id: str,
+    process_overrides: dict | None = None,
+    compare_ref: bool = True,
+) -> dict:
+    profile = get_profile(profile_id)
     if profile is None:
-        print("FAIL: profile registry missing apex-v2-insole-95a")
-        return 1
-    if not MODEL.is_file():
+        raise RuntimeError(f"profile missing: {profile_id}")
+    if not stl.is_file():
+        raise FileNotFoundError(stl)
+
+    ref_metrics, _ = parse_reference(REF)
+    gcode_path, stats = slice_stl(stl, profile, process_overrides=process_overrides)
+    gcode_text = gcode_path.read_text(encoding="utf-8", errors="replace")
+    measured = measure_gcode(gcode_path)
+
+    compare_fails: list[str] = []
+    if compare_ref:
+        compare_fails = compare_to_reference(measured, ref_metrics, tol_speed_pct=0.18)
+
+    bookend_fails, bookend_detail = _bookend_check(gcode_text)
+    all_fails = compare_fails + bookend_fails
+
+    store_name = f"proof_{label}.gcode"
+    store_path = STORE_GCODE / store_name
+    try:
+        STORE_GCODE.mkdir(parents=True, exist_ok=True)
+        store_path.write_text(gcode_text, encoding="utf-8")
+        saved_to = str(store_path)
+    except OSError:
+        saved_to = str(gcode_path)
+
+    return {
+        "label": label,
+        "stl": str(stl.relative_to(REPO)),
+        "profile_id": profile_id,
+        "process_overrides": process_overrides or {},
+        "gcode_bytes": gcode_path.stat().st_size,
+        "gcode_saved_to": saved_to,
+        "slice_seconds": stats.get("elapsed_s"),
+        "peak_rss_kb": stats.get("peak_rss_kb"),
+        "layer_count": _layer_count(gcode_text),
+        "estimated_print_time": _est_print_time(gcode_text),
+        "bookends": bookend_detail,
+        "compare_to_reference_failures": compare_fails,
+        "bookend_failures": bookend_fails,
+        "all_failures": all_fails,
+        "measured_sample": {
+            k: measured.get(k)
+            for k in (
+                "temp_225",
+                "belt_z_step",
+                "outer_mm_s_mode",
+                "infill_mm_s_mode",
+                "part_fan",
+                "aux_fan",
+            )
+        },
+    }
+
+
+def main() -> int:
+    if not MODEL_SAMPLE.is_file():
         gen = REPO / "validation" / "test_models" / "generate_insole_sample.py"
         subprocess.check_call([sys.executable, str(gen)])
 
-    ref_metrics, _ = parse_reference(REF)
-    gcode_path, stats = slice_stl(MODEL, profile)
-    measured = measure_gcode(gcode_path)
-    fails = compare_to_reference(measured, ref_metrics, tol_speed_pct=0.18)
-    gcode_text = gcode_path.read_text(encoding="utf-8", errors="replace")
-    bookend_fails: list[str] = []
-    try:
-        bookend_fails.extend(
-            compare_bookends(
-                extract_sliced_start_bookend(gcode_text),
-                reference_start_bookend(REF),
-            )
-        )
-        bookend_fails.extend(
-            compare_bookends(
-                extract_sliced_end_bookend(gcode_text),
-                reference_end_bookend(REF),
-            )
-        )
-    except ValueError as exc:
-        bookend_fails.append(str(exc))
-    fails.extend(bookend_fails)
-
-    report = {
-        "gcode_bytes": gcode_path.stat().st_size,
-        "slice_seconds": stats.get("elapsed_s"),
-        "peak_rss_kb": stats.get("peak_rss_kb"),
-        "compare_failures": fails,
-        "bookend_failures": bookend_fails,
+    report: dict = {
         "real_slice_ran": True,
         "docker_image_size_mb": docker_image_size_mb(),
+        "runs": [],
     }
+    failures: list[str] = []
+
+    try:
+        report["runs"].append(
+            _run_slice(
+                "insole_sample_soft20",
+                MODEL_SAMPLE,
+                "apex-v2-insole-95a",
+                process_overrides={"wall_loops": 1},
+                compare_ref=True,
+            )
+        )
+        report["runs"].append(
+            _run_slice(
+                "orthocad_medium26",
+                MODEL_ORTHOCAD,
+                "apex-v2-insole-medium",
+                process_overrides={"wall_loops": 1, "sparse_infill_density": "26%"},
+                compare_ref=False,
+            )
+        )
+    except Exception as exc:
+        print(json.dumps({"error": str(exc), "real_slice_ran": False}, indent=2))
+        return 1
+
+    for run in report["runs"]:
+        for f in run.get("all_failures") or []:
+            failures.append(f"{run['label']}: {f}")
+
+    report["proof_pass"] = not failures
+    report["failure_count"] = len(failures)
     print(json.dumps(report, indent=2))
 
-    if fails:
-        for f in fails:
+    if failures:
+        for f in failures:
             print(f"FAIL {f}", file=sys.stderr)
         return 1
     print("PROOF PASS")

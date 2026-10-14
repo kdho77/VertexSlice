@@ -7,11 +7,12 @@ FROM ubuntu:24.04 AS orca-builder
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LC_ALL=C.UTF-8
 ENV SKIP_RAM_CHECK=1
-ENV ORCA_EXTRA_BUILD_ARGS=-DSLIC3R_GUI=OFF
+# CLI slicing still links libslic3r_gui (PartPlate); do not set SLIC3R_GUI=OFF.
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates sudo git \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && printf '%s\n' 'force-confdef' 'force-confold' > /etc/dpkg/dpkg.cfg.d/docker-noninteractive
 
 WORKDIR /src
 COPY . /src
@@ -30,7 +31,7 @@ ENV ORCA_SLICER_BIN=/app/bin/orca-slicer
 ENV VERTEXSLICE_API_KEY=dev-change-me
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip python3-venv \
+    python3 python3-pip python3-venv time \
     libstdc++6 libglib2.0-0 libgomp1 libcurl4 libssl3 libfuse2 \
     libgtk-3-0 libwebkit2gtk-4.1-0 \
     && rm -rf /var/lib/apt/lists/*
