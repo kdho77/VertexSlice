@@ -1,0 +1,193 @@
+# VertexSlice-branded Windows x64 NSIS installer + portable zip (AGPL; no auto-release).
+# Same toolchain pins as windows-x64-baseline.yml; artifact names use VertexSlice_*.
+name: Windows VertexSlice installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      force-deps:
+        description: 'Rebuild Windows dependencies even if a cache hit exists'
+        type: boolean
+        default: false
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/windows-vertexslice-installer.yml'
+      - 'version.inc'
+      - 'CMakeLists.txt'
+      - 'resources/profiles/Vertex/**'
+      - 'resources/images/VertexSlice_*'
+
+concurrency:
+  group: windows-vertexslice-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build_windows:
+    name: Build VertexSlice Windows x64 (VS2022)
+    runs-on: windows-2022
+    timeout-minutes: 240
+    env:
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          lfs: 'true'
+
+      - uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~3.28.0"
+
+      - name: Setup MSBuild (VS 2022)
+        uses: microsoft/setup-msbuild@v2
+        with:
+          vs-version: '[17.0,18.0)'
+
+      - name: Compute deps cache key
+        id: deps-key
+        shell: bash
+        run: |
+          deps=$(git rev-parse HEAD:deps)
+          deps_src=$(git rev-parse HEAD:deps_src)
+          echo "key=windows-2022-orcaslicer-deps-${deps}-${deps_src}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore deps cache
+        id: deps-cache
+        uses: actions/cache@v4
+        with:
+          path: deps/build/OrcaSlicer_dep
+          key: ${{ steps.deps-key.outputs.key }}
+
+      - name: Build deps (VS 2022)
+        if: ${{ steps.deps-cache.outputs.cache-hit != 'true' || inputs.force-deps }}
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install strawberryperl --no-progress
+          cmd /c "build_release_vs2022.bat deps"
+          if ($LASTEXITCODE -ne 0) { throw "build_release_vs2022.bat deps failed ($LASTEXITCODE)" }
+          if (-not (Test-Path 'deps\build\OrcaSlicer_dep')) {
+            throw "deps/build/OrcaSlicer_dep is missing after deps step"
+          }
+
+      - name: Require deps prefix
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'deps\build\OrcaSlicer_dep')) {
+            throw "deps/build/OrcaSlicer_dep is missing"
+          }
+
+      - name: Setup Python for support_preprocess freeze
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Freeze support_preprocess (Windows)
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --upgrade pip
+          python -m pip install `
+            "pyinstaller==6.20.0" "numpy==2.4.6" "scipy==1.17.1" `
+            "trimesh==4.12.2" "manifold3d==3.5.0" "networkx==3.6.1" "shapely==2.1.2"
+          pyinstaller --onefile --name support_preprocess `
+            --collect-all scipy --collect-all trimesh `
+            --collect-all manifold3d --collect-all networkx `
+            --hidden-import scipy.sparse.csgraph --hidden-import shapely `
+            validation/support_preprocess.py
+          New-Item -ItemType Directory -Force -Path resources\validation | Out-Null
+          Copy-Item dist\support_preprocess.exe resources\validation\support_preprocess.exe
+          & resources\validation\support_preprocess.exe --help | Out-Null
+
+      - name: Install NSIS
+        run: choco install nsis --no-progress
+
+      - name: Get version
+        shell: pwsh
+        run: |
+          $versionContent = Get-Content version.inc -Raw
+          if ($versionContent -match 'set\(SoftFever_VERSION "(.*?)"\)') {
+              $ver = "V$($matches[1])"
+          } else {
+              throw "SoftFever_VERSION not found in version.inc"
+          }
+          echo "ver=$ver" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+
+      - name: Build slicer (VS 2022)
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmd /c "build_release_vs2022.bat slicer"
+          if ($LASTEXITCODE -ne 0) { throw "build_release_vs2022.bat slicer failed ($LASTEXITCODE)" }
+          $exe = Get-ChildItem -Path build -Recurse -Filter 'orca-slicer.exe' -File -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $exe) { throw "orca-slicer.exe was not produced" }
+
+      - name: Create NSIS installer
+        shell: pwsh
+        working-directory: ${{ github.workspace }}/build
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cpack -G NSIS
+          if ($LASTEXITCODE -ne 0) { throw "cpack NSIS failed ($LASTEXITCODE)" }
+
+      - name: Assemble VertexSlice release artifacts
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          "source_commit=$env:GITHUB_SHA" | Set-Content release\BASELINE.txt
+          "app_name=VertexSlice" | Add-Content release\BASELINE.txt
+          "license=AGPL-3.0 (see LICENSE.txt in repo root)" | Add-Content release\BASELINE.txt
+          $exes = Get-ChildItem -Path build -Filter 'VertexSlice*.exe' -File
+          if (-not $exes) {
+            $exes = Get-ChildItem -Path build -Filter '*Windows_Installer*.exe' -File
+          }
+          if (-not $exes) { throw "No VertexSlice NSIS installer in build/" }
+          foreach ($exe in $exes) { Copy-Item $exe.FullName release\ }
+          if (-not (Test-Path 'build\OrcaSlicer')) { throw "build/OrcaSlicer portable tree is missing" }
+          $portable = "release\VertexSlice_Windows_$($env:ver)_portable.zip"
+          if (Test-Path 'C:\Program Files\7-Zip\7z.exe') {
+            & 'C:\Program Files\7-Zip\7z.exe' a -tzip $portable '.\build\OrcaSlicer\*'
+          } else {
+            Compress-Archive -Path 'build\OrcaSlicer\*' -DestinationPath $portable
+          }
+          Get-ChildItem release -File | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)"
+          } | Set-Content release\SHA256SUMS.txt
+
+      - name: Upload VertexSlice installer
+        uses: actions/upload-artifact@v5
+        with:
+          name: VertexSlice_Windows_${{ env.ver }}
+          path: ${{ github.workspace }}/release/VertexSlice*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload VertexSlice portable zip
+        uses: actions/upload-artifact@v5
+        with:
+          name: VertexSlice_Windows_${{ env.ver }}_portable
+          path: ${{ github.workspace }}/release/VertexSlice_Windows_${{ env.ver }}_portable.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload checksums
+        uses: actions/upload-artifact@v5
+        with:
+          name: VertexSlice_Windows_checksums
+          path: |
+            ${{ github.workspace }}/release/SHA256SUMS.txt
+            ${{ github.workspace }}/release/BASELINE.txt
+          if-no-files-found: error
+          retention-days: 14
