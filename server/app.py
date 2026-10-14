@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
 from server.profile_registry import get_profile, list_profiles
@@ -27,6 +28,15 @@ API_KEY = os.environ.get("VERTEXSLICE_API_KEY", "dev-change-me")
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
 
 app = FastAPI(title="VertexSlice Headless Slicer", version="0.1.0")
+
+_cors_origins = os.environ.get("VERTEXSLICE_CORS_ORIGINS", "*").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in _cors_origins if o.strip()],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 
 def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
@@ -90,7 +100,7 @@ async def slice_endpoint(
         description=f"Belt advance direction ({'|'.join(PRINT_DIRECTION_CHOICES)}); default {DEFAULT_PRINT_DIRECTION}",
     ),
     belt_insole_place: bool = Form(
-        default=False,
+        default=True,
         description="OrthoCAD belt preprocess (width on X, length on belt Z, X center ~140 mm)",
     ),
     _: None = Depends(require_api_key),
