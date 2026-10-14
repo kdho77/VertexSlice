@@ -30,12 +30,12 @@ from apex_bed_placement import (  # noqa: E402
     assert_apex_insole_extrusion_layout,
     extrusion_xyz_bounds,
 )
+from apex_toe_first import assert_toe_first_gcode  # noqa: E402
 from validation.stl_bed_fit import bounds_after_z_rotation, stl_axis_bounds  # noqa: E402
 
 MODEL_SAMPLE = REPO / "validation" / "test_models" / "insole_sample.stl"
 MODEL_ORTHOCAD = REPO / "validation" / "test_models" / "orthocad_sample_top_insole.stl"
 REF = REPO / "validation" / "reference_gcode" / "apex_cura_insole_ref.gcode"
-CURA_REF_EXTRUSION_BOUNDS = extrusion_xyz_bounds(REF.read_text(encoding="utf-8", errors="replace")) if REF.is_file() else {}
 STORE_GCODE = Path(os.environ.get("VERTEXSLICE_PROOF_GCODE_DIR", "/cursor/stores/self"))
 
 
@@ -126,6 +126,7 @@ def _run_slice(
     rotate_z: str | None = None,
     arrange: bool = False,
     belt_insole_place: bool = False,
+    print_direction: str | None = None,
     store_name: str | None = None,
 ) -> dict:
     profile = get_profile(profile_id)
@@ -142,6 +143,7 @@ def _run_slice(
         rotate_z=rotate_z,
         arrange=arrange,
         belt_insole_place=belt_insole_place,
+        print_direction=print_direction,
     )
     gcode_text = gcode_path.read_text(encoding="utf-8", errors="replace")
     measured = measure_gcode(gcode_path)
@@ -159,6 +161,7 @@ def _run_slice(
         layout_fails = assert_apex_insole_extrusion_layout(
             extrusion_bounds, width_mm=width, length_along_belt_mm=length
         )
+        layout_fails.extend(assert_toe_first_gcode(gcode_text))
     all_fails = compare_fails + bookend_fails + layout_fails
 
     store_name = store_name or f"proof_{label}.gcode"
@@ -212,7 +215,9 @@ def main() -> int:
     report: dict = {
         "real_slice_ran": True,
         "docker_image_size_mb": docker_image_size_mb(),
-        "cura_ref_extrusion_bounds": CURA_REF_EXTRUSION_BOUNDS,
+        "cura_ref_extrusion_bounds": (
+            extrusion_xyz_bounds(REF.read_text(encoding="utf-8", errors="replace")) if REF.is_file() else {}
+        ),
         "runs": [],
     }
     failures: list[str] = []

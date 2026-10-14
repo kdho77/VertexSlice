@@ -35,5 +35,6 @@
     "inner_wall_acceleration": "5000",
     "sparse_infill_acceleration": "5000",
     "internal_solid_infill_acceleration": "5000",
-    "top_surface_acceleration": "5000"
+    "top_surface_acceleration": "5000",
+    "print_direction": "toe_first"
 }

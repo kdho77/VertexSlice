@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from apex_bed_placement import APEX_INSOLE_X_CENTER_MM, APEX_PRINTABLE_X_MAX_MM
+from apex_insole_tunables import DEFAULT_PRINT_DIRECTION, orthocad_base_rotation_z_deg, validate_print_direction
 
 
 def _read_triangles(path: Path) -> list[tuple[tuple[float, float, float], ...]]:
@@ -114,6 +115,12 @@ def prepare_orthocad_insole_stl(
     src: Path,
     bed_width_x_mm: float = APEX_PRINTABLE_X_MAX_MM,
     x_center_mm: float = APEX_INSOLE_X_CENTER_MM,
+    print_direction: str = DEFAULT_PRINT_DIRECTION,
 ) -> tuple[Path, dict]:
-    """OrthoCAD scan: long axis on STL +X → 90° Z to align length with +Y (belt)."""
-    return prepare_belt_stl(src, 90, bed_width_x_mm=bed_width_x_mm, x_center_mm=x_center_mm)
+    """OrthoCAD scan: align length with +Y; toe_first applies +180° Z (default)."""
+    direction = validate_print_direction(print_direction)
+    deg = orthocad_base_rotation_z_deg(direction)
+    out, meta = prepare_belt_stl(src, deg, bed_width_x_mm=bed_width_x_mm, x_center_mm=x_center_mm)
+    meta["print_direction"] = direction
+    meta["rotation_z_deg"] = deg
+    return out, meta

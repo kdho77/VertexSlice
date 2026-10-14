@@ -46,6 +46,7 @@ def slice_stl(
     bed_width_x_mm: float = 250.0,
     belt_insole_place: bool = False,
     x_center_mm: float | None = None,
+    print_direction: str | None = None,
 ) -> tuple[Path, dict]:
     """
     Run headless slice. Returns (gcode_path, stats dict with elapsed_s, peak_rss_kb).
@@ -59,11 +60,17 @@ def slice_stl(
     belt_orient_disabled = False
     if belt_insole_place:
         from apex_bed_placement import APEX_INSOLE_X_CENTER_MM  # noqa: E402
+        from apex_insole_tunables import DEFAULT_PRINT_DIRECTION, orthocad_base_rotation_z_deg, validate_print_direction  # noqa: E402
 
         xc = x_center_mm if x_center_mm is not None else APEX_INSOLE_X_CENTER_MM
-        placement_stats = bounds_after_z_rotation(stl_path, 90, bed_width_x_mm=bed_width_x_mm)
+        direction = validate_print_direction(print_direction or DEFAULT_PRINT_DIRECTION)
+        rot_deg = orthocad_base_rotation_z_deg(direction)
+        placement_stats = bounds_after_z_rotation(stl_path, rot_deg, bed_width_x_mm=bed_width_x_mm)
         slice_stl_path, prep_meta = prepare_orthocad_insole_stl(
-            stl_path, bed_width_x_mm=bed_width_x_mm, x_center_mm=xc
+            stl_path,
+            bed_width_x_mm=bed_width_x_mm,
+            x_center_mm=xc,
+            print_direction=direction,
         )
         placement_stats.update(prep_meta)
         belt_orient_disabled = True

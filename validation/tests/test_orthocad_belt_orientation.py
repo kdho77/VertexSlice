@@ -18,6 +18,7 @@ from apex_bed_placement import (  # noqa: E402
     extrusion_xyz_bounds,
 )
 from orca_profile_flatten import flatten_profile  # noqa: E402
+from apex_toe_first import assert_toe_first_gcode  # noqa: E402
 from stl_preprocess import prepare_orthocad_insole_stl  # noqa: E402
 
 REF = REPO / "validation/reference_gcode/apex_cura_insole_ref.gcode"
@@ -98,11 +99,16 @@ def test_orthocad_slice_layout() -> list[str]:
         gcodes = list(work.glob("**/*.gcode"))
         if not gcodes:
             return ["no gcode produced"]
-        bounds = extrusion_bounds_from_path(gcodes[0])
+        gcode_path = gcodes[0]
+        bounds = extrusion_bounds_from_path(gcode_path)
+        gtext = gcode_path.read_text(encoding="utf-8", errors="replace")
 
     fails = assert_apex_insole_extrusion_layout(bounds, width_mm=width, length_along_belt_mm=length)
     if abs(bounds.get("x_center", 0) - APEX_INSOLE_X_CENTER_MM) > 2.0:
         fails.append(f"x_center {bounds.get('x_center')} vs {APEX_INSOLE_X_CENTER_MM}")
+    fails.extend(assert_toe_first_gcode(gtext))
+    if meta.get("rotation_z_deg") != 270:
+        fails.append(f"expected toe_first rotation_z_deg 270, got {meta.get('rotation_z_deg')}")
     return fails
 
 

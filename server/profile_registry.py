@@ -8,7 +8,7 @@ import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
-from validation.apex_insole_tunables import DEFAULT_WALL_LOOPS  # noqa: E402
+from validation.apex_insole_tunables import DEFAULT_PRINT_DIRECTION, DEFAULT_WALL_LOOPS  # noqa: E402
 from validation.apex_insole_densities import KENDON_INFILL_DENSITY_PRESETS  # noqa: E402
 PROFILES = REPO_ROOT / "resources" / "profiles" / "IdeaFormer"
 MACHINE = PROFILES / "machine" / "Vertex Apex V2 1.0 nozzle.json"
@@ -94,8 +94,9 @@ def list_profiles() -> list[dict]:
                 "infill_density_percent": _PROFILE_DEFAULT_INFILL_PCT.get(
                     p.profile_id, KENDON_INFILL_DENSITY_PRESETS["Soft"]
                 ),
+                "print_direction": DEFAULT_PRINT_DIRECTION,
             },
-            "user_modifiable": ["wall_loops", "infill_density_percent"],
+            "user_modifiable": ["wall_loops", "infill_density_percent", "print_direction"],
         }
         for p in _REGISTRY.values()
     ]
