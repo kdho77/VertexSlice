@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Kendon infill-density process presets (95A baseline, rectilinear)."""
+"""Kendon infill-density process presets (95A baseline, default gyroid sparse infill)."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "validation"))
 
-from apex_insole_densities import KENDON_INFILL_DENSITY_PRESETS, PROCESS_FILES  # noqa: E402
+from apex_insole_densities import (  # noqa: E402
+    KENDON_DEFAULT_SPARSE_INFILL_PATTERN,
+    KENDON_INFILL_DENSITY_PRESETS,
+    PROCESS_FILES,
+)
 from orca_profile_flatten import flatten_profile  # noqa: E402
 
 PROC_DIR = REPO / "resources/profiles/IdeaFormer/process"
@@ -29,8 +33,9 @@ def main() -> int:
         got = str(data.get("sparse_infill_density", "")).rstrip("%")
         if got != str(pct):
             fails.append(f"{label}: sparse_infill_density={data.get('sparse_infill_density')} expected {pct}%")
-        if str(data.get("sparse_infill_pattern", "")).lower() != "rectilinear":
-            fails.append(f"{label}: pattern not rectilinear")
+        pat = str(data.get("sparse_infill_pattern", "")).lower()
+        if pat != KENDON_DEFAULT_SPARSE_INFILL_PATTERN:
+            fails.append(f"{label}: sparse_infill_pattern={pat!r} expected {KENDON_DEFAULT_SPARSE_INFILL_PATTERN}")
         if str(data.get("infill_direction")) != "0":
             fails.append(f"{label}: infill_direction not 0")
 

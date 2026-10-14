@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Kendon-authored Apex V2 insole rectilinear infill densities (95A baseline)."""
+"""Kendon-authored Apex V2 insole infill densities (95A baseline, default gyroid pattern)."""
 from __future__ import annotations
+
+KENDON_DEFAULT_SPARSE_INFILL_PATTERN = "gyroid"
 
 KENDON_INFILL_DENSITY_PRESETS: dict[str, int] = {
     "Extra Soft": 14,
