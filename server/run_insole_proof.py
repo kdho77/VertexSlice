@@ -26,6 +26,7 @@ from apex_gcode_bookends import (  # noqa: E402
 )
 from server.profile_registry import get_profile  # noqa: E402
 from server.slice_engine import slice_stl  # noqa: E402
+from validation.stl_bed_fit import bounds_after_z_rotation, stl_axis_bounds  # noqa: E402
 
 MODEL_SAMPLE = REPO / "validation" / "test_models" / "insole_sample.stl"
 MODEL_ORTHOCAD = REPO / "validation" / "test_models" / "orthocad_sample_top_insole.stl"
@@ -52,6 +53,42 @@ def _layer_count(text: str) -> int:
 def _est_print_time(text: str) -> str | None:
     m = re.search(r"; estimated printing time[^=]*=\s*([^\n]+)", text, re.I)
     return m.group(1).strip() if m else None
+
+
+def _gcode_xyz_bounds_mm(text: str) -> dict[str, float]:
+    xs: list[float] = []
+    ys: list[float] = []
+    zs: list[float] = []
+    for line in text.splitlines():
+        if not line.startswith(("G0", "G1")):
+            continue
+        for axis, bucket in (("X", xs), ("Y", ys), ("Z", zs)):
+            m = re.search(rf"\b{axis}(-?[\d.]+)", line)
+            if m:
+                bucket.append(float(m.group(1)))
+    if not xs:
+        return {}
+    return {
+        "gcode_x_mm": round(max(xs) - min(xs), 3),
+        "gcode_y_mm": round(max(ys) - min(ys), 3),
+        "gcode_z_mm": round(max(zs) - min(zs), 3),
+        "gcode_x_min": round(min(xs), 3),
+        "gcode_x_max": round(max(xs), 3),
+        "gcode_y_min": round(min(ys), 3),
+        "gcode_y_max": round(max(ys), 3),
+    }
+
+
+def _stl_report(stl: Path, rotate_z: str | None) -> dict:
+    (x0, x1), (y0, y1), (z0, z1) = stl_axis_bounds(stl)
+    out: dict = {
+        "stl_x_mm": round(x1 - x0, 3),
+        "stl_y_mm": round(y1 - y0, 3),
+        "stl_z_mm": round(z1 - z0, 3),
+    }
+    if rotate_z is not None:
+        out.update(bounds_after_z_rotation(stl, int(rotate_z)))
+    return out
 
 
 def _bookend_check(gcode_text: str) -> tuple[list[str], dict]:
@@ -82,8 +119,8 @@ def _run_slice(
     process_overrides: dict | None = None,
     compare_ref: bool = True,
     rotate_z: str | None = None,
-    scale: str | float | None = None,
     arrange: bool = False,
+    store_name: str | None = None,
 ) -> dict:
     profile = get_profile(profile_id)
     if profile is None:
@@ -97,7 +134,6 @@ def _run_slice(
         profile,
         process_overrides=process_overrides,
         rotate_z=rotate_z,
-        scale=scale,
         arrange=arrange,
     )
     gcode_text = gcode_path.read_text(encoding="utf-8", errors="replace")
@@ -110,7 +146,7 @@ def _run_slice(
     bookend_fails, bookend_detail = _bookend_check(gcode_text)
     all_fails = compare_fails + bookend_fails
 
-    store_name = f"proof_{label}.gcode"
+    store_name = store_name or f"proof_{label}.gcode"
     store_path = STORE_GCODE / store_name
     try:
         STORE_GCODE.mkdir(parents=True, exist_ok=True)
@@ -124,6 +160,9 @@ def _run_slice(
         "stl": str(stl.relative_to(REPO)),
         "profile_id": profile_id,
         "process_overrides": process_overrides or {},
+        "stl_dimensions": _stl_report(stl, rotate_z),
+        "gcode_dimensions": _gcode_xyz_bounds_mm(gcode_text),
+        "placement": {k: stats[k] for k in stats if k.endswith("_mm") or "oriented" in k or "bed_width" in k},
         "gcode_bytes": gcode_path.stat().st_size,
         "gcode_saved_to": saved_to,
         "slice_seconds": stats.get("elapsed_s"),
@@ -158,7 +197,7 @@ def main() -> int:
         "docker_image_size_mb": docker_image_size_mb(),
         "runs": [],
     }
-    comparison_failures: list[str] = []
+    failures: list[str] = []
 
     try:
         report["runs"].append(
@@ -178,8 +217,8 @@ def main() -> int:
                 process_overrides={"wall_loops": 1, "sparse_infill_density": "26%"},
                 compare_ref=False,
                 rotate_z="90",
-                scale="0.95",
                 arrange=True,
+                store_name="orthocad_sample_top_medium26.gcode",
             )
         )
     except Exception as exc:
@@ -188,17 +227,17 @@ def main() -> int:
 
     for run in report["runs"]:
         for f in run.get("all_failures") or []:
-            comparison_failures.append(f"{run['label']}: {f}")
+            failures.append(f"{run['label']}: {f}")
 
-    report["comparison_failure_count"] = len(comparison_failures)
-    report["comparison_pass"] = not comparison_failures
-    report["proof_pass"] = True
+    report["failure_count"] = len(failures)
+    report["proof_pass"] = not failures
     print(json.dumps(report, indent=2))
 
-    if comparison_failures:
-        for f in comparison_failures:
-            print(f"COMPARE {f}", file=sys.stderr)
-    print("PROOF PASS (real slice completed)")
+    if failures:
+        for f in failures:
+            print(f"FAIL {f}", file=sys.stderr)
+        return 1
+    print("PROOF PASS", file=sys.stderr)
     return 0
 
 

@@ -18,6 +18,9 @@ M82 ;absolute extrusion mode
 G92 E0
 G92 E0
 G1 F1800 E-1.5
+M106 P1 S64
+M106 S127.5
+M204 S3000
 """
 
 MACHINE_END_GCODE = """M107
@@ -60,6 +63,17 @@ def normalize_bookend_line(line: str) -> str:
     return s
 
 
+def _start_bookend_stop(s: str) -> bool:
+    """End of Cura/Orca PRINT_START block (before layer-0 travel or fan-off injection)."""
+    if re.match(r"^M204\s+S3000\b", s):
+        return True
+    if s.startswith("G0 ") and "Z" in s:
+        return True
+    if s.startswith("G1 ") and re.search(r"\bZ", s):
+        return True
+    return False
+
+
 def reference_start_bookend(path: Path | None = None) -> list[str]:
     """Executable lines from PRINT_START through pre-layer travel (Cura ref)."""
     path = path or REF
@@ -70,9 +84,9 @@ def reference_start_bookend(path: Path | None = None) -> list[str]:
         s = l.strip()
         if not s or s.startswith(";"):
             continue
-        if s.startswith("G0 ") and "Z" in s:
-            break
         exec_lines.append(s)
+        if _start_bookend_stop(s):
+            break
     return exec_lines
 
 
@@ -88,6 +102,7 @@ def reference_end_bookend(path: Path | None = None) -> list[str]:
 
 
 def extract_sliced_start_bookend(gcode_text: str) -> list[str]:
+    """Match reference_start_bookend: PRINT_START through M204 S3000 (or first Z move)."""
     lines = gcode_text.splitlines()
     idx = next((i for i, l in enumerate(lines) if l.strip() == "PRINT_START"), None)
     if idx is None:
@@ -97,11 +112,9 @@ def extract_sliced_start_bookend(gcode_text: str) -> list[str]:
         s = l.strip()
         if not s or s.startswith(";"):
             continue
-        if s.startswith("G0 ") and "Z" in s:
-            break
-        if s.startswith("M106") or s.startswith("M204"):
-            break
         exec_lines.append(s)
+        if _start_bookend_stop(s):
+            break
     return exec_lines
 
 

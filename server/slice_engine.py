@@ -14,6 +14,8 @@ from orca_profile_flatten import flatten_profile  # noqa: E402
 
 from server.profile_registry import SliceProfile
 from server.slice_overrides import apply_process_overrides
+from validation.stl_bed_fit import bounds_after_z_rotation  # noqa: E402
+from validation.stl_preprocess import prepare_belt_stl  # noqa: E402
 
 
 def _slicer_binary() -> Path:
@@ -40,8 +42,8 @@ def slice_stl(
     timeout_s: int = 600,
     process_overrides: dict | None = None,
     rotate_z: str | None = None,
-    scale: str | float | None = None,
     arrange: bool = False,
+    bed_width_x_mm: float = 250.0,
 ) -> tuple[Path, dict]:
     """
     Run headless slice. Returns (gcode_path, stats dict with elapsed_s, peak_rss_kb).
@@ -49,6 +51,15 @@ def slice_stl(
     stl_path = Path(stl_path).resolve()
     if not stl_path.is_file():
         raise FileNotFoundError(stl_path)
+
+    placement_stats: dict = {}
+    slice_stl_path = stl_path
+    if rotate_z is not None and str(rotate_z).strip() != "":
+        deg = int(rotate_z)
+        placement_stats = bounds_after_z_rotation(stl_path, deg, bed_width_x_mm=bed_width_x_mm)
+        slice_stl_path, prep_meta = prepare_belt_stl(stl_path, deg, bed_width_x_mm=bed_width_x_mm)
+        placement_stats.update(prep_meta)
+        rotate_z = None  # rotation baked into STL
 
     tmp_owned = work_dir is None
     if work_dir is None:
@@ -78,14 +89,12 @@ def slice_stl(
         str(flat_f),
         "--outputdir",
         str(work_dir),
-        str(stl_path),
+        str(slice_stl_path),
     ]
     if arrange:
         cmd.extend(["--arrange", "1"])
     if rotate_z is not None and str(rotate_z).strip() != "":
         cmd.extend(["--rotate", str(rotate_z)])
-    if scale is not None and str(scale).strip() != "":
-        cmd.extend(["--scale", str(scale)])
 
     t0 = time.perf_counter()
     # GNU time -v for peak RSS when available
@@ -121,6 +130,7 @@ def slice_stl(
         "binary": str(binary),
         "stdout_tail": proc.stdout[-1500:],
         "stderr_tail": proc.stderr[-1500:],
+        **placement_stats,
     }
     if tmp_owned:
         stats["work_dir"] = str(work_dir)

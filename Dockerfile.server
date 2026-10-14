@@ -49,8 +49,10 @@ RUN chmod +x /app/bin/orca-slicer /app/scripts/docker_headless_slice_proof.sh \
 
 ENV PATH="/app/venv/bin:${PATH}"
 ENV PYTHONPATH="/app"
+ENV VERTEXSLICE_PROOF_GCODE_DIR=/app/proof_gcode
 
-RUN /app/scripts/docker_headless_slice_proof.sh
+RUN mkdir -p /app/proof_gcode \
+    && /app/scripts/docker_headless_slice_proof.sh
 
 EXPOSE 8080
 CMD ["sh", "-c", "uvicorn server.app:app --host 0.0.0.0 --port ${PORT:-8080}"]

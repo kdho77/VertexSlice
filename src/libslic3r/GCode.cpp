@@ -2671,8 +2671,11 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     // Emit machine envelope limits for the Marlin firmware.
     this->print_machine_envelope(file, print, initial_extruder_id);
 
-    // Disable fan.
-    if (m_config.auxiliary_fan.value && print.config().close_fan_the_first_x_layers.get_at(initial_extruder_id)) {
+    // Disable fan (skip when Apex/Cura PRINT_START bookend owns layer-0 fan lines in machine_start_gcode).
+    const bool cura_print_start_bookend =
+        print.config().machine_start_gcode.value.find("PRINT_START") != std::string::npos;
+    if (!cura_print_start_bookend && m_config.auxiliary_fan.value &&
+        print.config().close_fan_the_first_x_layers.get_at(initial_extruder_id)) {
         file.write(m_writer.set_fan(0));
         //BBS: disable additional fan
         file.write(m_writer.set_additional_fan(0));
@@ -3036,7 +3039,10 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     print.throw_if_canceled();
 
     // Set other general things.
-    file.write(this->preamble());
+    const bool skip_preamble_for_cura_bookend =
+        machine_start_gcode.find("PRINT_START") != std::string::npos;
+    if (!skip_preamble_for_cura_bookend)
+        file.write(this->preamble());
 
     // Calculate wiping points if needed
     DoExport::init_ooze_prevention(print, m_ooze_prevention);

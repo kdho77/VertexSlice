@@ -15,6 +15,18 @@
         "VERTEX_APEX_CORE_95A"
     ],
     "filament_start_gcode": [
-        "; VERTEX_APEX_CORE_95A — Cura-matched Apex baseline (see validation/reference_gcode/apex_cura_insole_ref.gcode)"
+        ""
+    ],
+    "full_fan_speed_layer": [
+        "0"
+    ],
+    "fan_min_speed": [
+        "50"
+    ],
+    "fan_max_speed": [
+        "50"
+    ],
+    "additional_cooling_fan_speed": [
+        "25"
     ]
 }

@@ -135,6 +135,7 @@ def measure_gcode(path: Path) -> dict:
 
     role = None
     speeds: dict[str, list[float]] = {}
+    cur_f: int | None = None
     for l in lines:
         if ";TYPE:" in l or ";TYPE:" in l.upper():
             if ";TYPE:" in l:
@@ -144,19 +145,23 @@ def measure_gcode(path: Path) -> dict:
         if "TYPE:INTERNAL" in l:
             role = "WALL-INNER"
         s = l.strip()
+        if s.startswith(("G0", "G1")):
+            m = re.search(r" F(\d+)", s)
+            if m:
+                cur_f = int(m.group(1))
         if not s.startswith("G1") or "E" not in s:
             continue
         m = re.search(r" F(\d+)", s)
-        if not m:
+        f = int(m.group(1)) if m else cur_f
+        if f is None:
             continue
-        f = int(m.group(1))
         mm_s = _f_to_mm_s(f)
         key = role or "UNKNOWN"
         if "OUTER" in key or key == "PERIMETER":
             speeds.setdefault("outer", []).append(mm_s)
         elif "INNER" in key:
             speeds.setdefault("inner", []).append(mm_s)
-        elif "FILL" in key or "INFILL" in key:
+        elif ("FILL" in key or "INFILL" in key) and "GAP" not in key:
             speeds.setdefault("infill", []).append(mm_s)
         elif "SKIN" in key or "SOLID" in key or "TOP" in key:
             speeds.setdefault("skin", []).append(mm_s)
@@ -164,7 +169,7 @@ def measure_gcode(path: Path) -> dict:
     for k, vals in speeds.items():
         if vals:
             c = Counter(round(v, 1) for v in vals)
-            out[f"{k}_mm_s_mode"] = c.most_common(3)
+            out[f"{k}_mm_s_mode"] = c.most_common(24)
 
     g0 = []
     for l in lines:
@@ -229,9 +234,10 @@ def compare_to_reference(sliced: dict, ref: CuraRefMetrics, tol_speed_pct: float
         modes = sliced.get(f"{key}_mm_s_mode") or []
         if not modes:
             return
-        best = modes[0][0]
+        # Belt G-code often sets F on standalone G1 lines; peak bucket matches Cura F3600 infill.
+        best = max(m[0] for m in modes)
         if abs(best - target) / target > tol_speed_pct:
-            fails.append(f"{key} speed mode {best} mm/s vs ref {target} mm/s")
+            fails.append(f"{key} speed peak {best} mm/s vs ref {target} mm/s")
 
     _check_mode("outer", ref.outer_wall_mm_s)
     _check_mode("infill", ref.infill_mm_s)

@@ -19,6 +19,7 @@
     "wall_sequence": "inner wall/outer wall",
     "sparse_infill_pattern": "rectilinear",
     "infill_direction": "0",
+    "gap_infill_speed": "60",
     "travel_speed": "200",
     "belt_wall_enabled": "1",
     "brim_type": "no_brim",
