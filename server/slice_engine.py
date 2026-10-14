@@ -39,6 +39,9 @@ def slice_stl(
     work_dir: Path | None = None,
     timeout_s: int = 600,
     process_overrides: dict | None = None,
+    rotate_z: str | None = None,
+    scale: str | float | None = None,
+    arrange: bool = False,
 ) -> tuple[Path, dict]:
     """
     Run headless slice. Returns (gcode_path, stats dict with elapsed_s, peak_rss_kb).
@@ -77,6 +80,12 @@ def slice_stl(
         str(work_dir),
         str(stl_path),
     ]
+    if arrange:
+        cmd.extend(["--arrange", "1"])
+    if rotate_z is not None and str(rotate_z).strip() != "":
+        cmd.extend(["--rotate", str(rotate_z)])
+    if scale is not None and str(scale).strip() != "":
+        cmd.extend(["--scale", str(scale)])
 
     t0 = time.perf_counter()
     # GNU time -v for peak RSS when available
