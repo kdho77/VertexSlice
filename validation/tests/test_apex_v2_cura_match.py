@@ -99,6 +99,8 @@ def test_flattened_preset_matches_ref() -> list[str]:
         "travel_speed": ("200", ref.travel_mm_s),
         "wall_loops": ("3", ref.wall_loops_owner),
         "infill_direction": ("0", ref.infill_direction_deg),
+        "sparse_infill_density": ("20%", ref.infill_density_percent),
+        "sparse_infill_pattern": ("rectilinear", "rectilinear"),
     }
     for key, (exp, _) in checks.items():
         if str(p.get(key)) != exp:
