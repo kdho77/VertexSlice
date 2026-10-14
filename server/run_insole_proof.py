@@ -15,7 +15,14 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "validation"))
 
-from apex_cura_reference import CuraRefMetrics, compare_to_reference, measure_gcode, parse_reference  # noqa: E402
+from apex_cura_reference import compare_to_reference, measure_gcode, parse_reference  # noqa: E402
+from apex_gcode_bookends import (  # noqa: E402
+    compare_bookends,
+    extract_sliced_end_bookend,
+    extract_sliced_start_bookend,
+    reference_end_bookend,
+    reference_start_bookend,
+)
 from server.profile_registry import get_profile  # noqa: E402
 from server.slice_engine import slice_stl  # noqa: E402
 
@@ -48,12 +55,32 @@ def main() -> int:
     gcode_path, stats = slice_stl(MODEL, profile)
     measured = measure_gcode(gcode_path)
     fails = compare_to_reference(measured, ref_metrics, tol_speed_pct=0.18)
+    gcode_text = gcode_path.read_text(encoding="utf-8", errors="replace")
+    bookend_fails: list[str] = []
+    try:
+        bookend_fails.extend(
+            compare_bookends(
+                extract_sliced_start_bookend(gcode_text),
+                reference_start_bookend(REF),
+            )
+        )
+        bookend_fails.extend(
+            compare_bookends(
+                extract_sliced_end_bookend(gcode_text),
+                reference_end_bookend(REF),
+            )
+        )
+    except ValueError as exc:
+        bookend_fails.append(str(exc))
+    fails.extend(bookend_fails)
 
     report = {
         "gcode_bytes": gcode_path.stat().st_size,
         "slice_seconds": stats.get("elapsed_s"),
         "peak_rss_kb": stats.get("peak_rss_kb"),
         "compare_failures": fails,
+        "bookend_failures": bookend_fails,
+        "real_slice_ran": True,
         "docker_image_size_mb": docker_image_size_mb(),
     }
     print(json.dumps(report, indent=2))
