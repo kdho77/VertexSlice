@@ -1,0 +1,20 @@
+{
+    "type": "filament",
+    "name": "VERTEX_APEX_CORE_95A",
+    "inherits": "VERTEX_APEX_CORE_95A @base",
+    "from": "system",
+    "setting_id": "OGVTX95A",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Vertex Apex V2 1.0 nozzle"
+    ],
+    "filament_notes": [
+        "Matched to Cura apex_cura_insole_ref.gcode on Apex (225 °C, fans on layer 0, retraction 1.5 mm @ 30 mm/s). E/mm ≈ 0.1796 via flow ratio. Use process 0.42mm TPU Insole @Vertex Apex V2."
+    ],
+    "filament_settings_id": [
+        "VERTEX_APEX_CORE_95A"
+    ],
+    "filament_start_gcode": [
+        "; VERTEX_APEX_CORE_95A — Cura-matched Apex baseline (see validation/reference_gcode/apex_cura_insole_ref.gcode)"
+    ]
+}

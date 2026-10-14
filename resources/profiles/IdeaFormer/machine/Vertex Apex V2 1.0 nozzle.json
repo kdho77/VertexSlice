@@ -1,0 +1,27 @@
+{
+    "type": "machine",
+    "setting_id": "GMVA001",
+    "name": "Vertex Apex V2 1.0 nozzle",
+    "from": "system",
+    "instantiation": "true",
+    "inherits": "fdm_vertex_apex_common",
+    "printer_model": "Vertex Apex V2",
+    "printer_variant": "1.0",
+    "nozzle_diameter": [
+        "1.0"
+    ],
+    "default_print_profile": "0.42mm TPU Insole @Vertex Apex V2",
+    "printable_area": [
+        "0x0",
+        "250x0",
+        "250x2000",
+        "0x2000"
+    ],
+    "printable_height": "250",
+    "thumbnails": [
+        "48x48/PNG",
+        "300x300/PNG"
+    ],
+    "print_host": "http://<PRINTER_HOST>",
+    "host_type": "octoprint"
+}

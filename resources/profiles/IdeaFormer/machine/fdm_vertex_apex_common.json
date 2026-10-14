@@ -1,0 +1,33 @@
+{
+    "type": "machine",
+    "name": "fdm_vertex_apex_common",
+    "from": "system",
+    "instantiation": "false",
+    "inherits": "fdm_ideaformer_common",
+    "heated_bed": "0",
+    "auxiliary_fan": "1",
+    "use_relative_e_distances": "0",
+    "retraction_length": [
+        "1.5"
+    ],
+    "retraction_speed": [
+        "30"
+    ],
+    "deretraction_speed": [
+        "30"
+    ],
+    "z_hop": [
+        "0"
+    ],
+    "wipe": [
+        "0"
+    ],
+    "retraction_minimum_travel": [
+        "2"
+    ],
+    "default_filament_profile": [
+        "VERTEX_APEX_CORE_95A"
+    ],
+    "machine_start_gcode": "PRINT_START\n; Vertex Apex V2 macro start — body defined in printer.cfg (see validation/printer_config/apex_v2_print_macros.cfg.example).\n",
+    "machine_end_gcode": "G92 Z0\nPRINT_END\n; Vertex Apex V2 macro end — body defined in printer.cfg.\n"
+}
