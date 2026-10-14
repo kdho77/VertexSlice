@@ -62,6 +62,8 @@ def test_reference_file() -> list[str]:
     ref_text = REF.read_text(encoding="utf-8", errors="replace")
     if "F1200 ; Belt wall speed" not in ref_text:
         fails.append("reference missing belt-wall F1200 (20 mm/s)")
+    if ";TYPE:WALL-INNER" in ref_text:
+        fails.append("reference has WALL-INNER; Kendon override expects 1 wall loop")
     fill = detail.get("fill_f") or []
     if not any(f == 3600 for _, f, _ in fill):
         fails.append(f"reference missing infill F3600 (60 mm/s): {fill[:5]}")
