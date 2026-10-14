@@ -9,9 +9,17 @@ docker build -f Dockerfile.server -t vertexslice-server:local .
 docker run --rm -p 8080:8080 -e VERTEXSLICE_API_KEY=dev-change-me vertexslice-server:local
 ```
 
-## Railway
+## Railway (PM handoff)
 
-Uses `railway.json` + `Dockerfile.server` (full Orca build in image; first deploy is slow).
+**Repo:** `kdho77/VertexSlice`  
+**Branch:** `cursor/headless-server-20b4` (PR #4)  
+**Root directory:** repository root (`.` — not a monorepo subfolder)  
+**Builder:** Dockerfile (`Dockerfile.server` via `railway.json`)  
+**Start command:** `uvicorn server.app:app --host 0.0.0.0 --port $PORT` (also set in `railway.json` and image `CMD`)  
+**Health check path:** `/health`  
+**Listen:** `0.0.0.0` on `$PORT` (Railway injects `PORT`)
+
+Uses `railway.json` + `Dockerfile.server` (full Orca build in image; first deploy is slow, often 30–60+ minutes).
 
 Set service variables:
 
