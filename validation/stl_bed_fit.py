@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""STL bounding-box checks for Vertex Apex V2 belt (X = across belt, Y = along belt)."""
+"""STL bounding-box checks for Vertex Apex V2 belt (X = across belt width; length → model +Y → gcode Z)."""
 from __future__ import annotations
 
 import struct

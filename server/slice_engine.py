@@ -15,7 +15,7 @@ from orca_profile_flatten import flatten_profile  # noqa: E402
 from server.profile_registry import SliceProfile
 from server.slice_overrides import apply_process_overrides
 from validation.stl_bed_fit import bounds_after_z_rotation  # noqa: E402
-from validation.stl_preprocess import prepare_belt_stl  # noqa: E402
+from validation.stl_preprocess import prepare_belt_stl, prepare_orthocad_insole_stl  # noqa: E402
 
 
 def _slicer_binary() -> Path:
@@ -44,6 +44,8 @@ def slice_stl(
     rotate_z: str | None = None,
     arrange: bool = False,
     bed_width_x_mm: float = 250.0,
+    belt_insole_place: bool = False,
+    x_center_mm: float | None = None,
 ) -> tuple[Path, dict]:
     """
     Run headless slice. Returns (gcode_path, stats dict with elapsed_s, peak_rss_kb).
@@ -54,11 +56,31 @@ def slice_stl(
 
     placement_stats: dict = {}
     slice_stl_path = stl_path
-    if rotate_z is not None and str(rotate_z).strip() != "":
+    belt_orient_disabled = False
+    if belt_insole_place:
+        from apex_bed_placement import APEX_INSOLE_X_CENTER_MM  # noqa: E402
+
+        xc = x_center_mm if x_center_mm is not None else APEX_INSOLE_X_CENTER_MM
+        placement_stats = bounds_after_z_rotation(stl_path, 90, bed_width_x_mm=bed_width_x_mm)
+        slice_stl_path, prep_meta = prepare_orthocad_insole_stl(
+            stl_path, bed_width_x_mm=bed_width_x_mm, x_center_mm=xc
+        )
+        placement_stats.update(prep_meta)
+        belt_orient_disabled = True
+        arrange = False
+        rotate_z = None
+    elif rotate_z is not None and str(rotate_z).strip() != "":
         deg = int(rotate_z)
         placement_stats = bounds_after_z_rotation(stl_path, deg, bed_width_x_mm=bed_width_x_mm)
-        slice_stl_path, prep_meta = prepare_belt_stl(stl_path, deg, bed_width_x_mm=bed_width_x_mm)
+        from apex_bed_placement import APEX_INSOLE_X_CENTER_MM  # noqa: E402
+
+        xc = x_center_mm if x_center_mm is not None else APEX_INSOLE_X_CENTER_MM
+        slice_stl_path, prep_meta = prepare_belt_stl(
+            stl_path, deg, bed_width_x_mm=bed_width_x_mm, x_center_mm=xc
+        )
         placement_stats.update(prep_meta)
+        belt_orient_disabled = True
+        arrange = False
         rotate_z = None  # rotation baked into STL
 
     tmp_owned = work_dir is None
@@ -91,7 +113,9 @@ def slice_stl(
         str(work_dir),
         str(slice_stl_path),
     ]
-    if arrange:
+    if belt_orient_disabled:
+        cmd.extend(["--orient", "0", "--arrange", "0"])
+    elif arrange:
         cmd.extend(["--arrange", "1"])
     if rotate_z is not None and str(rotate_z).strip() != "":
         cmd.extend(["--rotate", str(rotate_z)])

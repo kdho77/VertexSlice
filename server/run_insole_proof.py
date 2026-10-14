@@ -26,11 +26,16 @@ from apex_gcode_bookends import (  # noqa: E402
 )
 from server.profile_registry import get_profile  # noqa: E402
 from server.slice_engine import slice_stl  # noqa: E402
+from apex_bed_placement import (  # noqa: E402
+    assert_apex_insole_extrusion_layout,
+    extrusion_xyz_bounds,
+)
 from validation.stl_bed_fit import bounds_after_z_rotation, stl_axis_bounds  # noqa: E402
 
 MODEL_SAMPLE = REPO / "validation" / "test_models" / "insole_sample.stl"
 MODEL_ORTHOCAD = REPO / "validation" / "test_models" / "orthocad_sample_top_insole.stl"
 REF = REPO / "validation" / "reference_gcode" / "apex_cura_insole_ref.gcode"
+CURA_REF_EXTRUSION_BOUNDS = extrusion_xyz_bounds(REF.read_text(encoding="utf-8", errors="replace")) if REF.is_file() else {}
 STORE_GCODE = Path(os.environ.get("VERTEXSLICE_PROOF_GCODE_DIR", "/cursor/stores/self"))
 
 
@@ -120,6 +125,7 @@ def _run_slice(
     compare_ref: bool = True,
     rotate_z: str | None = None,
     arrange: bool = False,
+    belt_insole_place: bool = False,
     store_name: str | None = None,
 ) -> dict:
     profile = get_profile(profile_id)
@@ -135,6 +141,7 @@ def _run_slice(
         process_overrides=process_overrides,
         rotate_z=rotate_z,
         arrange=arrange,
+        belt_insole_place=belt_insole_place,
     )
     gcode_text = gcode_path.read_text(encoding="utf-8", errors="replace")
     measured = measure_gcode(gcode_path)
@@ -144,7 +151,15 @@ def _run_slice(
         compare_fails = compare_to_reference(measured, ref_metrics, tol_speed_pct=0.18)
 
     bookend_fails, bookend_detail = _bookend_check(gcode_text)
-    all_fails = compare_fails + bookend_fails
+    layout_fails: list[str] = []
+    extrusion_bounds = extrusion_xyz_bounds(gcode_text)
+    if belt_insole_place and extrusion_bounds:
+        width = float(stats.get("oriented_x_across_belt_mm", 0))
+        length = float(stats.get("oriented_y_along_belt_mm", 0))
+        layout_fails = assert_apex_insole_extrusion_layout(
+            extrusion_bounds, width_mm=width, length_along_belt_mm=length
+        )
+    all_fails = compare_fails + bookend_fails + layout_fails
 
     store_name = store_name or f"proof_{label}.gcode"
     store_path = STORE_GCODE / store_name
@@ -162,6 +177,7 @@ def _run_slice(
         "process_overrides": process_overrides or {},
         "stl_dimensions": _stl_report(stl, rotate_z),
         "gcode_dimensions": _gcode_xyz_bounds_mm(gcode_text),
+        "extrusion_bounds": extrusion_bounds,
         "placement": {k: stats[k] for k in stats if k.endswith("_mm") or "oriented" in k or "bed_width" in k},
         "gcode_bytes": gcode_path.stat().st_size,
         "gcode_saved_to": saved_to,
@@ -172,6 +188,7 @@ def _run_slice(
         "bookends": bookend_detail,
         "compare_to_reference_failures": compare_fails,
         "bookend_failures": bookend_fails,
+        "layout_failures": layout_fails,
         "all_failures": all_fails,
         "measured_sample": {
             k: measured.get(k)
@@ -195,6 +212,7 @@ def main() -> int:
     report: dict = {
         "real_slice_ran": True,
         "docker_image_size_mb": docker_image_size_mb(),
+        "cura_ref_extrusion_bounds": CURA_REF_EXTRUSION_BOUNDS,
         "runs": [],
     }
     failures: list[str] = []
@@ -216,8 +234,7 @@ def main() -> int:
                 "apex-v2-insole-medium",
                 process_overrides={"wall_loops": 1, "sparse_infill_density": "26%"},
                 compare_ref=False,
-                rotate_z="90",
-                arrange=True,
+                belt_insole_place=True,
                 store_name="orthocad_sample_top_medium26.gcode",
             )
         )
