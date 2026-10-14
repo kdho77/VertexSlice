@@ -1,27 +1,10 @@
-# Vertex Apex V2 — Klipper PRINT_START / PRINT_END macro stubs
-# Copy into your live printer.cfg (or include) and complete the TODO sections.
-# Apex system presets emit PRINT_START / PRINT_END only (macro mode).
+# Vertex Apex V2 — Klipper PRINT_START / PRINT_END (match apex_cura_insole_ref.gcode)
+# Apex Orca machine presets emit the lines below via machine_start_gcode / machine_end_gcode.
 
 [gcode_macro PRINT_START]
 gcode:
-    # TODO(owner): homing, purge, belt prime, mesh — match your Apex V2 printer.cfg
-    G90
-    M82
-    G21
-    G28
-    G1 Y20 F500
+    # Macro hook only; slicer emits heat/wait/retract after PRINT_START (see machine preset).
 
 [gcode_macro PRINT_END]
 gcode:
-    # TODO(owner): park, cool down, belt reset — reference ends with G92 Z0 then PRINT_END
-    M400
-    G28 X
-    M104 S0
-    M140 S0
-    G92 E0
-    G1 E-5 F300
-    G4 P7000
-    G28
-    G1 Y50 F1000
-    M107
-    M84
+    # Macro hook only; slicer emits park/cooldown before PRINT_END (see machine preset).
