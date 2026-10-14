@@ -33,9 +33,6 @@ public:
 
     // Force reload of configuration from belt_transform.ini
     static void reload_config();
-
-    // Per-export adjustment (e.g. Cura-matched gantry Y for OrthoCAD insoles).
-    static void set_runtime_y_mach_offset(double offset_mm);
 };
 
 } // namespace Slic3r

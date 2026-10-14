@@ -90,7 +90,6 @@ struct BeltConfig {
 };
 
 static BeltConfig g_belt_config;
-static double     g_runtime_y_mach_offset = 0.0;
 
 void ensure_config() {
     g_belt_config.load();
@@ -134,7 +133,7 @@ Vec3d BeltTransform::inverse_transform_point(const Vec3d& pt, double angle_degre
     double y_virt = pt.y() - g_belt_config.i_y_shift;
     double z_virt = pt.z() + g_belt_config.i_z_shift;
 
-    double y_mach = BELT_I_YY * y_virt + BELT_I_YZ * z_virt + g_belt_config.y_mach_offset + g_runtime_y_mach_offset;
+    double y_mach = BELT_I_YY * y_virt + BELT_I_YZ * z_virt + g_belt_config.y_mach_offset;
     double z_mach = BELT_I_ZY * y_virt + BELT_I_ZZ * z_virt + g_belt_config.z_mach_offset;
 
     // Clamp Y_mach >= 0 — gantry cannot go below belt surface.
@@ -154,11 +153,6 @@ void BeltTransform::reload_config()
 {
     g_belt_config.loaded = false;
     ensure_config();
-}
-
-void BeltTransform::set_runtime_y_mach_offset(double offset_mm)
-{
-    g_runtime_y_mach_offset = offset_mm;
 }
 
 }

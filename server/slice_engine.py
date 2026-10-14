@@ -58,7 +58,6 @@ def slice_stl(
     placement_stats: dict = {}
     slice_stl_path = stl_path
     belt_orient_disabled = False
-    belt_trim_stl: Path | None = None
     if belt_insole_place:
         from apex_bed_placement import APEX_INSOLE_X_CENTER_MM  # noqa: E402
         from apex_insole_tunables import DEFAULT_PRINT_DIRECTION, orthocad_base_rotation_z_deg, validate_print_direction  # noqa: E402
@@ -74,7 +73,6 @@ def slice_stl(
             print_direction=direction,
         )
         placement_stats.update(prep_meta)
-        belt_trim_stl = slice_stl_path
         belt_orient_disabled = True
         arrange = False
         rotate_z = None
@@ -105,19 +103,9 @@ def slice_stl(
     apply_process_overrides(flat_p, process_overrides or {})
     flat_f = flatten_profile(profile.filament, work_dir / "filament.json")
 
-    if belt_trim_stl is not None:
-        from apex_belt_y_trim import write_belt_transform_ini  # noqa: E402
-
-        placement_stats["belt_y_mach_offset_mm"] = write_belt_transform_ini(
-            work_dir / "belt_transform.ini", belt_trim_stl, initial_layer_print_height_mm=0.42
-        )
-
     env = os.environ.copy()
     resources = os.environ.get("ORCA_RESOURCES", str(REPO_ROOT / "resources"))
     env["SLIC3R_RESOURCES_DIR"] = resources
-    belt_ini = work_dir / "belt_transform.ini"
-    if belt_ini.is_file():
-        env["ORCABELT_TRANSFORM_INI"] = str(belt_ini)
 
     cmd = [
         str(binary),

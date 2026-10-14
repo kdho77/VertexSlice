@@ -18,8 +18,6 @@ from apex_bed_placement import (  # noqa: E402
     extrusion_xyz_bounds,
 )
 from orca_profile_flatten import flatten_profile  # noqa: E402
-from apex_belt_y_trim import write_belt_transform_ini  # noqa: E402
-from apex_first_layer_y import assert_first_layer_y_near_cura  # noqa: E402
 from apex_toe_first import assert_toe_first_gcode  # noqa: E402
 from stl_preprocess import prepare_orthocad_insole_stl  # noqa: E402
 
@@ -74,15 +72,10 @@ def test_orthocad_slice_layout() -> list[str]:
         proc["sparse_infill_density"] = "26%"
         flat_p.write_text(json.dumps(proc))
 
-        write_belt_transform_ini(work / "belt_transform.ini", prep, initial_layer_print_height_mm=0.42)
-
         import os
 
         env = os.environ.copy()
         env["SLIC3R_RESOURCES_DIR"] = str(REPO / "resources")
-        belt_ini = work / "belt_transform.ini"
-        if belt_ini.is_file():
-            env["ORCABELT_TRANSFORM_INI"] = str(belt_ini)
         cmd = [
             str(binary),
             "--slice",
@@ -114,7 +107,6 @@ def test_orthocad_slice_layout() -> list[str]:
     if abs(bounds.get("x_center", 0) - APEX_INSOLE_X_CENTER_MM) > 2.0:
         fails.append(f"x_center {bounds.get('x_center')} vs {APEX_INSOLE_X_CENTER_MM}")
     fails.extend(assert_toe_first_gcode(gtext))
-    fails.extend(assert_first_layer_y_near_cura(gtext))
     if meta.get("rotation_z_deg") != 270:
         fails.append(f"expected toe_first rotation_z_deg 270, got {meta.get('rotation_z_deg')}")
     return fails

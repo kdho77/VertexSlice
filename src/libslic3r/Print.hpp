@@ -375,13 +375,12 @@ public:
             double z_shift = BeltTransform::get_trafo_z_shift();
             t.translate(Vec3d(0, 0, z_shift));
 
-            // 5. Shift virtual frame so Y_virt_min = 0 and Z_virt_min = 0.
-            //    Y_virt = Z_model (belt entry). Z_virt = Y_model + Z_model (keel-first slices).
-            //    OrthoCAD insoles often have Z_virt_min > 0 without the Z shift, so the first
-            //    slices miss the mesh and the first real extrusions sit ~0.6 mm above Cura ref.
+            // 5. Shift Y_virt so Y_virt_min = 0 (belt entry alignment)
+            //    Y_virt = Z_model → this aligns model's Z_min at belt start.
+            //    (Should be ~0 already after step 2, but handles any residual offset.)
             if (m_model_object) {
                 BoundingBoxf3 virtual_bbox = m_model_object->raw_mesh_bounding_box().transformed(t);
-                t.pretranslate(Vec3d(0, -virtual_bbox.min.y(), -virtual_bbox.min.z()));
+                t.pretranslate(Vec3d(0, -virtual_bbox.min.y(), 0));
             }
         } else {
             // Standard printer: apply full centering offset
