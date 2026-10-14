@@ -2,5 +2,6 @@
 build
 deps/build
 **/*.gcode
+!validation/reference_gcode/**
 OrcaSlicer_profile_validator
 .cursor
