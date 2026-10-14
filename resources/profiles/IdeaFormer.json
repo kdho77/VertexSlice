@@ -45,28 +45,24 @@
             "sub_path": "process/0.20mm Standard @IdeaFormer IR3 V2.json"
         },
         {
-            "name": "fdm_process_apex_insole_common",
-            "sub_path": "process/fdm_process_apex_insole_common.json"
-        },
-        {
             "name": "0.42mm TPU Insole @Vertex Apex V2",
             "sub_path": "process/0.42mm TPU Insole @Vertex Apex V2.json"
         },
         {
-            "name": "0.42mm TPU Insole 85A @Vertex Apex V2",
-            "sub_path": "process/0.42mm TPU Insole 85A @Vertex Apex V2.json"
+            "name": "0.42mm TPU Insole Extra Soft @Vertex Apex V2",
+            "sub_path": "process/0.42mm TPU Insole Extra Soft @Vertex Apex V2.json"
         },
         {
-            "name": "0.42mm TPU Insole 90A @Vertex Apex V2",
-            "sub_path": "process/0.42mm TPU Insole 90A @Vertex Apex V2.json"
+            "name": "0.42mm TPU Insole Medium @Vertex Apex V2",
+            "sub_path": "process/0.42mm TPU Insole Medium @Vertex Apex V2.json"
         },
         {
-            "name": "0.42mm TPU Insole 98A @Vertex Apex V2",
-            "sub_path": "process/0.42mm TPU Insole 98A @Vertex Apex V2.json"
+            "name": "0.42mm TPU Insole Hard @Vertex Apex V2",
+            "sub_path": "process/0.42mm TPU Insole Hard @Vertex Apex V2.json"
         },
         {
-            "name": "0.42mm TPU Insole 75D @Vertex Apex V2",
-            "sub_path": "process/0.42mm TPU Insole 75D @Vertex Apex V2.json"
+            "name": "0.42mm TPU Insole Extra Hard @Vertex Apex V2",
+            "sub_path": "process/0.42mm TPU Insole Extra Hard @Vertex Apex V2.json"
         }
     ],
     "filament_list": [

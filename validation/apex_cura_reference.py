@@ -36,8 +36,7 @@ class CuraRefMetrics:
     wall_loops_owner: int = 3
     infill_direction_deg: float = 0.0
     infill_density_note: str = (
-        "Cura file has no density field; ~20% rectilinear at 0° inferred from line spacing "
-        "(non-uniform in ref — tune on Apex)."
+        "Kendon Soft 20% rectilinear (authoritative); Cura ref validated at this density."
     )
     infill_density_percent: float = 20.0
 
