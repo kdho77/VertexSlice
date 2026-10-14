@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO_ROOT / "validation"))
 from orca_profile_flatten import flatten_profile  # noqa: E402
 
 from server.profile_registry import SliceProfile
+from server.slice_overrides import apply_process_overrides
 
 
 def _slicer_binary() -> Path:
@@ -37,6 +38,7 @@ def slice_stl(
     profile: SliceProfile,
     work_dir: Path | None = None,
     timeout_s: int = 600,
+    process_overrides: dict | None = None,
 ) -> tuple[Path, dict]:
     """
     Run headless slice. Returns (gcode_path, stats dict with elapsed_s, peak_rss_kb).
@@ -55,6 +57,7 @@ def slice_stl(
     binary = _slicer_binary()
     flat_m = flatten_profile(profile.machine, work_dir / "machine.json")
     flat_p = flatten_profile(profile.process, work_dir / "process.json")
+    apply_process_overrides(flat_p, process_overrides or {})
     flat_f = flatten_profile(profile.filament, work_dir / "filament.json")
 
     env = os.environ.copy()

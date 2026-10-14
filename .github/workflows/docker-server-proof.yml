@@ -75,6 +75,7 @@ jobs:
       - name: Registry + Cura ref tests
         run: |
           python3 validation/tests/test_server_registry.py
+          python3 validation/tests/test_server_slice_overrides.py
           python3 validation/tests/test_apex_v2_insole_densities.py
           python3 validation/tests/test_apex_v2_cura_match.py
           python3 validation/tests/test_apex_v2_slice.py

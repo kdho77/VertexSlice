@@ -4,7 +4,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import sys
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+from validation.apex_insole_tunables import DEFAULT_WALL_LOOPS  # noqa: E402
+from validation.apex_insole_densities import KENDON_INFILL_DENSITY_PRESETS  # noqa: E402
 PROFILES = REPO_ROOT / "resources" / "profiles" / "IdeaFormer"
 MACHINE = PROFILES / "machine" / "Vertex Apex V2 1.0 nozzle.json"
 FILAMENT_95A = PROFILES / "filament" / "VERTEX_APEX_CORE_95A.json"
@@ -28,6 +33,15 @@ def _entry(profile_id: str, process_name: str, description: str) -> SliceProfile
         description=description,
     )
 
+
+_PROFILE_DEFAULT_INFILL_PCT: dict[str, int] = {
+    "apex-v2-insole-extra-soft": KENDON_INFILL_DENSITY_PRESETS["Extra Soft"],
+    "apex-v2-insole-95a": KENDON_INFILL_DENSITY_PRESETS["Soft"],
+    "apex-v2-insole-soft": KENDON_INFILL_DENSITY_PRESETS["Soft"],
+    "apex-v2-insole-medium": KENDON_INFILL_DENSITY_PRESETS["Medium"],
+    "apex-v2-insole-hard": KENDON_INFILL_DENSITY_PRESETS["Hard"],
+    "apex-v2-insole-extra-hard": KENDON_INFILL_DENSITY_PRESETS["Extra Hard"],
+}
 
 _REGISTRY: dict[str, SliceProfile] = {
     "apex-v2-insole-95a": _entry(
@@ -75,6 +89,13 @@ def list_profiles() -> list[dict]:
             "machine": str(p.machine.relative_to(REPO_ROOT)),
             "process": str(p.process.relative_to(REPO_ROOT)),
             "filament": str(p.filament.relative_to(REPO_ROOT)),
+            "defaults": {
+                "wall_loops": DEFAULT_WALL_LOOPS,
+                "infill_density_percent": _PROFILE_DEFAULT_INFILL_PCT.get(
+                    p.profile_id, KENDON_INFILL_DENSITY_PRESETS["Soft"]
+                ),
+            },
+            "user_modifiable": ["wall_loops", "infill_density_percent"],
         }
         for p in _REGISTRY.values()
     ]
