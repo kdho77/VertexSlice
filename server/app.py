@@ -10,7 +10,13 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadF
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
-from server.profile_registry import get_profile, list_profiles
+from server.profile_registry import (
+    DEFAULT_MATERIAL_ID,
+    get_profile,
+    list_materials,
+    list_profiles,
+    resolve_material,
+)
 from server.slice_engine import slice_stl
 from server.slice_overrides import parse_slice_overrides
 from validation.apex_insole_tunables import (
@@ -49,6 +55,14 @@ def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Ke
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "vertexslice-slicer"}
+
+
+@app.get("/v1/materials")
+def materials(_: None = Depends(require_api_key)):
+    return {
+        "materials": list_materials(),
+        "default": DEFAULT_MATERIAL_ID,
+    }
 
 
 @app.get("/v1/profiles")
@@ -103,9 +117,18 @@ async def slice_endpoint(
         default=True,
         description="OrthoCAD belt preprocess (width on X, length on belt Z, X center ~140 mm)",
     ),
+    material: str | None = Form(
+        default=None,
+        description="Filament: apex_core (default), apex_forge, apex_bounce",
+    ),
     _: None = Depends(require_api_key),
 ):
-    profile = get_profile(profile_id)
+    try:
+        material_spec = resolve_material(material)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    profile = get_profile(profile_id, material=material_spec.material_id)
     if profile is None:
         raise HTTPException(status_code=400, detail=f"Unknown profile_id: {profile_id}")
 
@@ -139,6 +162,7 @@ async def slice_endpoint(
             "X-Slice-Seconds": str(stats.get("elapsed_s", "")),
             "X-Peak-RSS-KB": str(stats.get("peak_rss_kb") or ""),
             "X-Profile-Id": profile_id,
+            "X-Material": material_spec.material_id,
         }
         if overrides.get("wall_loops") is not None:
             headers["X-Wall-Loops"] = str(overrides["wall_loops"])

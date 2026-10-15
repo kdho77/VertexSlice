@@ -115,6 +115,18 @@
             "sub_path": "filament/VERTEX_APEX_CORE_95A.json"
         },
         {
+            "name": "ApexCore",
+            "sub_path": "filament/ApexCore.json"
+        },
+        {
+            "name": "ApexForge",
+            "sub_path": "filament/ApexForge.json"
+        },
+        {
+            "name": "ApexBounce",
+            "sub_path": "filament/ApexBounce.json"
+        },
+        {
             "name": "VERTEX_APEX_CORE_85A",
             "sub_path": "filament/VERTEX_APEX_CORE_85A.json"
         },

@@ -1,7 +1,7 @@
 """Maps API profile ids to IdeaFormer Apex preset paths (repo-relative)."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import sys
@@ -13,6 +13,43 @@ from validation.apex_insole_densities import KENDON_INFILL_DENSITY_PRESETS  # no
 PROFILES = REPO_ROOT / "resources" / "profiles" / "IdeaFormer"
 MACHINE = PROFILES / "machine" / "Vertex Apex V2 1.0 nozzle.json"
 FILAMENT_95A = PROFILES / "filament" / "VERTEX_APEX_CORE_95A.json"
+
+DEFAULT_MATERIAL_ID = "apex_core"
+
+
+@dataclass(frozen=True)
+class MaterialSpec:
+    material_id: str
+    display_name: str
+    filament: Path
+    nozzle_c: int
+    bed_c: int
+
+
+_MATERIALS: dict[str, MaterialSpec] = {
+    "apex_core": MaterialSpec(
+        material_id="apex_core",
+        display_name="ApexCore",
+        # Same file as today's default so omitted `material` is byte-identical.
+        filament=FILAMENT_95A,
+        nozzle_c=225,
+        bed_c=0,
+    ),
+    "apex_forge": MaterialSpec(
+        material_id="apex_forge",
+        display_name="ApexForge",
+        filament=PROFILES / "filament" / "ApexForge.json",
+        nozzle_c=245,
+        bed_c=0,
+    ),
+    "apex_bounce": MaterialSpec(
+        material_id="apex_bounce",
+        display_name="ApexBounce",
+        filament=PROFILES / "filament" / "ApexBounce.json",
+        nozzle_c=225,
+        bed_c=60,
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -77,8 +114,38 @@ _REGISTRY: dict[str, SliceProfile] = {
 }
 
 
-def get_profile(profile_id: str) -> SliceProfile | None:
-    return _REGISTRY.get(profile_id.strip().lower())
+def resolve_material(material: str | None) -> MaterialSpec:
+    """Return the material spec. Empty/omitted → apex_core. Unknown → ValueError."""
+    if material is None or str(material).strip() == "":
+        return _MATERIALS[DEFAULT_MATERIAL_ID]
+    key = str(material).strip().lower()
+    spec = _MATERIALS.get(key)
+    if spec is None:
+        allowed = ", ".join(_MATERIALS)
+        raise ValueError(f"Unknown material: {material}. Expected one of: {allowed}")
+    return spec
+
+
+def list_materials() -> list[dict]:
+    return [
+        {
+            "id": m.material_id,
+            "display_name": m.display_name,
+            "nozzle": m.nozzle_c,
+            "bed": m.bed_c,
+        }
+        for m in _MATERIALS.values()
+    ]
+
+
+def get_profile(profile_id: str, material: str | None = None) -> SliceProfile | None:
+    p = _REGISTRY.get(profile_id.strip().lower())
+    if p is None:
+        return None
+    spec = resolve_material(material)
+    if spec.filament == p.filament:
+        return p
+    return replace(p, filament=spec.filament)
 
 
 def list_profiles() -> list[dict]:
