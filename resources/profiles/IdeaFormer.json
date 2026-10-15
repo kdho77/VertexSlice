@@ -41,6 +41,10 @@
             "sub_path": "process/fdm_process_common.json"
         },
         {
+            "name": "fdm_process_apex_insole_common",
+            "sub_path": "process/fdm_process_apex_insole_common.json"
+        },
+        {
             "name": "0.20mm Standard @IdeaFormer IR3 V2",
             "sub_path": "process/0.20mm Standard @IdeaFormer IR3 V2.json"
         },

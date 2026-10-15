@@ -60,6 +60,7 @@ def slice_stl(
     slice_stl_path = stl_path
     belt_orient_disabled = False
     belt_trim_stl: Path | None = None
+    belt_print_direction: str | None = None
     if belt_insole_place:
         from apex_bed_placement import APEX_INSOLE_X_CENTER_MM  # noqa: E402
         from apex_insole_tunables import DEFAULT_PRINT_DIRECTION, orthocad_base_rotation_z_deg, validate_print_direction  # noqa: E402
@@ -76,6 +77,7 @@ def slice_stl(
         )
         placement_stats.update(prep_meta)
         belt_trim_stl = slice_stl_path
+        belt_print_direction = direction
         belt_orient_disabled = True
         arrange = False
         rotate_z = None
@@ -126,6 +128,7 @@ def slice_stl(
             work_dir / "belt_transform.ini",
             belt_trim_stl,
             initial_layer_print_height_mm=layer0,
+            print_direction=belt_print_direction,
         )
 
     env = os.environ.copy()

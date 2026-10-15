@@ -16,6 +16,7 @@ from apex_belt_y_trim import (  # noqa: E402
     APEX_INITIAL_LAYER_PRINT_HEIGHT_MM,
     FIRST_LAYER_Y_MIN_HI_MM,
     FIRST_LAYER_Y_MIN_LO_MM,
+    LIVE_Y_RESIDUAL_SHIFT_MM,
     cura_matched_y_mach_offset_mm,
     predicted_first_layer_y_mm,
 )
@@ -24,6 +25,7 @@ from apex_first_layer_y import (  # noqa: E402
     assert_first_layer_y_in_band,
     assert_first_layer_y_near_cura,
     cura_ref_first_layer_y_min,
+    first_layer_extrusion_y_bounds,
 )
 from apex_insole_densities import PROCESS_FILES  # noqa: E402
 from apex_insole_tunables import (  # noqa: E402
@@ -37,6 +39,34 @@ PROC_DIR = REPO / "resources/profiles/IdeaFormer/process"
 COMMON = PROC_DIR / "fdm_process_apex_insole_common.json"
 STL = REPO / "validation/test_models/orthocad_sample_top_insole.stl"
 DIRECTIONS = (PRINT_DIRECTION_TOE_FIRST, PRINT_DIRECTION_HEEL_FIRST)
+
+
+def test_band_check_fails_out_of_band_synthetic() -> list[str]:
+    """assert_first_layer_y_in_band must fail when Y min is 0.62 (live toe miss)."""
+    fails: list[str] = []
+    gcode = "\n".join(
+        [
+            "PRINT_START",
+            "M204 S3000",
+            ";LAYER_CHANGE",
+            ";TYPE:Inner wall",
+            "G1 X10.0 Y0.62 E0.15",
+            "G1 X20.0 Y0.80 E0.30",
+            ";LAYER_CHANGE",
+            ";TYPE:Inner wall",
+            "G1 X10.0 Y1.20 E0.45",
+            "",
+        ]
+    )
+    y_min, y_max = first_layer_extrusion_y_bounds(gcode)
+    if y_min is None or abs(y_min - 0.62) > 0.001:
+        fails.append(f"synthetic Y min should be 0.62, got {y_min}")
+    band = assert_first_layer_y_in_band(gcode, label="synthetic")
+    if not band:
+        fails.append("assert_first_layer_y_in_band passed on Y min 0.62 (must fail)")
+    elif "0.620" not in band[0] and "0.62" not in band[0]:
+        fails.append(f"band failure should cite 0.62, got {band}")
+    return fails
 
 
 def test_cura_ref_baseline() -> list[str]:
@@ -81,11 +111,19 @@ def test_y_min_both_directions_from_sample_stl() -> list[str]:
         if meta.get("print_direction") != direction:
             fails.append(f"{direction}: preprocess meta {meta.get('print_direction')}")
         off = cura_matched_y_mach_offset_mm(
-            prep, initial_layer_print_height_mm=APEX_INITIAL_LAYER_PRINT_HEIGHT_MM
+            prep,
+            initial_layer_print_height_mm=APEX_INITIAL_LAYER_PRINT_HEIGHT_MM,
+            print_direction=direction,
         )
         y = predicted_first_layer_y_mm(
-            prep, initial_layer_print_height_mm=APEX_INITIAL_LAYER_PRINT_HEIGHT_MM, y_mach_offset_mm=off
+            prep,
+            initial_layer_print_height_mm=APEX_INITIAL_LAYER_PRINT_HEIGHT_MM,
+            y_mach_offset_mm=off,
+            print_direction=direction,
         )
+        residual = LIVE_Y_RESIDUAL_SHIFT_MM[direction]
+        if residual >= 0:
+            fails.append(f"{direction}: expected negative live residual, got {residual}")
         offsets[direction] = off
         print(f"  {direction}: y_mach_offset={off:.4f} predicted_Y_min={y:.4f}")
         if y < FIRST_LAYER_Y_MIN_LO_MM or y > FIRST_LAYER_Y_MIN_HI_MM:
@@ -151,6 +189,7 @@ def test_slice_y_min_both_directions() -> list[str]:
 def main() -> int:
     print("Apex V2 first-layer height + Y min (toe and heel)")
     fails: list[str] = []
+    fails.extend(test_band_check_fails_out_of_band_synthetic())
     fails.extend(test_cura_ref_baseline())
     fails.extend(test_apex_v2_first_layer_height())
     fails.extend(test_y_min_both_directions_from_sample_stl())

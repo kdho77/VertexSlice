@@ -84,12 +84,11 @@ def _orca_first_layer_y_bounds(gcode_text: str, max_layers: int = 12) -> tuple[f
     return min(ys), max(ys)
 
 
-def first_layer_extrusion_y_bounds(gcode_text: str) -> tuple[float | None, float | None, float | None]:
+def first_layer_extrusion_y_bounds(gcode_text: str) -> tuple[float | None, float | None]:
+    """Return ``(y_min, y_max)`` of first-layer extrusion. Either may be None."""
     if ";LAYER:0" in gcode_text:
-        y_min, y_max = _cura_first_layer_y_bounds(gcode_text)
-        return None, y_min, y_max
-    y_min, y_max = _orca_first_layer_y_bounds(gcode_text)
-    return None, y_min, y_max
+        return _cura_first_layer_y_bounds(gcode_text)
+    return _orca_first_layer_y_bounds(gcode_text)
 
 
 def assert_first_layer_y_near_cura(
@@ -98,7 +97,7 @@ def assert_first_layer_y_near_cura(
     ref_y_min: float = CURA_FIRST_LAYER_Y_MIN,
     tol_mm: float = CURA_FIRST_LAYER_Y_TOL,
 ) -> list[str]:
-    _, y_min, _ = first_layer_extrusion_y_bounds(gcode_text)
+    y_min, _y_max = first_layer_extrusion_y_bounds(gcode_text)
     if y_min is None:
         return ["could not measure first-layer Y min"]
     if abs(y_min - ref_y_min) > tol_mm:
@@ -113,7 +112,7 @@ def assert_first_layer_y_in_band(
     hi_mm: float = ORCA_FIRST_LAYER_Y_HI,
     label: str = "first-layer",
 ) -> list[str]:
-    _, y_min, _ = first_layer_extrusion_y_bounds(gcode_text)
+    y_min, _y_max = first_layer_extrusion_y_bounds(gcode_text)
     if y_min is None:
         return [f"{label}: could not measure first-layer Y min"]
     if y_min < lo_mm or y_min > hi_mm:
@@ -123,5 +122,5 @@ def assert_first_layer_y_in_band(
 
 def cura_ref_first_layer_y_min(path: Path | None = None) -> float:
     path = path or CURA_REF
-    _, y_min, _ = first_layer_extrusion_y_bounds(path.read_text(encoding="utf-8", errors="replace"))
+    y_min, _y_max = first_layer_extrusion_y_bounds(path.read_text(encoding="utf-8", errors="replace"))
     return y_min if y_min is not None else CURA_FIRST_LAYER_Y_MIN

@@ -75,7 +75,10 @@ def test_orthocad_slice_layout() -> list[str]:
         flat_p.write_text(json.dumps(proc))
 
         write_belt_transform_ini(
-            work / "belt_transform.ini", prep, initial_layer_print_height_mm=APEX_INITIAL_LAYER_PRINT_HEIGHT_MM
+            work / "belt_transform.ini",
+            prep,
+            initial_layer_print_height_mm=APEX_INITIAL_LAYER_PRINT_HEIGHT_MM,
+            print_direction="toe_first",
         )
 
         import os
