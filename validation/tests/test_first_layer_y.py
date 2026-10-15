@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apex V2 first layer 0.2 mm and first-layer gantry Y (~0.07) for toe and heel."""
+"""Apex V2 first layer = layer height and first-layer gantry Y (~0.07) for toe and heel."""
 from __future__ import annotations
 
 import json
@@ -90,12 +90,23 @@ def test_apex_v2_first_layer_height() -> list[str]:
         data = json.loads(flat.read_text())
         flat.unlink(missing_ok=True)
         raw = json.loads(path.read_text())
-        if name == COMMON.name:
-            if str(raw.get("initial_layer_print_height")) != "0.2":
-                fails.append(f"{name} initial_layer_print_height={raw.get('initial_layer_print_height')} expected 0.2")
+        lh = str(data.get("layer_height"))
         got = str(data.get("initial_layer_print_height"))
-        if got != "0.2":
-            fails.append(f"{name} flattened initial_layer_print_height={got} expected 0.2")
+        if name == COMMON.name:
+            if str(raw.get("initial_layer_print_height")) != str(raw.get("layer_height")):
+                fails.append(
+                    f"{name} initial_layer_print_height={raw.get('initial_layer_print_height')} "
+                    f"!= layer_height={raw.get('layer_height')}"
+                )
+            if str(raw.get("first_layer_height")) != str(raw.get("layer_height")):
+                fails.append(
+                    f"{name} first_layer_height={raw.get('first_layer_height')} "
+                    f"!= layer_height={raw.get('layer_height')}"
+                )
+        if got != lh:
+            fails.append(f"{name} flattened initial_layer_print_height={got} != layer_height={lh}")
+        if abs(float(got) - float(lh)) > 1e-9:
+            fails.append(f"{name} first-layer height {got} != layer height {lh}")
         if abs(float(got) - APEX_INITIAL_LAYER_PRINT_HEIGHT_MM) > 1e-9:
             fails.append(f"{name} first-layer height {got} != {APEX_INITIAL_LAYER_PRINT_HEIGHT_MM}")
     return fails
@@ -177,11 +188,10 @@ def test_slice_y_min_both_directions() -> list[str]:
             )
             layer0 = stats.get("initial_layer_print_height_mm")
             if layer0 is not None and abs(float(layer0) - APEX_INITIAL_LAYER_PRINT_HEIGHT_MM) > 1e-6:
-                fails.append(f"{direction}: slice used first layer {layer0}, expected 0.2")
+                fails.append(f"{direction}: slice used first layer {layer0}, expected {APEX_INITIAL_LAYER_PRINT_HEIGHT_MM}")
             text = gcode.read_text(encoding="utf-8", errors="replace")
-            if "; initial_layer_print_height = 0.2" not in text and "; first_layer_height = 0.200" not in text:
-                if "; initial_layer_print_height = 0.2" not in text:
-                    fails.append(f"{direction}: gcode missing initial_layer_print_height = 0.2")
+            if "; initial_layer_print_height = 0.42" not in text:
+                fails.append(f"{direction}: gcode missing initial_layer_print_height = 0.42")
             fails.extend(assert_first_layer_y_in_band(text, label=direction))
     return fails
 
@@ -198,7 +208,7 @@ def main() -> int:
         for f in fails:
             print(f"  FAIL {f}")
         return 1
-    print("PASS first-layer 0.2 mm and Y min 0.03–0.12 for toe_first and heel_first")
+    print("PASS first-layer = layer height and Y min 0.03–0.12 for toe_first and heel_first")
     return 0
 
 

@@ -6,14 +6,18 @@ import math
 import struct
 from pathlib import Path
 
-# Apex V2 first layer is 0.2 mm (materials will not stick at 0.42).
-APEX_INITIAL_LAYER_PRINT_HEIGHT_MM = 0.2
+# Apex V2 first layer matches normal layer (Cura: no separate first-layer height).
+APEX_INITIAL_LAYER_PRINT_HEIGHT_MM = 0.42
 # Cura Apex insole ref first-layer extrusion Y min is 0.066 mm.
 TARGET_FIRST_LAYER_Y_MM = 0.07
 FIRST_LAYER_Y_MIN_LO_MM = 0.03
 FIRST_LAYER_Y_MIN_HI_MM = 0.12
-# Live GHCR slice of ef5b44e9 (OrthoCAD sample): Y min 0.62 toe / 1.129 heel.
-# Extra INI shift so stacked Y lands at ~0.07.
+# Residuals from live GHCR of ef5b44e9 (h=0.2, geo-only INI): Y min 0.62 toe / 1.129 heel
+# vs target 0.07 → slicer bias +0.55 / +1.059. INI residual = −bias.
+# At h=0.42, y0 and C++ runtime (=h) update in the geometric terms (toe y0 1.386→0.549,
+# heel y0 0.374→0.141, runtime 0.20→0.42). If bias is thickness-independent, residuals
+# stay −0.55 / −1.06. Expected live Y after residual: 0.07 both. Expected INI at 0.42:
+# toe ≈ −1.449, heel ≈ −1.551.
 LIVE_Y_RESIDUAL_SHIFT_MM = {
     "toe_first": -0.55,
     "heel_first": -1.06,
