@@ -5,6 +5,7 @@ name: Docker server proof
 on:
   workflow_dispatch:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'Dockerfile.server'
       - 'server/**'
@@ -29,8 +30,9 @@ permissions:
 jobs:
   docker_proof:
     name: Build image and run slice proof
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -48,6 +50,8 @@ jobs:
           tags: vertexslice-server:proof
           load: true
           push: false
+          cache-from: type=gha,scope=vertexslice-server-headless
+          cache-to: type=gha,mode=max,scope=vertexslice-server-headless
 
       - name: Re-run proof script (capture JSON for logs)
         run: |
@@ -67,6 +71,7 @@ jobs:
 
   validation_unit:
     name: Validation scripts (no binary)
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

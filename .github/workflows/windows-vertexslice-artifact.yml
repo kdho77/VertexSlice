@@ -12,16 +12,25 @@ on:
         description: Rebuild Windows dependencies even if a cache hit exists
         type: boolean
         default: false
-  push:
-    branches:
-      - cursor/headless-server-20b4
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - cursor/headless-server-20b4
       - main
+    paths:
+      - 'src/**'
+      - 'deps/**'
+      - 'deps_src/**'
+      - 'cmake/**'
+      - '**/CMakeLists.txt'
+      - 'resources/**'
+      - 'version.inc'
+      - 'build_release_vs2022.bat'
+      - 'validation/support_preprocess.py'
+      - '.github/workflows/windows-vertexslice-artifact.yml'
 
 concurrency:
-  group: windows-vertexslice-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -30,6 +39,7 @@ permissions:
 jobs:
   build_windows:
     name: Build Windows x64 VertexSlice
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: windows-2022
     timeout-minutes: 240
     env:
