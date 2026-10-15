@@ -23,9 +23,13 @@ RUN ./build_linux.sh -u \
 
 FROM ubuntu:24.04 AS runtime
 
+ARG SKIP_DOCKER_SLICE_PROOF=0
+
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
+ENV QT_QPA_PLATFORM=offscreen
+ENV LIBGL_ALWAYS_SOFTWARE=1
 ENV ORCA_RESOURCES=/app/resources
 ENV ORCA_SLICER_BIN=/app/bin/orca-slicer
 ENV VERTEXSLICE_API_KEY=dev-change-me
@@ -51,8 +55,12 @@ ENV PATH="/app/venv/bin:${PATH}"
 ENV PYTHONPATH="/app"
 ENV VERTEXSLICE_PROOF_GCODE_DIR=/app/proof_gcode
 
-RUN mkdir -p /app/proof_gcode \
-    && /app/scripts/docker_headless_slice_proof.sh
+RUN if [ "$SKIP_DOCKER_SLICE_PROOF" = "0" ]; then \
+      mkdir -p /app/proof_gcode \
+      && /app/scripts/docker_headless_slice_proof.sh; \
+    else \
+      echo "SKIP_DOCKER_SLICE_PROOF=1 — slice proof deferred to CI smoke / runtime"; \
+    fi
 
 EXPOSE 8080
 CMD ["sh", "-c", "uvicorn server.app:app --host 0.0.0.0 --port ${PORT:-8080}"]

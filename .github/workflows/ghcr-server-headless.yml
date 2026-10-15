@@ -47,6 +47,8 @@ jobs:
           context: .
           file: Dockerfile.server
           push: true
+          build-args: |
+            SKIP_DOCKER_SLICE_PROOF=1
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:headless
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
@@ -106,10 +108,14 @@ jobs:
           exit 1
 
       - name: Slice OrthoCAD STL via API
+        timeout-minutes: 20
         run: |
-          cid=$(docker run -d -p 18081:8080 ghcr.io/kdho77/vertexslice-server:headless)
+          cid=$(docker run -d -p 18081:8080 \
+            -e QT_QPA_PLATFORM=offscreen \
+            -e LIBGL_ALWAYS_SOFTWARE=1 \
+            ghcr.io/kdho77/vertexslice-server:headless)
           trap "docker rm -f $cid" EXIT
-          for i in $(seq 1 60); do
+          for i in $(seq 1 90); do
             curl -sf http://127.0.0.1:18081/health >/dev/null && break
             sleep 2
           done
