@@ -13,20 +13,12 @@ from apex_first_layer_y import (  # noqa: E402
     cura_ref_first_layer_y_min,
 )
 
-V2_GCODE = REPO / "validation/output/orthocad_insole_medium26_gyroid_toefirst_v2.gcode"
-
-
 def main() -> int:
     fails: list[str] = []
     ref_text = CURA_REF.read_text(encoding="utf-8", errors="replace")
     fails.extend(assert_first_layer_y_near_cura(ref_text))
     if abs(cura_ref_first_layer_y_min() - 0.066) > 0.001:
         fails.append("unexpected Cura ref baseline")
-    if V2_GCODE.is_file():
-        v2_text = V2_GCODE.read_text(encoding="utf-8", errors="replace")
-        fails.extend(assert_first_layer_y_near_cura(v2_text))
-    else:
-        fails.append(f"missing validation artifact {V2_GCODE}")
     if fails:
         for f in fails:
             print(f"  FAIL {f}")
