@@ -2,12 +2,22 @@
 
 HTTP API wrapping `orca-slicer` with Apex V2 insole presets (toe-first default, Cura-matched first-layer Y via belt `y_mach_offset`, gyroid infill).
 
+## Prebuilt image (GHCR)
+
+Published by `.github/workflows/ghcr-server-headless.yml` on `cursor/headless-server-20b4`:
+
+`ghcr.io/kdho77/vertexslice-server:headless`
+
+Railway: set deploy source to this image (no Dockerfile build on Railway).
+
 ## Run locally
 
 ```bash
 docker build -f Dockerfile.server -t vertexslice-server:local .
 docker run --rm -p 8080:8080 -e VERTEXSLICE_API_KEY=dev-change-me vertexslice-server:local
 ```
+
+CI / GHCR builds skip the in-Dockerfile slice proof (`SKIP_DOCKER_SLICE_PROOF=1`); smoke tests run after push.
 
 ## Railway (PM handoff)
 
