@@ -8,9 +8,14 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 CURA_REF = REPO / "validation/reference_gcode/apex_cura_insole_ref.gcode"
 
+from apex_belt_y_trim import FIRST_LAYER_Y_MIN_HI_MM, FIRST_LAYER_Y_MIN_LO_MM, TARGET_FIRST_LAYER_Y_MM
+
 # Cura ref layer 0 extrusion Y range (gantry / belt nozzle height axis).
 CURA_FIRST_LAYER_Y_MIN = 0.066
 CURA_FIRST_LAYER_Y_TOL = 0.05
+ORCA_FIRST_LAYER_Y_LO = FIRST_LAYER_Y_MIN_LO_MM
+ORCA_FIRST_LAYER_Y_HI = FIRST_LAYER_Y_MIN_HI_MM
+ORCA_FIRST_LAYER_Y_TARGET = TARGET_FIRST_LAYER_Y_MM
 
 
 def _cura_first_layer_y_bounds(gcode_text: str) -> tuple[float | None, float | None]:
@@ -40,7 +45,7 @@ def _cura_first_layer_y_bounds(gcode_text: str) -> tuple[float | None, float | N
 
 
 def _orca_first_layer_y_bounds(gcode_text: str, max_layers: int = 12) -> tuple[float | None, float | None]:
-    """Min/max gantry Y over the first ``max_layers`` model layers (Cura layer-0 analogue)."""
+    """Min/max gantry Y of the first nonempty model layer (Cura layer-0 analogue)."""
     lines = gcode_text.splitlines()
     started = False
     layer_idx = 0
@@ -54,6 +59,8 @@ def _orca_first_layer_y_bounds(gcode_text: str, max_layers: int = 12) -> tuple[f
         if not started:
             continue
         if ";LAYER_CHANGE" in line:
+            if ys:
+                return min(ys), max(ys)
             layer_idx += 1
             if layer_idx > max_layers:
                 break
@@ -96,6 +103,21 @@ def assert_first_layer_y_near_cura(
         return ["could not measure first-layer Y min"]
     if abs(y_min - ref_y_min) > tol_mm:
         return [f"first-layer Y min {y_min:.3f} mm vs Cura ref {ref_y_min:.3f} mm (tol ±{tol_mm})"]
+    return []
+
+
+def assert_first_layer_y_in_band(
+    gcode_text: str,
+    *,
+    lo_mm: float = ORCA_FIRST_LAYER_Y_LO,
+    hi_mm: float = ORCA_FIRST_LAYER_Y_HI,
+    label: str = "first-layer",
+) -> list[str]:
+    _, y_min, _ = first_layer_extrusion_y_bounds(gcode_text)
+    if y_min is None:
+        return [f"{label}: could not measure first-layer Y min"]
+    if y_min < lo_mm or y_min > hi_mm:
+        return [f"{label}: first-layer Y min {y_min:.3f} mm not in {lo_mm:.2f}–{hi_mm:.2f} mm"]
     return []
 
 

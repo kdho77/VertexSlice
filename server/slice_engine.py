@@ -1,6 +1,7 @@
 """Headless orca-slicer CLI wrapper with flattened presets."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -106,10 +107,25 @@ def slice_stl(
     flat_f = flatten_profile(profile.filament, work_dir / "filament.json")
 
     if belt_trim_stl is not None:
-        from apex_belt_y_trim import write_belt_transform_ini  # noqa: E402
+        from apex_belt_y_trim import (  # noqa: E402
+            APEX_INITIAL_LAYER_PRINT_HEIGHT_MM,
+            write_belt_transform_ini,
+        )
 
+        proc = json.loads(flat_p.read_text())
+        try:
+            layer0 = float(
+                proc.get("initial_layer_print_height")
+                or proc.get("first_layer_height")
+                or APEX_INITIAL_LAYER_PRINT_HEIGHT_MM
+            )
+        except (TypeError, ValueError):
+            layer0 = APEX_INITIAL_LAYER_PRINT_HEIGHT_MM
+        placement_stats["initial_layer_print_height_mm"] = layer0
         placement_stats["belt_y_mach_offset_mm"] = write_belt_transform_ini(
-            work_dir / "belt_transform.ini", belt_trim_stl, initial_layer_print_height_mm=0.42
+            work_dir / "belt_transform.ini",
+            belt_trim_stl,
+            initial_layer_print_height_mm=layer0,
         )
 
     env = os.environ.copy()
