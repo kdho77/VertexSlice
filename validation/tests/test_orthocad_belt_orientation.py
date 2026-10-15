@@ -93,8 +93,6 @@ def test_orthocad_slice_layout() -> list[str]:
             "--slice",
             "1",
             "--allow-newer-file",
-            "--orient",
-            "0",
             "--arrange",
             "0",
             "--load-settings",

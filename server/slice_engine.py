@@ -164,7 +164,13 @@ def slice_stl(
         str(slice_stl_path),
     ]
     if belt_orient_disabled:
-        cmd.extend(["--orient", "0", "--arrange", "0"])
+        # Do not pass --orient together with --arrange 0. This orca-slicer binary
+        # SIGABRTs immediately (glibc "corrupted double-linked list (not small)",
+        # exit 134) when both flags are present. Reproduced in the proof image:
+        # either flag alone is fine; the pair is not. PrintConfig orient default
+        # is already 0 (disabled); CLI need_arrange defaults true, so --arrange 0
+        # is the flag that keeps the preprocessed belt mesh in place.
+        cmd.extend(["--arrange", "0"])
     elif arrange:
         cmd.extend(["--arrange", "1"])
     if rotate_z is not None and str(rotate_z).strip() != "":

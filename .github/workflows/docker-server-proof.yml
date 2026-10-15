@@ -28,9 +28,11 @@ permissions:
   contents: read
 
 jobs:
+  # This is the in-image slice proof. Earlier passing/failing runs on this
+  # draft PR were pull_request synchronize; do not draft-skip it (006ae211
+  # gated other expensive jobs). workflow_dispatch also stays enabled.
   docker_proof:
     name: Build image and run slice proof
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -71,7 +73,6 @@ jobs:
 
   validation_unit:
     name: Validation scripts (no binary)
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
