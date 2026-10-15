@@ -30,14 +30,30 @@ def parse_slice_overrides(
     return out
 
 
-def apply_process_overrides(process_json: Path, overrides: dict[str, Any]) -> None:
+def apply_json_overrides(preset_json: Path, overrides: dict[str, Any]) -> None:
+    """Patch a flattened machine/process JSON. User keys win when merged by caller."""
     if not overrides:
         return
-    data = json.loads(process_json.read_text())
-    if "wall_loops" in overrides:
-        data["wall_loops"] = str(overrides["wall_loops"])
-    if "sparse_infill_density" in overrides:
-        data["sparse_infill_density"] = overrides["sparse_infill_density"]
-    if "print_direction" in overrides:
-        data["print_direction"] = overrides["print_direction"]
-    process_json.write_text(json.dumps(data, indent=4) + "\n")
+    data = json.loads(preset_json.read_text())
+    for key, value in overrides.items():
+        if key == "wall_loops":
+            data[key] = str(int(value))
+        elif key == "sparse_infill_density":
+            data[key] = value if str(value).endswith("%") else format_infill_density(value)
+        elif key == "print_direction":
+            data[key] = value
+        elif isinstance(value, (list, dict)):
+            data[key] = value
+        elif isinstance(value, bool):
+            data[key] = "1" if value else "0"
+        else:
+            data[key] = value if isinstance(value, str) else str(value)
+    preset_json.write_text(json.dumps(data, indent=4) + "\n")
+
+
+def apply_process_overrides(process_json: Path, overrides: dict[str, Any]) -> None:
+    apply_json_overrides(process_json, overrides)
+
+
+def apply_machine_overrides(machine_json: Path, overrides: dict[str, Any]) -> None:
+    apply_json_overrides(machine_json, overrides)

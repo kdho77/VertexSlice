@@ -127,6 +127,10 @@
             "sub_path": "filament/ApexBounce.json"
         },
         {
+            "name": "ApexLight",
+            "sub_path": "filament/ApexLight.json"
+        },
+        {
             "name": "VERTEX_APEX_CORE_85A",
             "sub_path": "filament/VERTEX_APEX_CORE_85A.json"
         },

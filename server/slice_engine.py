@@ -14,7 +14,7 @@ sys.path.insert(0, str(REPO_ROOT / "validation"))
 from orca_profile_flatten import flatten_profile  # noqa: E402
 
 from server.profile_registry import SliceProfile
-from server.slice_overrides import apply_process_overrides
+from server.slice_overrides import apply_machine_overrides, apply_process_overrides
 from validation.stl_bed_fit import bounds_after_z_rotation  # noqa: E402
 from validation.stl_preprocess import prepare_belt_stl, prepare_orthocad_insole_stl  # noqa: E402
 
@@ -104,8 +104,10 @@ def slice_stl(
 
     binary = _slicer_binary()
     flat_m = flatten_profile(profile.machine, work_dir / "machine.json")
+    apply_machine_overrides(flat_m, getattr(profile, "machine_overrides", None) or {})
     flat_p = flatten_profile(profile.process, work_dir / "process.json")
-    apply_process_overrides(flat_p, process_overrides or {})
+    merged_process = {**(getattr(profile, "process_overrides", None) or {}), **(process_overrides or {})}
+    apply_process_overrides(flat_p, merged_process)
     flat_f = flatten_profile(profile.filament, work_dir / "filament.json")
 
     if belt_trim_stl is not None:
@@ -123,12 +125,22 @@ def slice_stl(
             )
         except (TypeError, ValueError):
             layer0 = APEX_INITIAL_LAYER_PRINT_HEIGHT_MM
+        try:
+            layer_h = float(proc.get("layer_height") or layer0)
+        except (TypeError, ValueError):
+            layer_h = layer0
         placement_stats["initial_layer_print_height_mm"] = layer0
+        placement_stats["layer_height_mm"] = layer_h
+        target_y = getattr(profile, "target_first_layer_y_mm", None)
+        if target_y is not None:
+            placement_stats["target_first_layer_y_mm"] = target_y
         placement_stats["belt_y_mach_offset_mm"] = write_belt_transform_ini(
             work_dir / "belt_transform.ini",
             belt_trim_stl,
             initial_layer_print_height_mm=layer0,
+            layer_height_mm=layer_h,
             print_direction=belt_print_direction,
+            **({"target_y_mm": target_y} if target_y is not None else {}),
         )
 
     env = os.environ.copy()

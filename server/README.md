@@ -51,6 +51,7 @@ Profile ids: `GET /v1/profiles` (with API key when configured).
 | `apex_core` | ApexCore | 225 °C | 0 (off) | **default** — same filament as current `VERTEX_APEX_CORE_95A` |
 | `apex_forge` | ApexForge | 245 °C (first layer too) | 0 (off) | otherwise identical to ApexCore |
 | `apex_bounce` | ApexBounce | 225 °C | 60 °C (first layer too) | otherwise identical to ApexCore |
+| `apex_light` | ApexLight | 260 °C | 0 (off) | foaming TPU (Cura `VERTEX_APEX_LITE_90A`): flow 72%, belt step 0.65 / layer 0.46, 2 walls, no retraction, fan 0→35% |
 
 Omitted / empty `material` → `apex_core` (existing callers unchanged). Any other value → **400**.
 

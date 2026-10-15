@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ApexCore / ApexForge / ApexBounce materials: temps, API, PRINT_START call line."""
+"""ApexCore / ApexForge / ApexBounce / ApexLight materials: temps, API, PRINT_START call line."""
 from __future__ import annotations
 
 import json
@@ -68,6 +68,7 @@ def test_registry_and_api_contract() -> list[str]:
         "apex_core": ("ApexCore", 225, 0),
         "apex_forge": ("ApexForge", 245, 0),
         "apex_bounce": ("ApexBounce", 225, 60),
+        "apex_light": ("ApexLight", 260, 0),
     }
     if set(mats) != set(expect):
         fails.append(f"material ids {sorted(mats)} != {sorted(expect)}")
@@ -105,6 +106,11 @@ def test_registry_and_api_contract() -> list[str]:
     forge = get_profile("apex-v2-insole-95a", material="apex_forge")
     if forge is None or forge.filament.name != "ApexForge.json":
         fails.append("apex_forge did not select ApexForge.json")
+    light = get_profile("apex-v2-insole-95a", material="apex_light")
+    if light is None or light.filament.name != "ApexLight.json":
+        fails.append("apex_light did not select ApexLight.json")
+    elif not light.process_overrides or light.process_overrides.get("wall_loops") != "2":
+        fails.append("apex_light missing 2-wall process override")
     return fails
 
 
@@ -125,7 +131,7 @@ def test_http_400_and_materials_endpoint() -> list[str]:
     if body.get("default") != "apex_core":
         fails.append(f"GET /v1/materials default {body.get('default')!r}")
     ids = [m["id"] for m in body.get("materials") or []]
-    if ids != ["apex_core", "apex_forge", "apex_bounce"]:
+    if ids != ["apex_core", "apex_forge", "apex_bounce", "apex_light"]:
         fails.append(f"GET /v1/materials ids {ids}")
     bad = client.post(
         "/v1/slice",
@@ -141,7 +147,7 @@ def test_builtin_presets_registered() -> list[str]:
     fails: list[str] = []
     vendor = json.loads(VENDOR.read_text())
     names = {e["name"] for e in vendor.get("filament_list") or []}
-    for name in ("ApexCore", "ApexForge", "ApexBounce"):
+    for name in ("ApexCore", "ApexForge", "ApexBounce", "ApexLight"):
         if name not in names:
             fails.append(f"{name} not in IdeaFormer.json filament_list")
         path = REPO / "resources/profiles/IdeaFormer/filament" / f"{name}.json"
@@ -149,7 +155,7 @@ def test_builtin_presets_registered() -> list[str]:
             fails.append(f"missing {path}")
     model = json.loads((REPO / "resources/profiles/IdeaFormer/machine/Vertex Apex V2.json").read_text())
     mats = model.get("default_materials") or ""
-    for name in ("ApexCore", "ApexForge", "ApexBounce"):
+    for name in ("ApexCore", "ApexForge", "ApexBounce", "ApexLight"):
         if name not in mats:
             fails.append(f"{name} missing from Vertex Apex V2 default_materials")
     return fails
@@ -179,19 +185,22 @@ def test_profile_temps_and_print_start() -> list[str]:
             fails.append(f"ApexCore differs from 95A at {k}: {core_named.get(k)!r} vs {v!r}")
             break
 
-    for mid in ("apex_core", "apex_forge", "apex_bounce"):
+    for mid in ("apex_core", "apex_forge", "apex_bounce", "apex_light"):
         spec = resolve_material(mid)
         flat = _flatten(spec.filament)
         nozzle, bed = filament_temps(flat)
         if (nozzle, bed) != (spec.nozzle_c, spec.bed_c):
             fails.append(f"{mid} flatten temps {nozzle}/{bed} != {spec.nozzle_c}/{spec.bed_c}")
-        rendered = render_expected_start_gcode(start, nozzle, bed, str(machine.get("gcode_flavor") or ""))
+        start_for_mid = spec.machine_overrides.get("machine_start_gcode") or start
+        rendered = render_expected_start_gcode(start_for_mid, nozzle, bed, str(machine.get("gcode_flavor") or ""))
         fails.extend(f"{mid}: {f}" for f in assert_material_temps_in_gcode(rendered, nozzle, bed))
-        sub = substitute_print_start(start, nozzle, bed)
+        sub = substitute_print_start(start_for_mid, nozzle, bed)
         if f"M104 S{nozzle}" not in sub or f"M109 S{nozzle}" not in sub:
             fails.append(f"{mid} PRINT_START placeholders did not receive {nozzle}")
         if "[nozzle_temperature_initial_layer]" in sub:
             fails.append(f"{mid} leftover nozzle placeholder")
+        if not start_for_mid.startswith("PRINT_START\n"):
+            fails.append(f"{mid} start gcode PRINT_START call line changed")
     return fails
 
 
@@ -207,7 +216,7 @@ def test_sliced_gcode_temps() -> list[str]:
     start = machine.get("machine_start_gcode") or ""
     default_text = None
     core_text = None
-    for mid in ("apex_core", "apex_forge", "apex_bounce"):
+    for mid in ("apex_core", "apex_forge", "apex_bounce", "apex_light"):
         spec = resolve_material(mid)
         with tempfile.TemporaryDirectory(prefix=f"mat_{mid}_") as td:
             outdir = Path(td)

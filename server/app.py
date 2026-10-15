@@ -119,7 +119,7 @@ async def slice_endpoint(
     ),
     material: str | None = Form(
         default=None,
-        description="Filament: apex_core (default), apex_forge, apex_bounce",
+        description="Filament: apex_core (default), apex_forge, apex_bounce, apex_light",
     ),
     _: None = Depends(require_api_key),
 ):
@@ -149,6 +149,8 @@ async def slice_endpoint(
             overrides["print_direction"] = validate_print_direction(print_direction)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if "wall_loops" not in overrides and material_spec.default_wall_loops is not None:
+            overrides["wall_loops"] = material_spec.default_wall_loops
 
         gcode_path, stats = slice_stl(
             dest,

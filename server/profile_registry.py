@@ -1,7 +1,7 @@
 """Maps API profile ids to IdeaFormer Apex preset paths (repo-relative)."""
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import sys
@@ -10,6 +10,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 from validation.apex_insole_tunables import DEFAULT_PRINT_DIRECTION, DEFAULT_WALL_LOOPS  # noqa: E402
 from validation.apex_insole_densities import KENDON_INFILL_DENSITY_PRESETS  # noqa: E402
+from validation.apex_light import (  # noqa: E402
+    BED_C as APEX_LIGHT_BED_C,
+    DEFAULT_WALL_LOOPS as APEX_LIGHT_WALL_LOOPS,
+    MACHINE_OVERRIDES as APEX_LIGHT_MACHINE_OVERRIDES,
+    NOZZLE_C as APEX_LIGHT_NOZZLE_C,
+    PROCESS_OVERRIDES as APEX_LIGHT_PROCESS_OVERRIDES,
+    TARGET_FIRST_LAYER_Y_MM as APEX_LIGHT_TARGET_FIRST_LAYER_Y_MM,
+)
 PROFILES = REPO_ROOT / "resources" / "profiles" / "IdeaFormer"
 MACHINE = PROFILES / "machine" / "Vertex Apex V2 1.0 nozzle.json"
 FILAMENT_95A = PROFILES / "filament" / "VERTEX_APEX_CORE_95A.json"
@@ -24,6 +32,10 @@ class MaterialSpec:
     filament: Path
     nozzle_c: int
     bed_c: int
+    process_overrides: dict = field(default_factory=dict)
+    machine_overrides: dict = field(default_factory=dict)
+    default_wall_loops: int | None = None
+    target_first_layer_y_mm: float | None = None
 
 
 _MATERIALS: dict[str, MaterialSpec] = {
@@ -49,6 +61,17 @@ _MATERIALS: dict[str, MaterialSpec] = {
         nozzle_c=225,
         bed_c=60,
     ),
+    "apex_light": MaterialSpec(
+        material_id="apex_light",
+        display_name="ApexLight",
+        filament=PROFILES / "filament" / "ApexLight.json",
+        nozzle_c=APEX_LIGHT_NOZZLE_C,
+        bed_c=APEX_LIGHT_BED_C,
+        process_overrides=dict(APEX_LIGHT_PROCESS_OVERRIDES),
+        machine_overrides=dict(APEX_LIGHT_MACHINE_OVERRIDES),
+        default_wall_loops=APEX_LIGHT_WALL_LOOPS,
+        target_first_layer_y_mm=APEX_LIGHT_TARGET_FIRST_LAYER_Y_MM,
+    ),
 }
 
 
@@ -59,6 +82,9 @@ class SliceProfile:
     process: Path
     filament: Path
     description: str
+    process_overrides: dict = field(default_factory=dict)
+    machine_overrides: dict = field(default_factory=dict)
+    target_first_layer_y_mm: float | None = None
 
 
 def _entry(profile_id: str, process_name: str, description: str) -> SliceProfile:
@@ -143,9 +169,13 @@ def get_profile(profile_id: str, material: str | None = None) -> SliceProfile | 
     if p is None:
         return None
     spec = resolve_material(material)
-    if spec.filament == p.filament:
-        return p
-    return replace(p, filament=spec.filament)
+    return replace(
+        p,
+        filament=spec.filament,
+        process_overrides=dict(spec.process_overrides),
+        machine_overrides=dict(spec.machine_overrides),
+        target_first_layer_y_mm=spec.target_first_layer_y_mm,
+    )
 
 
 def list_profiles() -> list[dict]:

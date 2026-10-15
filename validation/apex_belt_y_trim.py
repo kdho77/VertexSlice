@@ -68,7 +68,7 @@ def first_slice_gantry_y_mm(
     *,
     initial_layer_print_height_mm: float = APEX_INITIAL_LAYER_PRINT_HEIGHT_MM,
     belt_angle_deg: float = 45.0,
-    layer_height_mm: float = 0.42,
+    layer_height_mm: float | None = None,
     max_planes: int = 8,
 ) -> float:
     """
@@ -81,7 +81,8 @@ def first_slice_gantry_y_mm(
     tris = _read_triangles(stl_path)
     z_virt_min = min(p[1] + p[2] for tri in tris for p in tri)
     layer0_virt = initial_layer_print_height_mm / math.cos(math.radians(belt_angle_deg))
-    later_virt = layer_height_mm / math.cos(math.radians(belt_angle_deg))
+    later_h = initial_layer_print_height_mm if layer_height_mm is None else layer_height_mm
+    later_virt = later_h / math.cos(math.radians(belt_angle_deg))
     for i in range(max_planes):
         plane = z_virt_min + layer0_virt + i * later_virt
         pts = _plane_hits_yz(tris, plane)
@@ -127,6 +128,7 @@ def cura_matched_y_mach_offset_mm(
     belt_angle_deg: float = 45.0,
     target_y_mm: float = TARGET_FIRST_LAYER_Y_MM,
     print_direction: str | None = None,
+    layer_height_mm: float | None = None,
 ) -> float:
     """
     Offset written to belt_transform.ini so first-layer extrusion Y ≈ target.
@@ -138,6 +140,7 @@ def cura_matched_y_mach_offset_mm(
         stl_path,
         initial_layer_print_height_mm=initial_layer_print_height_mm,
         belt_angle_deg=belt_angle_deg,
+        layer_height_mm=layer_height_mm,
     )
     runtime = cpp_runtime_y_mach_offset_mm(
         stl_path,
@@ -154,12 +157,15 @@ def predicted_first_layer_y_mm(
     belt_angle_deg: float = 45.0,
     y_mach_offset_mm: float | None = None,
     print_direction: str | None = None,
+    layer_height_mm: float | None = None,
+    target_y_mm: float = TARGET_FIRST_LAYER_Y_MM,
 ) -> float:
     """Expected live first-layer Y after geometric trim + per-direction residual."""
     y0 = first_slice_gantry_y_mm(
         stl_path,
         initial_layer_print_height_mm=initial_layer_print_height_mm,
         belt_angle_deg=belt_angle_deg,
+        layer_height_mm=layer_height_mm,
     )
     runtime = cpp_runtime_y_mach_offset_mm(
         stl_path,
@@ -172,6 +178,8 @@ def predicted_first_layer_y_mm(
             initial_layer_print_height_mm=initial_layer_print_height_mm,
             belt_angle_deg=belt_angle_deg,
             print_direction=print_direction,
+            layer_height_mm=layer_height_mm,
+            target_y_mm=target_y_mm,
         )
     # Residual is already in the INI offset; live Y ≈ geometric + residual
     # vs the uncorrected slicer (ef5b44e9 measured 0.62 / 1.129).
@@ -185,12 +193,16 @@ def write_belt_transform_ini(
     initial_layer_print_height_mm: float = APEX_INITIAL_LAYER_PRINT_HEIGHT_MM,
     belt_angle_deg: float = 45.0,
     print_direction: str | None = None,
+    layer_height_mm: float | None = None,
+    target_y_mm: float = TARGET_FIRST_LAYER_Y_MM,
 ) -> float:
     offset = cura_matched_y_mach_offset_mm(
         stl_path,
         initial_layer_print_height_mm=initial_layer_print_height_mm,
         belt_angle_deg=belt_angle_deg,
         print_direction=print_direction,
+        layer_height_mm=layer_height_mm,
+        target_y_mm=target_y_mm,
     )
     ini_path.write_text(f"y_mach_offset = {offset:.6f}\n", encoding="utf-8")
     return offset
