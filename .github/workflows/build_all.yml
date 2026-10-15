@@ -56,6 +56,10 @@ on:
         description: 'Also build Windows via the Build all matrix (windows-latest). Off by default; not run on pull_request or push.'
         type: boolean
         default: false
+      include-flatpak:
+        description: 'Also build Flatpak (x86_64 + aarch64). Off by default; not run on pull_request or push.'
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
@@ -177,8 +181,9 @@ jobs:
             runner: ubuntu-24.04
           - arch: aarch64
             runner: ubuntu-24.04-arm
-    # Flatpak is workflow_dispatch only (x86_64 + aarch64 is ~3h billable per run).
-    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && (github.event_name != 'schedule' || github.repository == 'OrcaSlicer/OrcaSlicer') && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+    # Flatpak is workflow_dispatch only when include-flatpak is true
+    # (x86_64 + aarch64 is ~3h billable per run).
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.include-flatpak && (github.event_name != 'schedule' || github.repository == 'OrcaSlicer/OrcaSlicer') && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     runs-on: ${{ matrix.variant.runner }}
     env:
       date:
