@@ -21,6 +21,7 @@ on:
      - 'scripts/flatpak/**'
 
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
      - main
      - release/*
@@ -47,6 +48,14 @@ on:
         description: 'Only build dependencies (bypasses caching)'
         type: boolean
         default: false
+      include-macos:
+        description: 'Also build macOS (macos-14, billed at 10x). Off by default; not run on pull_request or push.'
+        type: boolean
+        default: false
+      include-windows:
+        description: 'Also build Windows via the Build all matrix (windows-latest). Off by default; not run on pull_request or push.'
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
@@ -58,24 +67,52 @@ jobs:
     name: Build Linux
     strategy:
       fail-fast: false
-    # Don't run scheduled builds on forks:
-    if: ${{ !cancelled() && (github.event_name != 'schedule' || github.repository == 'OrcaSlicer/OrcaSlicer') }}
+    # Don't run scheduled builds on forks. Skip draft PRs (ready_for_review retriggers).
+    if: ${{ !cancelled() && (github.event_name != 'schedule' || github.repository == 'OrcaSlicer/OrcaSlicer') && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     uses: ./.github/workflows/build_check_cache.yml
     with:
       os: ubuntu-24.04
       build-deps-only: ${{ inputs.build-deps-only || false }}
     secrets: inherit
+  # macos-14 (10x) and windows-latest are omitted from the matrix on pull_request
+  # and push. They are inserted only for workflow_dispatch when the matching
+  # include-* input is true. The dummy include fallback is never run; it exists
+  # so fromJSON is valid if this job is skipped (reusable-workflow `if` cannot
+  # use the matrix context).
+  non_linux_matrix:
+    name: Non-Linux matrix
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.include-macos || inputs.include-windows) && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+    outputs:
+      include: ${{ steps.set.outputs.include }}
+    steps:
+      - name: Build matrix
+        id: set
+        run: |
+          include='[]'
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            items=''
+            if [ "${{ inputs.include-windows }}" = "true" ]; then
+              items='{"os":"windows-latest"}'
+            fi
+            if [ "${{ inputs.include-macos }}" = "true" ]; then
+              [ -n "$items" ] && items="${items},"
+              items="${items}{\"os\":\"macos-14\",\"arch\":\"arm64\"}"
+            fi
+            if [ -n "$items" ]; then
+              include="[${items}]"
+            fi
+          fi
+          echo "include=${include}" >> "$GITHUB_OUTPUT"
+          echo "Non-Linux matrix: ${include}"
   build_all:
     name: Build Non-Linux
+    needs: [non_linux_matrix]
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-          - os: macos-14
-            arch: arm64
-    # Don't run scheduled builds on forks:
-    if: ${{ !cancelled() && (github.event_name != 'schedule' || github.repository == 'OrcaSlicer/OrcaSlicer') }}
+        include: ${{ fromJSON(needs.non_linux_matrix.outputs.include != '[]' && needs.non_linux_matrix.outputs.include || '[{"os":"ubuntu-24.04"}]') }}
+    if: ${{ !cancelled() && needs.non_linux_matrix.result == 'success' && needs.non_linux_matrix.outputs.include != '[]' && (github.event_name != 'schedule' || github.repository == 'OrcaSlicer/OrcaSlicer') && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     uses: ./.github/workflows/build_check_cache.yml
     with:
       os: ${{ matrix.os }}
@@ -87,7 +124,7 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-24.04
     needs: build_linux
-    if: ${{ !cancelled() && success() }}
+    if: ${{ !cancelled() && success() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -140,8 +177,8 @@ jobs:
             runner: ubuntu-24.04
           - arch: aarch64
             runner: ubuntu-24.04-arm
-    # Don't run scheduled builds on forks:
-    if: ${{ !cancelled() && (github.event_name != 'schedule' || github.repository == 'OrcaSlicer/OrcaSlicer') }}
+    # Flatpak is workflow_dispatch only (x86_64 + aarch64 is ~3h billable per run).
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && (github.event_name != 'schedule' || github.repository == 'OrcaSlicer/OrcaSlicer') && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     runs-on: ${{ matrix.variant.runner }}
     env:
       date:

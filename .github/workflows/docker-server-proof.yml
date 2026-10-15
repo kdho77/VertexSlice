@@ -1,0 +1,93 @@
+# Build Dockerfile.server and run insole slice proof vs Cura reference G-code.
+# Railway config is present but this workflow does not deploy.
+name: Docker server proof
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'Dockerfile.server'
+      - 'server/**'
+      - 'scripts/docker_headless_slice_proof.sh'
+      - 'validation/**'
+      - 'resources/profiles/IdeaFormer/**'
+      - '.github/workflows/docker-server-proof.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'Dockerfile.server'
+      - 'server/**'
+
+concurrency:
+  group: docker-server-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  docker_proof:
+    name: Build image and run slice proof
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          lfs: 'true'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build server image (proof runs in Dockerfile RUN)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.server
+          tags: vertexslice-server:proof
+          load: true
+          push: false
+          cache-from: type=gha,scope=vertexslice-server-headless
+          cache-to: type=gha,mode=max,scope=vertexslice-server-headless
+
+      - name: Re-run proof script (capture JSON for logs)
+        run: |
+          docker run --rm \
+            -e VERTEXSLICE_API_KEY=ci-proof \
+            vertexslice-server:proof \
+            /app/scripts/docker_headless_slice_proof.sh | tee docker-proof.json
+          docker image inspect vertexslice-server:proof --format 'image_size_bytes={{.Size}}'
+
+      - name: Upload proof report
+        uses: actions/upload-artifact@v5
+        with:
+          name: docker-server-proof
+          path: docker-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+  validation_unit:
+    name: Validation scripts (no binary)
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          lfs: 'true'
+      - name: Registry + Cura ref tests
+        run: |
+          python3 -m pip install -q -r server/requirements.txt httpx
+          python3 validation/tests/test_server_registry.py
+          python3 validation/tests/test_server_slice_overrides.py
+          python3 validation/tests/test_materials.py
+          python3 validation/tests/test_apex_light.py
+          python3 validation/tests/test_apex_v2_insole_densities.py
+          python3 validation/tests/test_apex_v2_cura_match.py
+          python3 validation/tests/test_apex_v2_slice.py
+          python3 validation/tests/test_apex_v2_gcode_bookends.py
+          python3 validation/tests/test_first_layer_y.py
+          python3 validation/tests/test_print_direction_tunables.py
