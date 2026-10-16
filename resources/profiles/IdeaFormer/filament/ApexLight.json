@@ -9,7 +9,7 @@
         "Vertex Apex V2 1.0 nozzle"
     ],
     "filament_notes": [
-        "ApexLight — foaming TPU (Cura VERTEX_APEX_LITE_90A). Nozzle 260 C, bed off, flow 72%, no retraction during print, fan 0 on layer 0 ramping ~6%/layer to 35%."
+        "ApexLight \u2014 foaming TPU (Cura VERTEX_APEX_LITE_90A). Nozzle 260 C, bed off, flow 72%, no retraction during print, fan 0 on layer 0 ramping ~6%/layer to 35%."
     ],
     "filament_settings_id": [
         "ApexLight"
@@ -55,5 +55,14 @@
     ],
     "additional_cooling_fan_speed": [
         "18"
+    ],
+    "enable_overhang_bridge_fan": [
+        "0"
+    ],
+    "overhang_fan_speed": [
+        "35"
+    ],
+    "pressure_advance": [
+        "0.05"
     ]
 }

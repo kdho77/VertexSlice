@@ -14,7 +14,7 @@ sys.path.insert(0, str(REPO_ROOT / "validation"))
 from orca_profile_flatten import flatten_profile  # noqa: E402
 
 from server.profile_registry import SliceProfile
-from server.slice_overrides import apply_machine_overrides, apply_process_overrides
+from server.slice_overrides import apply_json_overrides, apply_machine_overrides, apply_process_overrides
 from validation.stl_bed_fit import bounds_after_z_rotation  # noqa: E402
 from validation.stl_preprocess import prepare_belt_stl, prepare_orthocad_insole_stl  # noqa: E402
 
@@ -109,6 +109,7 @@ def slice_stl(
     merged_process = {**(getattr(profile, "process_overrides", None) or {}), **(process_overrides or {})}
     apply_process_overrides(flat_p, merged_process)
     flat_f = flatten_profile(profile.filament, work_dir / "filament.json")
+    apply_json_overrides(flat_f, getattr(profile, "filament_overrides", None) or {})
 
     if belt_trim_stl is not None:
         from apex_belt_y_trim import (  # noqa: E402
@@ -176,33 +177,74 @@ def slice_stl(
     if rotate_z is not None and str(rotate_z).strip() != "":
         cmd.extend(["--rotate", str(rotate_z)])
 
-    t0 = time.perf_counter()
-    # GNU time -v for peak RSS when available
     time_v = Path("/usr/bin/time")
-    if time_v.is_file():
-        wrapper = [str(time_v), "-v", *cmd]
-    else:
-        wrapper = cmd
+    t0 = time.perf_counter()
+    peak_rss_kb = None
 
-    proc = subprocess.run(
-        wrapper,
-        capture_output=True,
-        text=True,
-        timeout=timeout_s,
-        cwd=str(work_dir),
-        env=env,
-        errors="replace",
-    )
+    def _run_once() -> tuple[Path, subprocess.CompletedProcess]:
+        nonlocal peak_rss_kb
+        for old in work_dir.glob("**/*.gcode"):
+            old.unlink()
+        # GNU time -v for peak RSS when available
+        wrapper = [str(time_v), "-v", *cmd] if time_v.is_file() else cmd
+        proc = subprocess.run(
+            wrapper,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            cwd=str(work_dir),
+            env=env,
+            errors="replace",
+        )
+        rss = _parse_peak_rss(proc.stderr + proc.stdout)
+        if rss is not None:
+            peak_rss_kb = max(peak_rss_kb or 0, rss)
+        if proc.returncode != 0:
+            tail = (proc.stdout + proc.stderr)[-3000:]
+            raise RuntimeError(f"orca-slicer exit {proc.returncode}: {tail}")
+        found = list(work_dir.glob("**/*.gcode"))
+        if not found:
+            raise RuntimeError("no gcode produced")
+        return found[0], proc
+
+    if belt_ini.is_file():
+        # Measured first-layer Y trim (replaces the h=0.2 residual constants).
+        # y_mach_offset adds 1:1 to every gantry Y (BeltTransform::inverse_transform_point),
+        # but the C++ clamps Y_mach >= 0, so probe with a large positive offset where
+        # nothing clamps, measure the first printed layer's extrusion Y min, then
+        # re-slice with the exact offset that lands it on the material target.
+        from apex_belt_y_trim import (  # noqa: E402
+            Y_PROBE_OFFSET_MM,
+            TARGET_FIRST_LAYER_Y_MM,
+            measured_y_mach_offset_mm,
+        )
+        from apex_first_layer_y import first_layer_extrusion_y_bounds  # noqa: E402
+
+        target_y = getattr(profile, "target_first_layer_y_mm", None)
+        target_y = TARGET_FIRST_LAYER_Y_MM if target_y is None else target_y
+        belt_ini.write_text(f"y_mach_offset = {Y_PROBE_OFFSET_MM:.6f}\n", encoding="utf-8")
+        probe_gcode, _ = _run_once()
+        probe_y_min, _ = first_layer_extrusion_y_bounds(
+            probe_gcode.read_text(encoding="utf-8", errors="replace")
+        )
+        if probe_y_min is None:
+            raise RuntimeError("belt Y probe: no first-layer extrusion found")
+        offset = measured_y_mach_offset_mm(probe_y_min, Y_PROBE_OFFSET_MM, target_y)
+        belt_ini.write_text(f"y_mach_offset = {offset:.6f}\n", encoding="utf-8")
+        placement_stats["belt_y_probe_first_layer_y_mm"] = probe_y_min
+        placement_stats["belt_y_mach_offset_geometric_mm"] = placement_stats.get("belt_y_mach_offset_mm")
+        placement_stats["belt_y_mach_offset_mm"] = offset
+
+    gcode_path, proc = _run_once()
     elapsed = time.perf_counter() - t0
-    peak_rss_kb = _parse_peak_rss(proc.stderr + proc.stdout)
 
-    if proc.returncode != 0:
-        tail = (proc.stdout + proc.stderr)[-3000:]
-        raise RuntimeError(f"orca-slicer exit {proc.returncode}: {tail}")
-
-    gcodes = list(work_dir.glob("**/*.gcode"))
-    if not gcodes:
-        raise RuntimeError("no gcode produced")
+    postprocess = getattr(profile, "gcode_postprocess", None)
+    if postprocess is not None:
+        gcode_path.write_text(
+            postprocess(gcode_path.read_text(encoding="utf-8", errors="replace")),
+            encoding="utf-8",
+        )
+    gcodes = [gcode_path]
 
     stats = {
         "elapsed_s": round(elapsed, 3),

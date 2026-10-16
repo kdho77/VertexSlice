@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Callable
 
 import sys
 
@@ -18,6 +19,13 @@ from validation.apex_light import (  # noqa: E402
     PROCESS_OVERRIDES as APEX_LIGHT_PROCESS_OVERRIDES,
     TARGET_FIRST_LAYER_Y_MM as APEX_LIGHT_TARGET_FIRST_LAYER_Y_MM,
 )
+from validation.apex_core import (  # noqa: E402
+    DEFAULT_WALL_LOOPS as APEX_CORE_WALL_LOOPS,
+    FILAMENT_OVERRIDES as APEX_CORE_FILAMENT_OVERRIDES,
+    PROCESS_OVERRIDES as APEX_CORE_PROCESS_OVERRIDES,
+    TARGET_FIRST_LAYER_Y_MM as APEX_CORE_TARGET_FIRST_LAYER_Y_MM,
+)
+from validation.apex_light_postprocess import postprocess_apex_light  # noqa: E402
 PROFILES = REPO_ROOT / "resources" / "profiles" / "IdeaFormer"
 MACHINE = PROFILES / "machine" / "Vertex Apex V2 1.0 nozzle.json"
 FILAMENT_95A = PROFILES / "filament" / "VERTEX_APEX_CORE_95A.json"
@@ -34,8 +42,10 @@ class MaterialSpec:
     bed_c: int
     process_overrides: dict = field(default_factory=dict)
     machine_overrides: dict = field(default_factory=dict)
+    filament_overrides: dict = field(default_factory=dict)
     default_wall_loops: int | None = None
     target_first_layer_y_mm: float | None = None
+    gcode_postprocess: Callable[[str], str] | None = None
 
 
 _MATERIALS: dict[str, MaterialSpec] = {
@@ -46,6 +56,10 @@ _MATERIALS: dict[str, MaterialSpec] = {
         filament=FILAMENT_95A,
         nozzle_c=225,
         bed_c=0,
+        process_overrides=dict(APEX_CORE_PROCESS_OVERRIDES),
+        filament_overrides=dict(APEX_CORE_FILAMENT_OVERRIDES),
+        default_wall_loops=APEX_CORE_WALL_LOOPS,
+        target_first_layer_y_mm=APEX_CORE_TARGET_FIRST_LAYER_Y_MM,
     ),
     "apex_forge": MaterialSpec(
         material_id="apex_forge",
@@ -71,6 +85,7 @@ _MATERIALS: dict[str, MaterialSpec] = {
         machine_overrides=dict(APEX_LIGHT_MACHINE_OVERRIDES),
         default_wall_loops=APEX_LIGHT_WALL_LOOPS,
         target_first_layer_y_mm=APEX_LIGHT_TARGET_FIRST_LAYER_Y_MM,
+        gcode_postprocess=postprocess_apex_light,
     ),
 }
 
@@ -84,7 +99,9 @@ class SliceProfile:
     description: str
     process_overrides: dict = field(default_factory=dict)
     machine_overrides: dict = field(default_factory=dict)
+    filament_overrides: dict = field(default_factory=dict)
     target_first_layer_y_mm: float | None = None
+    gcode_postprocess: Callable[[str], str] | None = None
 
 
 def _entry(profile_id: str, process_name: str, description: str) -> SliceProfile:
@@ -174,7 +191,9 @@ def get_profile(profile_id: str, material: str | None = None) -> SliceProfile | 
         filament=spec.filament,
         process_overrides=dict(spec.process_overrides),
         machine_overrides=dict(spec.machine_overrides),
+        filament_overrides=dict(spec.filament_overrides),
         target_first_layer_y_mm=spec.target_first_layer_y_mm,
+        gcode_postprocess=spec.gcode_postprocess,
     )
 
 

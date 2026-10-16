@@ -186,6 +186,23 @@ def predicted_first_layer_y_mm(
     return y0 + runtime + y_mach_offset_mm - live_y_residual_shift_mm(print_direction)
 
 
+# Root cause of the 0.661 (toe) / 0.000 (heel, light) first-layer Y at h=0.42/0.46:
+# LIVE_Y_RESIDUAL_SHIFT_MM was fitted at h=0.2 and assumed constant. It is not: it is
+# the gap between this file's geometric model (first plane at the mesh keel tip,
+# z_virt_min + h/cos45) and Orca's first *printed* layer, which slices at mid-layer
+# and drops sub-width slivers, so which layer first extrudes (and its Y) depends on
+# layer height, wall count and mesh shape. Measured on the OrthoCAD medium sample:
+# needed residual toe -1.141 (core h=.42) / -0.369 (light h=.46), heel -0.797/-0.839,
+# vs -0.55/-1.06 assumed. Negative results are then hidden by the C++ clamp Y>=0.
+# slice_engine now probes and measures instead (exact for any h / mesh / direction).
+Y_PROBE_OFFSET_MM = 20.0
+
+
+def measured_y_mach_offset_mm(probe_first_layer_y_mm: float, probe_offset_mm: float, target_y_mm: float) -> float:
+    """y_mach_offset is additive 1:1 on gantry Y (no clamp at the probe offset)."""
+    return target_y_mm - (probe_first_layer_y_mm - probe_offset_mm)
+
+
 def write_belt_transform_ini(
     ini_path: Path,
     stl_path: Path,
