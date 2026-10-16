@@ -30,6 +30,7 @@ from apex_bed_placement import (  # noqa: E402
     assert_apex_insole_extrusion_layout,
     extrusion_xyz_bounds,
 )
+from apex_first_layer_y import first_layer_extrusion_y_bounds  # noqa: E402
 from apex_toe_first import assert_toe_first_gcode  # noqa: E402
 from validation.stl_bed_fit import bounds_after_z_rotation, stl_axis_bounds  # noqa: E402
 
@@ -155,6 +156,7 @@ def _run_slice(
     bookend_fails, bookend_detail = _bookend_check(gcode_text)
     layout_fails: list[str] = []
     extrusion_bounds = extrusion_xyz_bounds(gcode_text)
+    first_layer_y_min, first_layer_y_max = first_layer_extrusion_y_bounds(gcode_text)
     if belt_insole_place and extrusion_bounds:
         width = float(stats.get("oriented_x_across_belt_mm", 0))
         length = float(stats.get("oriented_y_along_belt_mm", 0))
@@ -193,6 +195,10 @@ def _run_slice(
         "bookend_failures": bookend_fails,
         "layout_failures": layout_fails,
         "all_failures": all_fails,
+        "first_layer_extrusion_y": {
+            "y_min": first_layer_y_min,
+            "y_max": first_layer_y_max,
+        },
         "measured_sample": {
             k: measured.get(k)
             for k in (
@@ -200,6 +206,8 @@ def _run_slice(
                 "belt_z_step",
                 "outer_mm_s_mode",
                 "infill_mm_s_mode",
+                "infill_mm_s_peak",
+                "sparse_infill_speed_cfg",
                 "part_fan",
                 "aux_fan",
             )

@@ -127,6 +127,40 @@ def test_flattened_preset_matches_ref() -> list[str]:
     return fails
 
 
+def test_infill_peak_not_hidden_by_mode_truncation() -> list[str]:
+    """Gyroid + min layer time yields many slowed F buckets; commanded 60 must still be the peak."""
+    fails: list[str] = []
+    lines = [";TYPE:Sparse infill"]
+    for i in range(30):
+        f = 2000 + i * 10
+        for _ in range(40):
+            lines.append(f"G1 X1 E0.1 F{f}")
+    for _ in range(5):
+        lines.append("G1 X1 E0.1 F3600")
+    with tempfile.TemporaryDirectory(prefix="infill_peak_") as td:
+        path = Path(td) / "tiny.gcode"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        measured = measure_gcode(path)
+    peak = measured.get("infill_mm_s_peak")
+    if peak != 60.0:
+        fails.append(f"infill_mm_s_peak {peak} expected 60.0 (F3600 not truncated away)")
+    modes = measured.get("infill_mm_s_mode") or []
+    if any(abs(v - 60.0) < 0.05 for v, _ in modes) and peak != 60.0:
+        fails.append("60 mm/s in mode list but peak mismatch")
+    dummy = {
+        **measured,
+        "temp_225": True,
+        "part_fan": ["127.5"],
+        "aux_fan": ["64"],
+        "retract_mm": [(1.5, 1800)],
+    }
+    cmp_fails = compare_to_reference(dummy, CuraRefMetrics(), tol_speed_pct=0.18)
+    infill_fails = [f for f in cmp_fails if "infill speed peak" in f]
+    if infill_fails:
+        fails.extend(infill_fails)
+    return fails
+
+
 def test_slice_matches_ref() -> list[str]:
     binary = _binary()
     if binary is None:
@@ -180,6 +214,7 @@ def main() -> int:
     fails: list[str] = []
     fails.extend(test_reference_file())
     fails.extend(test_flattened_preset_matches_ref())
+    fails.extend(test_infill_peak_not_hidden_by_mode_truncation())
     fails.extend(test_slice_matches_ref())
     if fails:
         for f in fails:

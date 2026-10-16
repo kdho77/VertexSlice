@@ -168,8 +168,13 @@ def measure_gcode(path: Path) -> dict:
 
     for k, vals in speeds.items():
         if vals:
-            c = Counter(round(v, 1) for v in vals)
+            rounded = [round(v, 1) for v in vals]
+            c = Counter(rounded)
+            # most_common(24) is a report sample only. Gyroid + min-layer-time on a
+            # small STL produces many distinct slowed F buckets that outrank rare
+            # commanded F3600 (60 mm/s) lines; peak must use every observation.
             out[f"{k}_mm_s_mode"] = c.most_common(24)
+            out[f"{k}_mm_s_peak"] = max(rounded)
 
     g0 = []
     for l in lines:
@@ -200,9 +205,13 @@ def measure_gcode(path: Path) -> dict:
         out["belt_z_step"] = sorted(dz)[len(dz) // 2]
 
     cfg = "\n".join(lines[-4000:])
-    out["layer_height_cfg"] = re.search(r"; layer_height = ([\d.]+)", cfg)
-    out["outer_wall_speed_cfg"] = re.search(r"; outer_wall_speed = ([\d.]+)", cfg)
-    out["sparse_infill_speed_cfg"] = re.search(r"; sparse_infill_speed = ([\d.]+)", cfg)
+    def _cfg_float(key: str) -> float | None:
+        m = re.search(rf"; {key} = ([\d.]+)", cfg)
+        return float(m.group(1)) if m else None
+
+    out["layer_height_cfg"] = _cfg_float("layer_height")
+    out["outer_wall_speed_cfg"] = _cfg_float("outer_wall_speed")
+    out["sparse_infill_speed_cfg"] = _cfg_float("sparse_infill_speed")
 
     return out
 
@@ -231,11 +240,13 @@ def compare_to_reference(sliced: dict, ref: CuraRefMetrics, tol_speed_pct: float
             fails.append(f"retraction speed expected ~{ref.retraction_mm_s} mm/s, got {mm_s:.1f}")
 
     def _check_mode(key: str, target: float):
-        modes = sliced.get(f"{key}_mm_s_mode") or []
-        if not modes:
-            return
-        # Belt G-code often sets F on standalone G1 lines; peak bucket matches Cura F3600 infill.
-        best = max(m[0] for m in modes)
+        best = sliced.get(f"{key}_mm_s_peak")
+        if best is None:
+            modes = sliced.get(f"{key}_mm_s_mode") or []
+            if not modes:
+                return
+            # Belt G-code often sets F on standalone G1 lines; peak matches Cura F3600.
+            best = max(m[0] for m in modes)
         if abs(best - target) / target > tol_speed_pct:
             fails.append(f"{key} speed peak {best} mm/s vs ref {target} mm/s")
 
