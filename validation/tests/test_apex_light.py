@@ -22,6 +22,10 @@ from apex_insole_tunables import (  # noqa: E402
     PRINT_DIRECTION_HEEL_FIRST,
     PRINT_DIRECTION_TOE_FIRST,
 )
+from apex_core import (  # noqa: E402
+    PROCESS_OVERRIDES as APEX_CORE_PROCESS_OVERRIDES,
+    TARGET_FIRST_LAYER_Y_MM as APEX_CORE_TARGET_FIRST_LAYER_Y_MM,
+)
 from apex_light import (  # noqa: E402
     AUX_FAN_PERCENT,
     BELT_STEP_MM,
@@ -48,6 +52,7 @@ from apex_light import (  # noqa: E402
     TRAVEL_ACCEL,
     TRAVEL_MM_S,
     e_per_mm,
+    feature_flow_for_target,
 )
 from apex_material_temps import filament_temps  # noqa: E402
 from orca_profile_flatten import flatten_profile  # noqa: E402
@@ -140,6 +145,8 @@ def test_process_overrides_match_cura() -> list[str]:
         "default_acceleration": str(PRINT_ACCEL),
         "travel_acceleration": str(TRAVEL_ACCEL),
         "sparse_infill_pattern": "gyroid",
+        "wall_generator": "classic",
+        "filter_out_gap_fill": "1",
     }
     for k, v in expect.items():
         if PROCESS_OVERRIDES.get(k) != v:
@@ -166,12 +173,15 @@ def test_process_overrides_match_cura() -> list[str]:
 
 def test_e_per_mm_within_3pct() -> list[str]:
     fails: list[str] = []
+    # Nominal volume formula (no E_CAL). Classic-wall E_CAL is an Orca width
+    # compensation checked on live G-code (0.192 / 0.180 / 0.2065 ±1%).
     targets = {
-        "outer": (E_PER_MM_OUTER, float(PROCESS_OVERRIDES["outer_wall_flow_ratio"])),
-        "inner": (E_PER_MM_INNER, float(PROCESS_OVERRIDES["inner_wall_flow_ratio"])),
-        "infill": (E_PER_MM_INFILL, float(PROCESS_OVERRIDES["sparse_infill_flow_ratio"])),
+        "outer": E_PER_MM_OUTER,
+        "inner": E_PER_MM_INNER,
+        "infill": E_PER_MM_INFILL,
     }
-    for name, (target, feat) in targets.items():
+    for name, target in targets.items():
+        feat = feature_flow_for_target(target)
         got = e_per_mm(FLOW_RATIO, LINE_WIDTH_MM, LAYER_HEIGHT_MM, feat)
         err = abs(got - target) / target
         if err > E_PER_MM_TOL:
@@ -236,14 +246,25 @@ def test_existing_materials_unchanged() -> list[str]:
     if not end.endswith("PRINT_END"):
         fails.append("shared PRINT_END call line changed")
     core = get_profile("apex-v2-insole-95a", material="apex_core")
-    if core is not None and core.process_overrides:
-        fails.append("apex_core gained process overrides")
+    if core is None:
+        fails.append("missing apex_core profile")
+    else:
+        if core.process_overrides != dict(APEX_CORE_PROCESS_OVERRIDES):
+            fails.append("apex_core process overrides drifted from validation/apex_core.py")
+        if core.gcode_postprocess is not None:
+            fails.append("apex_core must not use ApexLight belt-wall 20 mm/s postprocess")
+        if core.target_first_layer_y_mm != APEX_CORE_TARGET_FIRST_LAYER_Y_MM:
+            fails.append(f"apex_core first-layer Y {core.target_first_layer_y_mm}")
     if abs(CORE_TARGET_FIRST_LAYER_Y_MM - 0.07) > 1e-9:
         fails.append(f"shared first-layer Y target {CORE_TARGET_FIRST_LAYER_Y_MM} != 0.07")
-    for mid in ("apex_core", "apex_forge", "apex_bounce"):
+    if abs(APEX_CORE_TARGET_FIRST_LAYER_Y_MM - 0.066) > 1e-9:
+        fails.append(f"apex_core Cura Y {APEX_CORE_TARGET_FIRST_LAYER_Y_MM} != 0.066")
+    for mid in ("apex_forge", "apex_bounce"):
         spec = resolve_material(mid)
         if spec.target_first_layer_y_mm is not None:
             fails.append(f"{mid} should keep shared 0.07 first-layer Y, got {spec.target_first_layer_y_mm}")
+        if spec.gcode_postprocess is not None:
+            fails.append(f"{mid} must not use ApexLight gcode postprocess")
     return fails
 
 
