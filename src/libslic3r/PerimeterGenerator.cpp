@@ -2555,10 +2555,41 @@ void PerimeterGenerator::process_arachne()
         // collapse too narrow infill areas
         const auto    min_perimeter_infill_spacing = coord_t(solid_infill_spacing * (1. - INSET_OVERLAP_TOLERANCE));
 
-        ExPolygons infill_exp = offset2_ex(
-            not_filled_exp,
-            float(-min_perimeter_infill_spacing / 2.),
-            float(inset + min_perimeter_infill_spacing / 2.));
+        const bool belt_printer = this->print_config != nullptr &&
+            (this->print_config->printer_is_belt.value ||
+             this->print_config->printer_structure.value == PrinterStructure::psBelt ||
+             this->print_config->belt_inclined_gcode.value);
+        ExPolygons infill_exp;
+        if (belt_printer) {
+            // Infill boundary = innermost wall centreline minus half that bead,
+            // plus infill/wall overlap. Arachne's 0-width contour stops short
+            // of the bead in a taper and leaves the wall channel open.
+            Polygons covered;
+            for (const Arachne::VariableWidthLines &lines : perimeters) {
+                for (const Arachne::ExtrusionLine &line : lines) {
+                    const size_t n = line.junctions.size();
+                    if (n < 2)
+                        continue;
+                    const bool repeated = line.junctions.front().p == line.junctions.back().p;
+                    const size_t seg_n = (line.is_closed && !repeated) ? n : n - 1;
+                    for (size_t i = 0; i < seg_n; ++i) {
+                        const Arachne::ExtrusionJunction &a = line.junctions[i];
+                        const Arachne::ExtrusionJunction &b = line.junctions[(i + 1) % n];
+                        if (a.p == b.p || a.w <= 0 || b.w <= 0)
+                            continue;
+                        polygons_append(covered, offset(Polyline{a.p, b.p}, 0.25f * float(a.w + b.w)));
+                    }
+                }
+            }
+            const ExPolygons inside = offset_ex(ExPolygons{surface.expolygon}, -float(ext_perimeter_width) / 2.f);
+            not_filled_exp = diff_ex(inside, covered);
+            infill_exp = offset_ex(not_filled_exp, float(inset));
+        } else {
+            infill_exp = offset2_ex(
+                not_filled_exp,
+                float(-min_perimeter_infill_spacing / 2.),
+                float(inset + min_perimeter_infill_spacing / 2.));
+        }
         // append infill areas to fill_surfaces
         if (!top_expolygons.empty()) {
             infill_exp = union_ex(infill_exp, offset_ex(top_expolygons, double(top_inset)));
@@ -2570,10 +2601,13 @@ void PerimeterGenerator::process_arachne()
         // BBS: get the no-overlap infill expolygons
         {
             ExPolygons polyWithoutOverlap;
-            polyWithoutOverlap = offset2_ex(
-                not_filled_exp,
-                float(-min_perimeter_infill_spacing / 2.),
-                float(+min_perimeter_infill_spacing / 2.));
+            if (belt_printer)
+                polyWithoutOverlap = not_filled_exp;
+            else
+                polyWithoutOverlap = offset2_ex(
+                    not_filled_exp,
+                    float(-min_perimeter_infill_spacing / 2.),
+                    float(+min_perimeter_infill_spacing / 2.));
             if (!top_expolygons.empty())
                 polyWithoutOverlap = union_ex(polyWithoutOverlap, top_expolygons);
             this->fill_no_overlap->insert(this->fill_no_overlap->end(), polyWithoutOverlap.begin(), polyWithoutOverlap.end());

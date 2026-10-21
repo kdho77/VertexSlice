@@ -103,8 +103,14 @@ bool Fill::use_bridge_flow(const InfillPattern type)
 
 Polylines Fill::fill_surface(const Surface *surface, const FillParams &params)
 {
-    // Perform offset.
-    Slic3r::ExPolygons expp = offset_ex(surface->expolygon, float(scale_(this->overlap - 0.5 * this->spacing)));
+    // Sparse infill meets the wall bead. The clip is half the bead inside the
+    // fill surface, and that surface is already the inner-wall centerline
+    // minus half the wall bead plus infill/wall overlap. Half the pattern
+    // pitch would leave the wall-to-gyroid channel open.
+    const double half = (!params.full_infill() && params.flow.width() > 0.)
+        ? 0.5 * params.flow.width()
+        : 0.5 * this->spacing;
+    Slic3r::ExPolygons expp = offset_ex(surface->expolygon, float(scale_(this->overlap - half)));
     // Create the infills for each of the regions.
     Polylines polylines_out;
     for (size_t i = 0; i < expp.size(); ++ i)
@@ -119,13 +125,45 @@ Polylines Fill::fill_surface(const Surface *surface, const FillParams &params)
 
 ThickPolylines Fill::fill_surface_arachne(const Surface* surface, const FillParams& params)
 {
-    // Perform offset.
-    Slic3r::ExPolygons expp = offset_ex(surface->expolygon, float(scale_(this->overlap - 0.5 * this->spacing)));
+    const double half = (!params.full_infill() && params.flow.width() > 0.)
+        ? 0.5 * params.flow.width()
+        : 0.5 * this->spacing;
+    Slic3r::ExPolygons expp = offset_ex(surface->expolygon, float(scale_(this->overlap - half)));
     // Create the infills for each of the regions.
     ThickPolylines thick_polylines_out;
     for (ExPolygon& expoly : expp)
         _fill_surface_single(params, surface->thickness_layers, _infill_direction(surface), std::move(expoly), thick_polylines_out);
     return thick_polylines_out;
+}
+
+// Closed sparse-infill loop on the infill boundary. The boundary polygon is the
+// inner-wall centerline minus half the wall bead, grown by infill/wall overlap.
+// The loop is inset by half the infill bead so the bead's outer edge is that
+// boundary and the gyroid bows no longer touch the wall.
+static void append_sparse_infill_boundary(ExtrusionEntityCollection &eec, const ExPolygon &boundary, const Flow &flow, ExtrusionRole role)
+{
+    if (flow.width() <= 0. || boundary.empty())
+        return;
+    // Centreline is half a bead inside the boundary, so the bead's outer edge
+    // is the inner-wall centreline minus half the wall bead plus overlap.
+    const float inset = float(scale_(0.5 * flow.width()));
+    ExPolygons rings = offset_ex(ExPolygons{boundary}, -inset);
+    if (rings.empty())
+        rings.push_back(boundary);
+    for (const ExPolygon &ring : rings) {
+        auto emit = [&](const Polygon &poly) {
+            if (poly.points.size() < 3)
+                return;
+            ExtrusionPath path(role, flow.mm3_per_mm(), flow.width(), flow.height());
+            path.polyline = poly.split_at_first_point();
+            if (path.polyline.size() < 2)
+                return;
+            eec.append(ExtrusionLoop(std::move(path)));
+        };
+        emit(ring.contour);
+        for (const Polygon &hole : ring.holes)
+            emit(hole);
+    }
 }
 
 // BBS: this method is used to fill the ExtrusionEntityCollection. It call fill_surface by default
@@ -184,6 +222,11 @@ void Fill::fill_surface_extrusion(const Surface* surface, const FillParams& para
                 eec->entities[i]->set_reverse();
         }
 
+        if (params.using_internal_flow && !params.full_infill() &&
+            this->print_config != nullptr &&
+            (this->print_config->printer_is_belt.value || this->print_config->belt_inclined_gcode.value))
+            append_sparse_infill_boundary(*eec, surface->expolygon, params.flow, params.extrusion_role);
+
         // Orca: run gap fill
         this->_create_gap_fill(surface, params, eec);
     }
@@ -196,16 +239,11 @@ void Fill::_create_gap_fill(const Surface* surface, const FillParams& params, Ex
     //Orca: just to be safe, check against null pointer for the print object config and if NULL return.
     if (this->print_object_config == nullptr) return;
 
-    // Belt prints keep filter_out_gap_fill at 9999 so classic solid/perimeter
-    // gap fill stays off. The wall-to-infill channel is a separate fill: only
-    // the band against the perimeter, only gaps narrow enough to be that
-    // channel and not a gyroid cell. Path ends are pulled onto the belt later.
-    const bool belt = this->print_config != nullptr &&
-        (this->print_config->printer_is_belt.value || this->print_config->belt_inclined_gcode.value);
-
     // Orca: Enable gap fill as per the user preference. Return early if gap fill is to not be applied.
-    if (!belt && ((this->print_object_config->gap_fill_target.value == gftNowhere) ||
-        (surface->surface_type == stInternalSolid && this->print_object_config->gap_fill_target.value != gftEverywhere)))
+    // The wall-to-gyroid channel is closed by extending the sparse infill to the
+    // inner wall, not by gap fill.
+    if ((this->print_object_config->gap_fill_target.value == gftNowhere) ||
+        (surface->surface_type == stInternalSolid && this->print_object_config->gap_fill_target.value != gftEverywhere))
         return;
 
     Flow new_flow = params.flow;
@@ -218,23 +256,8 @@ void Fill::_create_gap_fill(const Surface* surface, const FillParams& params, Ex
     double min = 0.2 * new_flow.scaled_spacing() * (1 - INSET_OVERLAP_TOLERANCE);
     double max = 2. * new_flow.scaled_spacing();
     double min_len = (params.config != nullptr) ? scale_(params.config->filter_out_gap_fill.value) : scale_(2.0);
-    if (belt) {
-        // 4 mm band inside the infill region. Deeper gyroid cells never reach it.
-        const double band = scale_(4.0);
-        ExPolygons shrunk = offset_ex(this->no_overlap_expolygons, -band);
-        ExPolygons wall_band = diff_ex(this->no_overlap_expolygons, shrunk);
-        gapfill_areas = intersection_ex(gapfill_areas, wall_band);
-        // Width window covers the measured wall channel (~2.5 mm) and drops
-        // gyroid cells (~3.4 mm) that open onto the same band.
-        min = scale_(1.15);
-        max = scale_(3.30);
-        // Shorter than the wall channels that failed the pocket gate (~10 mm).
-        // Tiny medial-axis fragments were emitted as separate travels and
-        // blew the seconds-per-metre budget.
-        min_len = scale_(6.0);
-    }
 
-    if (gapfill_areas.size() > 0 && (belt || params.density >= 1)) {
+    if (gapfill_areas.size() > 0 && params.density >= 1) {
         ExPolygons gaps_ex = diff_ex(
                                      opening_ex(gapfill_areas, float(min / 2.)),
                                      offset2_ex(gapfill_areas, -float(max / 2.), float(max / 2. + ClipperSafetyOffset)));
@@ -264,45 +287,7 @@ void Fill::_create_gap_fill(const Surface* surface, const FillParams& params, Ex
 
             ExtrusionEntityCollection gap_fill;
             variable_width(polylines, erGapFill, params.flow, gap_fill.entities);
-            ExtrusionEntitiesPtr raw = std::move(gap_fill.entities);
-            ExtrusionEntitiesPtr merged;
-            if (belt) {
-                // variable_width emits one entity per width step. Left split,
-                // each step is its own travel and the belt time estimate triples.
-                ExtrusionMultiPath *cur = nullptr;
-                auto flush = [&]() {
-                    if (cur == nullptr)
-                        return;
-                    if (cur->paths.size() == 1) {
-                        merged.emplace_back(new ExtrusionPath(std::move(cur->paths.front())));
-                        delete cur;
-                    } else {
-                        merged.emplace_back(cur);
-                    }
-                    cur = nullptr;
-                };
-                for (ExtrusionEntity *ee : raw) {
-                    ExtrusionPath *path = dynamic_cast<ExtrusionPath *>(ee);
-                    if (path == nullptr) {
-                        flush();
-                        merged.emplace_back(ee);
-                        continue;
-                    }
-                    if (cur != nullptr && !cur->paths.empty() && cur->last_point() == path->first_point()) {
-                        cur->paths.emplace_back(std::move(*path));
-                        delete path;
-                        continue;
-                    }
-                    flush();
-                    cur = new ExtrusionMultiPath();
-                    cur->paths.emplace_back(std::move(*path));
-                    delete path;
-                }
-                flush();
-            } else {
-                merged = std::move(raw);
-            }
-            out->append(merged);
+            out->append(std::move(gap_fill.entities));
         }
     }
 }
