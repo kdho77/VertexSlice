@@ -191,14 +191,14 @@ TEST_CASE("Toe-first is the default belt orientation and the part is centered on
     raw.max = Vec3d(272.415, 46.354, 25.24);
 
     const BeltPartPlacement toe = belt_place_raw_box(raw, false);
-    REQUIRE(near(toe.yaw_rad, M_PI / 2.0, 1e-12));
+    REQUIRE(near(toe.yaw_rad, -M_PI / 2.0, 1e-12));
     REQUIRE_FALSE(toe.heel_first);
 
-    const Vec3d toe_tip = belt_placed_point(Vec3d(raw.min.x(), 0.0, 0.0), toe);
-    const Vec3d heel_tip = belt_placed_point(Vec3d(raw.max.x(), 0.0, 0.0), toe);
-    // +90° Z puts the min-X toe at min Y, so the toe enters the belt first.
-    REQUIRE(toe_tip.y() < heel_tip.y());
-    REQUIRE(near(toe_tip.y(), 0.0, 1e-6));
+    // -90° Z puts max X (the forefoot) at min Y, so that end enters the belt first.
+    const Vec3d low_x = belt_placed_point(Vec3d(raw.min.x(), 0.0, 0.0), toe);
+    const Vec3d high_x = belt_placed_point(Vec3d(raw.max.x(), 0.0, 0.0), toe);
+    REQUIRE(high_x.y() < low_x.y());
+    REQUIRE(near(high_x.y(), 0.0, 1e-6));
 
     const Vec3d x_lo = belt_placed_point(Vec3d(0.0, raw.min.y(), 0.0), toe);
     const Vec3d x_hi = belt_placed_point(Vec3d(0.0, raw.max.y(), 0.0), toe);
@@ -208,11 +208,62 @@ TEST_CASE("Toe-first is the default belt orientation and the part is centered on
     REQUIRE(x_hi.x() < 250.0);
 
     const BeltPartPlacement heel = belt_place_raw_box(raw, true);
-    REQUIRE(near(heel.yaw_rad, -M_PI / 2.0, 1e-12));
-    const Vec3d heel_first_end = belt_placed_point(Vec3d(raw.max.x(), 0.0, 0.0), heel);
-    const Vec3d toe_later = belt_placed_point(Vec3d(raw.min.x(), 0.0, 0.0), heel);
-    REQUIRE(heel_first_end.y() < toe_later.y());
+    REQUIRE(near(heel.yaw_rad, M_PI / 2.0, 1e-12));
+    const Vec3d heel_first_end = belt_placed_point(Vec3d(raw.min.x(), 0.0, 0.0), heel);
+    const Vec3d forefoot_later = belt_placed_point(Vec3d(raw.max.x(), 0.0, 0.0), heel);
+    REQUIRE(heel_first_end.y() < forefoot_later.y());
     REQUIRE(near(heel_first_end.y(), 0.0, 1e-6));
+}
+
+TEST_CASE("Toe-first feeds the wide forefoot before the narrow end", "[BeltOnly]")
+{
+    // Width stations of insole_round_2p5mm.stl along raw X. The ball is the
+    // wide station near X=180. The entering 20% of a toe-first feed is wider
+    // than the leaving 20%.
+    struct Station { double x; double width; };
+    const Station stations[] = {
+        {2.7, 42.5}, {16.4, 64.1}, {30.0, 71.3}, {43.7, 74.1}, {57.3, 75.4},
+        {98.3, 76.8}, {139.3, 84.7}, {166.6, 91.4}, {180.2, 92.3}, {193.9, 91.3},
+        {207.5, 88.0}, {221.2, 82.6}, {234.8, 75.4}, {248.5, 66.0}, {262.2, 52.4},
+    };
+    auto max_width = [](const BeltPartPlacement &place, bool first_band) {
+        double y_min = std::numeric_limits<double>::infinity();
+        double y_max = -y_min;
+        double feed[15];
+        for (size_t i = 0; i < 15; ++i) {
+            feed[i] = belt_placed_point(Vec3d(stations[i].x, 0.0, 0.0), place).y();
+            y_min = std::min(y_min, feed[i]);
+            y_max = std::max(y_max, feed[i]);
+        }
+        const double span = y_max - y_min;
+        const double lo = first_band ? y_min : y_min + 0.8 * span;
+        const double hi = first_band ? y_min + 0.2 * span : y_max;
+        double best = 0.0;
+        for (size_t i = 0; i < 15; ++i) {
+            if (feed[i] + 1e-6 < lo || feed[i] - 1e-6 > hi)
+                continue;
+            const Vec3d a = belt_placed_point(Vec3d(stations[i].x, -0.5 * stations[i].width, 0.0), place);
+            const Vec3d b = belt_placed_point(Vec3d(stations[i].x, 0.5 * stations[i].width, 0.0), place);
+            best = std::max(best, std::abs(a.x() - b.x()));
+        }
+        return best;
+    };
+
+    const BoundingBoxf3 raw = [] {
+        BoundingBoxf3 box;
+        box.min = Vec3d(-0.706, -46.344, 0.0);
+        box.max = Vec3d(272.415, 46.354, 25.24);
+        return box;
+    }();
+    const BeltPartPlacement toe = belt_place_raw_box(raw, false);
+    const double toe_first = max_width(toe, true);
+    const double toe_last = max_width(toe, false);
+    REQUIRE(toe_first > toe_last);
+    REQUIRE(toe_first > 80.0);
+    REQUIRE(toe_last < 80.0);
+
+    const BeltPartPlacement heel = belt_place_raw_box(raw, true);
+    REQUIRE(max_width(heel, true) < max_width(heel, false));
 }
 
 TEST_CASE("PRINT_START is before the first extrusion and PRINT_END is the last command", "[BeltOnly]")
@@ -266,11 +317,11 @@ TEST_CASE("Cura first-layer Y and Z, toe-first, X center, and machine tokens", "
     raw.max = Vec3d(272.415, 46.354, 25.24);
     const BeltPartPlacement toe = belt_place_raw_box(raw, false);
     REQUIRE_FALSE(toe.heel_first);
-    REQUIRE(near(toe.yaw_rad, M_PI / 2.0, 1e-12));
-    const Vec3d toe_tip = belt_placed_point(Vec3d(raw.min.x(), 0.0, 0.0), toe);
-    const Vec3d heel_tip = belt_placed_point(Vec3d(raw.max.x(), 0.0, 0.0), toe);
-    REQUIRE(toe_tip.y() < heel_tip.y());
-    REQUIRE(near(toe_tip.y(), 0.0, 1e-6));
+    REQUIRE(near(toe.yaw_rad, -M_PI / 2.0, 1e-12));
+    const Vec3d forefoot = belt_placed_point(Vec3d(raw.max.x(), 0.0, 0.0), toe);
+    const Vec3d other_end = belt_placed_point(Vec3d(raw.min.x(), 0.0, 0.0), toe);
+    REQUIRE(forefoot.y() < other_end.y());
+    REQUIRE(near(forefoot.y(), 0.0, 1e-6));
     const Vec3d x_lo = belt_placed_point(Vec3d(0.0, raw.min.y(), 0.0), toe);
     const Vec3d x_hi = belt_placed_point(Vec3d(0.0, raw.max.y(), 0.0), toe);
     const double x_mid = 0.5 * (std::min(x_lo.x(), x_hi.x()) + std::max(x_lo.x(), x_hi.x()));

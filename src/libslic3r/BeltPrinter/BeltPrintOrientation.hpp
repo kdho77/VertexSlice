@@ -13,9 +13,10 @@ namespace Slic3r {
 
 // Belt feed direction is model +Y after placement: Y_min enters the belt first.
 // Toe-first is the default for every material. Heel-first is opt-in
-// (VERTEXSLICE_BELT_HEEL_FIRST=1). The insole mesh is longest along +X, and the
-// toe is the min-X end, so toe-first is +90° about Z: (x, y) -> (-y, x).
-// Heel-first is -90°: (x, y) -> (y, -x).
+// (VERTEXSLICE_BELT_HEEL_FIRST=1). The insole is longest along +X. The forefoot
+// and the ball (the wide section, about 92 mm) sit toward max X, so toe-first
+// is -90° about Z: (x, y) -> (y, -x), which puts max X at min Y. +90° feeds
+// the narrow min-X end first and is heel-first only.
 // The gantry span is X 0-250 mm. The part's X midpoint is the center, 125 mm.
 
 inline constexpr double belt_bed_center_x_mm = 125.0;
@@ -23,7 +24,7 @@ inline constexpr double belt_bed_center_x_tolerance_mm = 0.5;
 
 inline double belt_feed_yaw_rad(bool heel_first)
 {
-    return heel_first ? -M_PI / 2.0 : M_PI / 2.0;
+    return heel_first ? M_PI / 2.0 : -M_PI / 2.0;
 }
 
 inline Vec3d belt_rotate_z(const Vec3d &p, double yaw_rad)
@@ -78,7 +79,7 @@ inline Vec3d belt_placed_point(const Vec3d &raw, const BeltPartPlacement &place)
 }
 
 // Absolute, so a second call does not rotate the mesh again. Heel-first is
-// opt-in: VERTEXSLICE_BELT_HEEL_FIRST=1. Otherwise the toe (min X) prints first.
+// opt-in: VERTEXSLICE_BELT_HEEL_FIRST=1. Otherwise the forefoot (max X) prints first.
 inline void apply_belt_feed_orientation(ModelObject &model_object)
 {
     const char *heel_env = std::getenv("VERTEXSLICE_BELT_HEEL_FIRST");
