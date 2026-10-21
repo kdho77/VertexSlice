@@ -24,40 +24,6 @@ bool point_in_slices(const Point &p, const WallGeometry &wall)
     return false;
 }
 
-struct Foot {
-    bool     ok      = false;
-    size_t   contour = 0;
-    double   arc     = 0;
-    Point    point   = Point(0, 0);
-    double   dist2   = std::numeric_limits<double>::max();
-};
-
-Foot project_point(const Point &p, const WallGeometry &wall)
-{
-    Foot best;
-    for (size_t ci = 0; ci < wall.contours.size(); ++ci) {
-        const Polygon &poly = wall.contours[ci];
-        double         arc  = 0;
-        for (const Line &ln : poly.lines()) {
-            Point  closest;
-            double d2 = ln.distance_to_squared(p, &closest);
-            if (d2 < best.dist2) {
-                best.ok      = true;
-                best.contour = ci;
-                best.point   = closest;
-                best.dist2   = d2;
-                double len   = ln.length();
-                double along = (closest - ln.a).cast<double>().norm();
-                if (len > 0)
-                    along = std::min(along, len);
-                best.arc = arc + along;
-            }
-            arc += ln.length();
-        }
-    }
-    return best;
-}
-
 Point point_at_arc(const Polygon &poly, double arc)
 {
     if (poly.empty())
@@ -133,7 +99,6 @@ bool on_belt_corridor(const Point &p, const WallGeometry &wall)
 
 bool segment_travel_ok(const Point &a, const Point &b, const WallGeometry &wall)
 {
-    const double bead_mm = double(wall.bead) * SCALING_FACTOR;
     double       len     = (b - a).cast<double>().norm();
     int          n       = std::max(1, int(std::ceil(len / scale_(0.5))));
     for (int i = 0; i <= n; ++i) {
@@ -144,7 +109,9 @@ bool segment_travel_ok(const Point &a, const Point &b, const WallGeometry &wall)
         if (!point_in_slices(p, wall))
             return false;
         WallHit hit = nearest_wall(p, wall);
-        if (hit.found && hit.dist_mm + 1e-6 < bead_mm && hit.point.y() > wall.ymin + wall.belt_band)
+        // Clearance is the gate's interior margin measured from the slice, not
+        // one bead. A travel vertex closer than that is a non-belt landing.
+        if (hit.found && hit.dist_mm + 1e-6 < wall.safe_mm && hit.point.y() > wall.ymin + wall.belt_band)
             return false;
     }
     return true;
@@ -274,9 +241,19 @@ WallGeometry make_wall_geometry(const ExPolygons &slices, double bead_mm)
     WallGeometry wall;
     wall.slices = slices;
     wall.bead   = coord_t(std::llround(scale_(std::max(bead_mm, 0.05))));
+    // Measure from the slice boundary. The emitted centre-line is inside it by
+    // about half a bead, and Arachne can place that line a little deeper, so a
+    // fixed inset of the contour under-estimates the distance the gate sees.
+    const double bead_used = std::max(bead_mm, 0.05);
+    wall.safe_mm = GATE_NEAR_MM + GATE_HALF_BEAD_MM + 0.5 * bead_used + SAFE_ARACHNE_MARGIN_MM;
     for (const ExPolygon &ex : slices) {
         if (ex.contour.size() >= 3)
             wall.contours.push_back(ex.contour);
+        // Hole rims are outer wall too. A start on the heel-cup rim is not
+        // interior just because it is far from the external contour.
+        for (const Polygon &hole : ex.holes)
+            if (hole.size() >= 3)
+                wall.contours.push_back(hole);
     }
     if (wall.contours.empty())
         return wall;
@@ -312,23 +289,33 @@ WallGeometry make_wall_geometry(const ExPolygons &slices, double bead_mm)
     } else {
         std::sort(belt_x.begin(), belt_x.end());
         coord_t mid_x = belt_x[belt_x.size() / 2];
-        wall.belt_anchor = Point(mid_x, wall.ymin);
-        // Snap to a real sample so the anchor lies on the contour.
-        Point  best = wall.belt_anchor;
-        double best_d = std::numeric_limits<double>::max();
-        for (const Point &s : wall.samples) {
-            if (s.y() > wall.ymin + wall.belt_band)
-                continue;
-            double d = sq(double(s.x() - mid_x)) + sq(double(s.y() - wall.ymin));
-            if (d < best_d) {
-                best_d = d;
-                best   = s;
+        // Anchor on the outer-wall centre-line (slice inset by half a bead).
+        // A pure +Y shift of the slice minimum sits below that centre-line on a
+        // curved tip and the inserted point pulls the gate's belt band down.
+        wall.belt_anchor = Point(mid_x, wall.ymin + wall.bead / 2);
+        ExPolygons centerline = offset_ex(slices, -float(wall.bead) * 0.5f);
+        coord_t    low_y      = std::numeric_limits<coord_t>::max();
+        std::vector<Point> lows;
+        for (const ExPolygon &ex : centerline) {
+            for (const Point &p : ex.contour.points) {
+                if (p.y() < low_y) {
+                    low_y = p.y();
+                    lows.clear();
+                    lows.push_back(p);
+                } else if (p.y() <= low_y + wall.belt_band) {
+                    lows.push_back(p);
+                }
             }
         }
-        wall.belt_anchor = best;
+        if (!lows.empty()) {
+            std::sort(lows.begin(), lows.end(), [](const Point &a, const Point &b) { return a.x() < b.x(); });
+            wall.belt_anchor = lows[lows.size() / 2];
+        }
     }
 
-    const float inset = -float(scale_(SAFE_INTERIOR_MM + 0.05));
+    // Inset past safe_mm so a travel vertex on this contour is interior for the
+    // gate, not merely one bead inside the slice.
+    const float inset = -float(scale_(wall.safe_mm + 0.15));
     ExPolygons  deep  = offset_ex(slices, inset);
     for (const ExPolygon &ex : deep) {
         if (ex.contour.size() >= 3)
@@ -418,7 +405,7 @@ bool is_interior(const Point &p, const WallGeometry &wall)
     if (!wall.valid)
         return false;
     WallHit hit = nearest_wall(p, wall);
-    return hit.dist_mm > SAFE_INTERIOR_MM && point_in_slices(p, wall);
+    return hit.dist_mm > wall.safe_mm && point_in_slices(p, wall);
 }
 
 bool is_belt_contact(const Point &p, const WallGeometry &wall)
@@ -428,7 +415,12 @@ bool is_belt_contact(const Point &p, const WallGeometry &wall)
     WallHit hit = nearest_wall(p, wall);
     if (!hit.found || hit.dist_mm > GATE_NEAR_MM)
         return false;
-    return hit.point.y() <= wall.ymin + wall.belt_band;
+    if (hit.point.y() > wall.ymin + wall.belt_band)
+        return false;
+    // 0.15 virtual mm is 0.21 mm of machine Y, inside the gate's 0.25 mm band
+    // above the emitted outer-wall minimum (belt_anchor).
+    const coord_t cap = wall.belt_anchor.y() + coord_t(std::llround(scale_(0.15)));
+    return p.y() <= cap;
 }
 
 bool is_safe_event(const Point &p, const WallGeometry &wall)
@@ -444,22 +436,10 @@ Point belt_seam_point(const Points &loop_pts, const WallGeometry &wall)
 {
     if (loop_pts.empty())
         return wall.valid ? wall.belt_anchor : Point(0, 0);
-    if (!wall.valid)
-        return loop_pts.front();
-    Point   best  = loop_pts.front();
-    bool    found = false;
-    coord_t best_y = std::numeric_limits<coord_t>::max();
-    for (const Point &p : loop_pts) {
-        if (!is_belt_contact(p, wall))
-            continue;
-        if (!found || p.y() < best_y) {
-            best   = p;
-            best_y = p.y();
-            found  = true;
-        }
-    }
-    if (found)
-        return best;
+    // The lowest vertex is the belt side of this loop. A higher vertex can still
+    // pass the slice belt test on a curved tip and leave the seam outside the
+    // gate's 0.25 mm band.
+    Point best = loop_pts.front();
     for (const Point &p : loop_pts)
         if (p.y() < best.y())
             best = p;
@@ -473,15 +453,16 @@ Polyline connect_end_to_safe(const Point &end, const WallGeometry &wall)
         return out;
 
     WallHit hit = nearest_wall(end, wall);
-    // Ends that are already off the wall (infill boundary) move inward. A short
-    // jog keeps the extra plastic to about a millimetre instead of a spur down
-    // the whole cross-section. Ends that sit on the wall go to the belt.
-    if (hit.found && hit.dist_mm >= 0.30 && hit.dist_mm < SAFE_INTERIOR_MM) {
+    // Outer-wall ends (about half a bead inside the slice) go to the belt.
+    // Ends already inboard of that jog inward. A lap down the contour would
+    // spend the per-metre time budget.
+    const double on_wall_mm = std::max(0.30, 0.5 * double(wall.bead) * SCALING_FACTOR + 0.05);
+    if (hit.found && hit.dist_mm >= on_wall_mm && hit.dist_mm < wall.safe_mm) {
         Vec2d  dir = (end - hit.point).cast<double>();
         double nrm = dir.norm();
         if (nrm > 1.0) {
             dir /= nrm;
-            double need_mm = (SAFE_INTERIOR_MM + 0.15) - hit.dist_mm;
+            double need_mm = (wall.safe_mm + 0.15) - hit.dist_mm;
             Point  jog(coord_t(std::llround(end.x() + dir.x() * scale_(need_mm))),
                        coord_t(std::llround(end.y() + dir.y() * scale_(need_mm))));
             if (segment_inside(end, jog, wall) && is_safe_event(jog, wall)) {
@@ -496,22 +477,26 @@ Polyline connect_end_to_safe(const Point &end, const WallGeometry &wall)
         return out;
     }
 
-    Foot f  = project_point(end, wall);
-    Foot fa = project_point(wall.belt_anchor, wall);
-    const double snap = sq(scale_(4.0));
-    if (f.ok && fa.ok && f.contour == fa.contour && f.dist2 <= snap) {
-        const Polygon &poly  = wall.contours[f.contour];
-        double         total = poly.length();
-        double         ccw   = fa.arc >= f.arc ? fa.arc - f.arc : total - f.arc + fa.arc;
-        bool           use_ccw = ccw <= total * 0.5;
-        Points         arc  = walk_arc(poly, f.arc, fa.arc, use_ccw);
-        out.points.push_back(end);
-        for (const Point &p : arc)
-            if (out.points.back() != p)
-                out.points.push_back(p);
-        if (out.points.back() != wall.belt_anchor)
-            out.points.push_back(wall.belt_anchor);
-        return out;
+    // Stay inside the part. Walking the raw slice contour extrudes outside the
+    // bead and drops the gate's belt band below the real outer wall.
+    if (wall.has_inner) {
+        Points pts;
+        pts.push_back(end);
+        append_deep_arc(pts, end, wall.belt_anchor, wall);
+        if (pts.empty() || pts.back() != wall.belt_anchor)
+            pts.push_back(wall.belt_anchor);
+        Points kept;
+        kept.reserve(pts.size());
+        for (const Point &p : pts) {
+            if (p != end && p.y() < wall.belt_anchor.y())
+                continue;
+            if (kept.empty() || kept.back() != p)
+                kept.push_back(p);
+        }
+        if (kept.size() >= 2) {
+            out.points = std::move(kept);
+            return out;
+        }
     }
 
     out.points = {end, wall.belt_anchor};
@@ -664,9 +649,10 @@ double belt_outer_feedrate(const Point &a, const Point &b, double feed_mm_min, c
 {
     if (!wall.valid)
         return feed_mm_min;
-    // 0.25 mm of machine Y is 0.25/√2 of virtual Y. The extruded outer wall is
-    // inset by half a bead from the slice contour, so the band has to cover that.
-    const double band_mm = GATE_BELT_BAND_GCODE_MM / BELT_I_YY + double(wall.bead) * SCALING_FACTOR * 0.5 + 0.05;
+    // Contours are the slice boundary. The emitted bottom edge sits half a bead
+    // above it, and beltslow's band is another 0.25 mm of machine Y.
+    const double bead_mm = double(wall.bead) * SCALING_FACTOR;
+    const double band_mm = GATE_BELT_BAND_GCODE_MM / BELT_I_YY + 0.5 * bead_mm + 0.05;
     const coord_t band = wall.ymin + coord_t(std::llround(scale_(band_mm)));
     if (a.y() <= band && b.y() <= band)
         return std::min(feed_mm_min, BELT_CONTACT_SPEED_MM_S * 60.0);

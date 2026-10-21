@@ -106,6 +106,18 @@ TEST_CASE("Belt events stay on the contact side or in the interior", "[BeltOnly]
     REQUIRE(is_interior(center, wall));
     REQUIRE(is_safe_event(center, wall));
 
+    // safe_mm is measured from the slice and grows with the bead. A point one
+    // old-constant (1.85 mm) inside a wide bead is still a non-belt landing.
+    const WallGeometry wide = make_wall_geometry({rect_mm(40.0, 20.0)}, 1.03);
+    REQUIRE(wide.safe_mm > 1.5 + 0.5 * 1.03);
+    REQUIRE_FALSE(is_interior(mm(20.0, 1.9), wide));
+    REQUIRE(is_interior(mm(20.0, 8.0), wide));
+    // Bottom outer-wall segment is the 20 mm/s belt pass. A side segment is not.
+    const double capped = belt_outer_feedrate(mm(5.0, 0.0), mm(15.0, 0.0), 35.0 * 60.0, wide);
+    const double side_f = belt_outer_feedrate(mm(0.0, 5.0), mm(0.0, 12.0), 35.0 * 60.0, wide);
+    REQUIRE(near(capped, 20.0 * 60.0, 1e-6));
+    REQUIRE(near(side_f, 35.0 * 60.0, 1e-6));
+
     Polyline chord;
     chord.points = {mm(0.0, 15.0), mm(40.0, 15.0)};
     const Polylines planned = plan_belt_polylines(Polylines{chord}, wall);

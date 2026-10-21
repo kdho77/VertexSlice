@@ -16,13 +16,15 @@ constexpr double BELT_I_YY = 1.41421356237;
 
 // belt_gate2 acceptance (virtual millimetres). The gate's belt band is 0.25 mm of
 // *machine* Y, which is 0.25/√2 ≈ 0.177 mm of virtual Y. Interior is
-// centre-line distance − 0.5 mm > 1.0 mm, i.e. more than 1.5 mm from the outer
-// wall. Thresholds here are stricter so a point this planner calls safe is still
-// safe after the gate's half-bead and 0.25 mm sampling.
+// centre-line distance − 0.5 mm > 1.0 mm, i.e. more than 1.5 mm from the emitted
+// outer-wall centre-line. Wall geometry is the slice boundary, which sits about
+// half a bead outside that centre-line, so the interior threshold grows with the
+// bead (see WallGeometry::safe_mm).
 constexpr double GATE_NEAR_MM              = 1.0;
 constexpr double GATE_HALF_BEAD_MM         = 0.5;
 constexpr double GATE_BELT_BAND_GCODE_MM   = 0.25;
 constexpr double SAFE_INTERIOR_MM          = 1.85;
+constexpr double SAFE_ARACHNE_MARGIN_MM    = 0.45;
 constexpr double SAFE_BELT_BAND_VIRT_MM    = 0.12;
 constexpr double BELT_CONTACT_SPEED_MM_S   = 20.0;
 
@@ -54,6 +56,9 @@ struct WallGeometry {
     coord_t                    ymin             = 0;
     coord_t                    belt_band        = 0;
     coord_t                    bead             = 0;
+    // Virtual mm from the slice contour. A point farther inside than this is
+    // still interior after the gate subtracts the outer-wall inset.
+    double                     safe_mm          = SAFE_INTERIOR_MM;
     Point                      belt_anchor      = Point(0, 0);
     Point                      inner_anchor     = Point(0, 0);
     bool                       has_inner        = false;

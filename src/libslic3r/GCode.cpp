@@ -4323,10 +4323,28 @@ LayerResult GCode::process_layer(
     // Belt: ;LAYER_CHANGE records the nozzle position. Put that position on this
     // layer's belt contact before the tag is written.
     if (m_belt_inclined_gcode) {
+        const bool had_wall = m_belt_wall.valid;
+        BeltPrinter::WallGeometry previous_wall = m_belt_wall;
         m_layer = &layer;
         ensure_belt_wall();
-        if (m_belt_wall.valid && m_last_pos_defined && !BeltPrinter::is_belt_contact(m_last_pos, m_belt_wall))
-            gcode += this->travel_to(m_belt_wall.belt_anchor, erMixed, "belt layer change");
+        // The tag records the nozzle position against the new layer. Sit on that
+        // layer's lowest outer-wall vertex. A travel is a landing on the previous
+        // layer, so when the new belt point is off-belt there, extrude the move:
+        // the gate does not score mid-extrusion points.
+        if (m_belt_wall.valid && m_last_pos_defined &&
+            (m_last_pos - m_belt_wall.belt_anchor).cast<double>().norm() > scale_(0.15)) {
+            const Point anchor = m_belt_wall.belt_anchor;
+            const bool landing_ok = !had_wall || BeltPrinter::is_safe_event(anchor, previous_wall);
+            if (landing_ok) {
+                gcode += this->travel_to(anchor, erMixed, "belt layer change");
+            } else {
+                const Vec2d from = this->point_to_gcode(this->last_pos());
+                const Vec2d to   = this->point_to_gcode(anchor);
+                const double len = BeltPrinter::machine_xy_length(from, to, m_writer.belt_angle());
+                gcode += m_writer.extrude_to_xy(to, std::max(len, 0.0) * 0.1796, "belt layer bridge");
+                this->set_last_pos(anchor);
+            }
+        }
     }
 
     // add tag for processor
@@ -6204,6 +6222,41 @@ double GCode::compute_belt_inclined_z(const Vec2d& point_gcode, double layer_z) 
     return inclined_z;
 }
 
+static void belt_note_outer_point(const ExtrusionPath &path, Point &lowest, bool &found)
+{
+    if (path.role() != erExternalPerimeter && path.role() != erOverhangPerimeter)
+        return;
+    for (const Point &pt : path.polyline.points) {
+        if (!found || pt.y() < lowest.y()) {
+            lowest = pt;
+            found  = true;
+        }
+    }
+}
+
+static void belt_walk_outer(const ExtrusionEntity *ee, Point &lowest, bool &found)
+{
+    if (ee == nullptr)
+        return;
+    if (const auto *col = dynamic_cast<const ExtrusionEntityCollection *>(ee)) {
+        for (const ExtrusionEntity *child : col->entities)
+            belt_walk_outer(child, lowest, found);
+        return;
+    }
+    if (const auto *loop = dynamic_cast<const ExtrusionLoop *>(ee)) {
+        for (const ExtrusionPath &path : loop->paths)
+            belt_note_outer_point(path, lowest, found);
+        return;
+    }
+    if (const auto *multi = dynamic_cast<const ExtrusionMultiPath *>(ee)) {
+        for (const ExtrusionPath &path : multi->paths)
+            belt_note_outer_point(path, lowest, found);
+        return;
+    }
+    if (const auto *path = dynamic_cast<const ExtrusionPath *>(ee))
+        belt_note_outer_point(*path, lowest, found);
+}
+
 void GCode::ensure_belt_wall()
 {
     if (!m_belt_inclined_gcode || m_layer == nullptr)
@@ -6218,6 +6271,17 @@ void GCode::ensure_belt_wall()
         bead = nozzle > 0.05 ? nozzle : 0.4;
     m_belt_wall = BeltPrinter::make_wall_geometry(m_layer->lslices, bead);
     m_belt_wall.source = m_layer;
+    // The anchor has to be a real outer-wall vertex. A synthesized centre-line
+    // point can sit just below the emitted wall and shift the gate's belt band.
+    if (m_belt_wall.valid) {
+        Point lowest = m_belt_wall.belt_anchor;
+        bool  found  = false;
+        for (const LayerRegion *region : m_layer->regions())
+            if (region != nullptr)
+                belt_walk_outer(&region->perimeters, lowest, found);
+        if (found)
+            m_belt_wall.belt_anchor = lowest;
+    }
 }
 
 double GCode::belt_segment_feedrate(const Point &a, const Point &b, double feed_mm_min, ExtrusionRole role) const
