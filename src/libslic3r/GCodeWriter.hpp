@@ -355,6 +355,10 @@ public:
         this->ptr_err.ptr = this->buf + 2;
     }
 
+    // Marlin applies M204 T to G0 and M204 P to G1. Belt travels are G0 so
+    // travel_acceleration is the accel of the move.
+    void set_g0() { this->buf[1] = '0'; }
+
     GCodeG1Formatter(const GCodeG1Formatter&) = delete;
     GCodeG1Formatter& operator=(const GCodeG1Formatter&) = delete;
 };

@@ -136,36 +136,6 @@ ThickPolylines Fill::fill_surface_arachne(const Surface* surface, const FillPara
     return thick_polylines_out;
 }
 
-// Closed sparse-infill loop on the infill boundary. The boundary polygon is the
-// inner-wall centerline minus half the wall bead, grown by infill/wall overlap.
-// The loop is inset by half the infill bead so the bead's outer edge is that
-// boundary and the gyroid bows no longer touch the wall.
-static void append_sparse_infill_boundary(ExtrusionEntityCollection &eec, const ExPolygon &boundary, const Flow &flow, ExtrusionRole role)
-{
-    if (flow.width() <= 0. || boundary.empty())
-        return;
-    // Centreline is half a bead inside the boundary, so the bead's outer edge
-    // is the inner-wall centreline minus half the wall bead plus overlap.
-    const float inset = float(scale_(0.5 * flow.width()));
-    ExPolygons rings = offset_ex(ExPolygons{boundary}, -inset);
-    if (rings.empty())
-        rings.push_back(boundary);
-    for (const ExPolygon &ring : rings) {
-        auto emit = [&](const Polygon &poly) {
-            if (poly.points.size() < 3)
-                return;
-            ExtrusionPath path(role, flow.mm3_per_mm(), flow.width(), flow.height());
-            path.polyline = poly.split_at_first_point();
-            if (path.polyline.size() < 2)
-                return;
-            eec.append(ExtrusionLoop(std::move(path)));
-        };
-        emit(ring.contour);
-        for (const Polygon &hole : ring.holes)
-            emit(hole);
-    }
-}
-
 // BBS: this method is used to fill the ExtrusionEntityCollection. It call fill_surface by default
 void Fill::fill_surface_extrusion(const Surface* surface, const FillParams& params, ExtrusionEntitiesPtr& out)
 {
@@ -222,10 +192,9 @@ void Fill::fill_surface_extrusion(const Surface* surface, const FillParams& para
                 eec->entities[i]->set_reverse();
         }
 
-        if (params.using_internal_flow && !params.full_infill() &&
-            this->print_config != nullptr &&
-            (this->print_config->printer_is_belt.value || this->print_config->belt_inclined_gcode.value))
-            append_sparse_infill_boundary(*eec, surface->expolygon, params.flow, params.extrusion_role);
+        // The wall-to-gyroid channel is closed by the half-bead clip above and
+        // by infill/wall overlap reaching the inner wall bead. A closed sparse
+        // loop on that boundary is not extruded.
 
         // Orca: run gap fill
         this->_create_gap_fill(surface, params, eec);
