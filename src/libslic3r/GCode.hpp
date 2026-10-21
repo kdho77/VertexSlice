@@ -28,6 +28,7 @@
 #include "GCode/AdaptivePAProcessor.hpp"
 
 #include "GCode/TimelapsePosPicker.hpp"
+#include "BeltPrinter/BeltOnlyInvariant.hpp"
 
 // Belt printer support
 
@@ -639,6 +640,9 @@ private:
     bool m_belt_inclined_gcode = false;
     double m_belt_angle_radians = 0.0;
     double m_belt_z_base = 0.0;  // Virtual Z offset of first layer — subtracted so Y_mach starts at 0
+    // Outer-wall geometry of the layer currently being emitted. Belt printers
+    // use it to keep every event on the belt contact or in the interior.
+    BeltPrinter::WallGeometry m_belt_wall;
 
     std::set<unsigned int>                  m_initial_layer_extruders;
     std::vector<std::vector<unsigned int>>  m_sorted_layer_filaments;
@@ -650,6 +654,9 @@ private:
     std::string _extrude(const ExtrusionPath &path, std::string description = "", double speed = -1);
     bool _needSAFC(const ExtrusionPath &path);
     double compute_belt_inclined_z(const Vec2d& point_gcode, double layer_z) const;
+    void ensure_belt_wall();
+    // Outer-wall feed, with the belt-contact pass held at 20 mm/s.
+    double belt_segment_feedrate(const Point &a, const Point &b, double feed_mm_min, ExtrusionRole role) const;
     void print_machine_envelope(GCodeOutputStream& file, Print& print, int extruder_id);
     void _print_first_layer_bed_temperature(GCodeOutputStream &file, Print &print, const std::string &gcode, unsigned int first_printing_extruder_id, bool wait);
     void _print_first_layer_extruder_temperatures(GCodeOutputStream &file, Print &print, const std::string &gcode, unsigned int first_printing_extruder_id, bool wait);

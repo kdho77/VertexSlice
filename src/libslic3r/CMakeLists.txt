@@ -476,6 +476,8 @@ set(lisbslic3r_sources
     BeltPrinter/BeltRaft.hpp
     BeltTransform.cpp
     BeltTransform.hpp
+    BeltPrinter/BeltOnlyInvariant.cpp
+    BeltPrinter/BeltOnlyInvariant.hpp
     BeltPrinter/CompatibilityMode.cpp
     BeltPrinter/CompatibilityMode.hpp
     BeltPrinter/DirectionalSupports.cpp

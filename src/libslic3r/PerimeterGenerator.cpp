@@ -19,6 +19,7 @@
 #include <thread>
 #include "libslic3r/AABBTreeLines.hpp"
 #include "Print.hpp"
+#include "BeltPrinter/BeltOnlyInvariant.hpp"
 static const int overhang_sampling_number = 6;
 static const double narrow_loop_length_threshold = 10;
 //BBS: when the width of expolygon is smaller than
@@ -2071,6 +2072,58 @@ void bringContoursToFront(std::vector<PerimeterGeneratorArachneExtrusion>& order
 
 // Thanks, Cura developers, for implementing an algorithm for generating perimeters with variable width (Arachne) that is based on the paper
 // "A framework for adaptive width control of dense contour-parallel toolpaths in fused deposition modeling"
+// Belt printers: an open Arachne fragment must start and stop on the belt contact,
+// or be joined into a closed loop (whose seam GCode::extrude_loop then places
+// on the belt). Connector paths copy the end segment's flow so variable width
+// is preserved. Non-belt printers never call this.
+static void anchor_belt_open_walls(ExtrusionEntityCollection &coll, const ExPolygons &islands, double bead_mm)
+{
+    if (islands.empty())
+        return;
+    BeltPrinter::WallGeometry wall = BeltPrinter::make_wall_geometry(islands, bead_mm);
+    if (!wall.valid)
+        return;
+    const double join = scale_(0.25);
+    for (size_t i = 0; i < coll.entities.size(); ++i) {
+        ExtrusionEntity *ee = coll.entities[i];
+        if (ee == nullptr || ee->is_loop())
+            continue;
+        auto *mp = dynamic_cast<ExtrusionMultiPath *>(ee);
+        if (mp != nullptr && !mp->paths.empty() && !mp->paths.front().empty() && !mp->paths.back().empty()) {
+            const Point a = mp->first_point();
+            const Point b = mp->last_point();
+            if (BeltPrinter::is_safe_event(a, wall) && BeltPrinter::is_safe_event(b, wall))
+                continue;
+            if ((a - b).cast<double>().norm() <= join) {
+                ExtrusionPaths closed = mp->paths;
+                if (a != b) {
+                    ExtrusionPath proto = closed.back();
+                    closed.emplace_back(Polyline{b, a}, proto);
+                }
+                delete coll.entities[i];
+                coll.entities[i] = new ExtrusionLoop(std::move(closed), elrDefault);
+                continue;
+            }
+            if (!BeltPrinter::is_safe_event(a, wall)) {
+                Polyline ext = BeltPrinter::connect_end_to_safe(a, wall);
+                if (ext.size() >= 2) {
+                    ext.reverse();
+                    mp->paths.insert(mp->paths.begin(), ExtrusionPath(std::move(ext), mp->paths.front()));
+                }
+            }
+            if (!mp->paths.empty() && !mp->paths.back().empty() &&
+                !BeltPrinter::is_safe_event(mp->last_point(), wall)) {
+                Polyline ext = BeltPrinter::connect_end_to_safe(mp->last_point(), wall);
+                if (ext.size() >= 2)
+                    mp->paths.push_back(ExtrusionPath(std::move(ext), mp->paths.back()));
+            }
+            continue;
+        }
+        if (auto *path = dynamic_cast<ExtrusionPath *>(ee); path != nullptr && path->polyline.size() >= 2)
+            BeltPrinter::prepare_polyline_for_belt(path->polyline, wall);
+    }
+}
+
 void PerimeterGenerator::process_arachne()
 {
     group_region_by_fuzzify(*this);
@@ -2456,6 +2509,16 @@ void PerimeterGenerator::process_arachne()
                 reorient_perimeters(extrusion_coll, steep_overhang_contour, steep_overhang_hole,
                                     // Reverse internal only if the wall direction is auto
                                     this->config->overhang_reverse_internal_only && wall_direction == WallDirection::Auto);
+            }
+            if (this->print_config != nullptr && this->slices != nullptr &&
+                (this->print_config->printer_is_belt.value ||
+                 this->print_config->printer_structure.value == PrinterStructure::psBelt ||
+                 this->print_config->belt_inclined_gcode.value)) {
+                ExPolygons islands;
+                islands.reserve(this->slices->surfaces.size());
+                for (const Surface &s : this->slices->surfaces)
+                    islands.push_back(s.expolygon);
+                anchor_belt_open_walls(extrusion_coll, islands, this->ext_perimeter_flow.width());
             }
             this->loops->append(extrusion_coll);
         }
