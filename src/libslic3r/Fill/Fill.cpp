@@ -18,6 +18,7 @@
 #include "FillTpmsD.hpp"
 #include "FillTpmsFK.hpp"
 #include "FillConcentric.hpp"
+#include "BeltPrinter/BeltOnlyInvariant.hpp"
 #include "libslic3r.h"
 
 namespace Slic3r {
@@ -833,6 +834,8 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
             it->second.push_back(exp);
     };
 
+	const bool printer_is_belt = layer.object()->print()->config().printer_is_belt.value;
+
 	for (size_t region_id = 0; region_id < layer.regions().size(); ++ region_id) {
 		const LayerRegion  &layerm = *layer.regions()[region_id];
 		region_to_surface_params[region_id].assign(layerm.fill_surfaces.size(), nullptr);
@@ -841,6 +844,8 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
 	        	has_internal_voids = true;
 	        else {
 		        const PrintRegionConfig &region_config = layerm.region().config();
+		        const bool belt_narrow_solid = BeltPrinter::is_belt_narrow_solid_surface(
+		            surface.surface_type, surface.bridge_angle, printer_is_belt);
 		        FlowRole extrusion_role = surface.is_top() ? frTopSolidInfill : (surface.is_solid() ? frSolidInfill : frInfill);
 		        bool     is_bridge 	    = layer.id() > 0 && surface.is_bridge();
 		        params.extruder 	 = layerm.region().extruder(extrusion_role);
@@ -859,7 +864,10 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
                     params.symmetric_infill_y_axis = region_config.symmetric_infill_y_axis;
                 }
 
-                if (surface.is_solid()) {
+                if (belt_narrow_solid) {
+                    params.pattern = region_config.internal_solid_infill_pattern.value;
+                    params.density = 100.f;
+                } else if (surface.is_solid()) {
                     if (surface.is_external() && !is_bridge) {
                         if (surface.is_top()) {
                             params.pattern = region_config.top_surface_pattern.value;
@@ -887,6 +895,8 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
                         params.extrusion_role = erInternalBridgeInfill;
                     else
                         params.extrusion_role = erBridgeInfill;
+                } else if (belt_narrow_solid) {
+                    params.extrusion_role = erInternalInfill;
                 } else if (surface.is_solid()) {
                     if (surface.is_top()) {
                         params.extrusion_role = erTopSolidInfill;

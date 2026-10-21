@@ -8,14 +8,57 @@
 #include "BoundingBox.hpp"
 #include "SVG.hpp"
 #include "Algorithm/RegionExpansion.hpp"
+#include "BeltPrinter/BeltOnlyInvariant.hpp"
 
 #include <string>
 #include <map>
+#include <cmath>
 
 #include <boost/log/trivial.hpp>
 #include <boost/algorithm/clamp.hpp>
 
 namespace Slic3r {
+
+namespace {
+
+bool extrusion_path_looks_faceted(const ExtrusionPath &path)
+{
+    const Points &pts = path.polyline.points;
+    if (pts.size() < 3)
+        return false;
+    for (size_t i = 1; i + 1 < pts.size(); ++i) {
+        const Vec2d v0 = (pts[i] - pts[i - 1]).cast<double>();
+        const Vec2d v1 = (pts[i + 1] - pts[i]).cast<double>();
+        const double l0 = v0.norm();
+        const double l1 = v1.norm();
+        if (l0 < scaled<double>(0.04) || l1 < scaled<double>(0.04))
+            continue;
+        const double dot = v0.normalized().dot(v1.normalized());
+        if (dot > 0.985)
+            continue;
+        if (dot < 0.92)
+            return true;
+    }
+    return false;
+}
+
+void simplify_extrusion_path(ExtrusionPath *path, const PrintConfig &print_config, bool spiral_mode, bool enable_arc_fitting)
+{
+    const auto scaled_resolution = scaled<double>(print_config.resolution.value);
+    if (enable_arc_fitting && !spiral_mode) {
+        if (path->role() == erInternalInfill)
+            path->simplify_by_fitting_arc(SCALED_SPARSE_INFILL_RESOLUTION);
+        else
+            path->simplify_by_fitting_arc(scaled_resolution);
+        return;
+    }
+    path->simplify(scaled_resolution);
+    if (print_config.printer_is_belt.value && print_config.resolution.value >= 0.04 &&
+        extrusion_path_looks_faceted(*path))
+        path->simplify(scaled<double>(0.025));
+}
+
+} // namespace
 
 Flow LayerRegion::flow(FlowRole role) const
 {
@@ -562,6 +605,7 @@ void LayerRegion::process_external_surfaces(const Layer *lower_layer, const Poly
         }
     }
 
+    ExPolygons belt_narrow_solid;
     // Belt: a region that cannot hold a 1.5 mm opening prints solid. Wider
     // regions stay sparse when minimum_sparse_infill_area is 0. The test is
     // the whole region: opening also eats a boundary band, and that band is
@@ -578,7 +622,7 @@ void LayerRegion::process_external_surfaces(const Layer *lower_layer, const Poly
             return false;
         }), sparse_regions.end());
         if (!thin_regions.empty())
-            expansion_zones[0].expolygons = union_ex(expansion_zones[0].expolygons, thin_regions);
+            belt_narrow_solid = std::move(thin_regions);
     }
 
 //    this->fill_surfaces.remove_types({ stBottomBridge, stBottom, stTop, stInternal, stInternalSolid });
@@ -596,6 +640,12 @@ void LayerRegion::process_external_surfaces(const Layer *lower_layer, const Poly
         Surface sparse_templ(stInternal, {});
         sparse_templ.thickness = layer_thickness;
         this->fill_surfaces.append(std::move(expansion_zones[1].expolygons), sparse_templ);
+    }
+    if (!belt_narrow_solid.empty()) {
+        Surface narrow_templ(stInternal, {});
+        narrow_templ.thickness      = layer_thickness;
+        narrow_templ.bridge_angle   = BeltPrinter::BELT_NARROW_SOLID_SURFACE_ANGLE;
+        this->fill_surfaces.append(std::move(belt_narrow_solid), narrow_templ);
     }
     this->fill_surfaces.append(std::move(bridges.surfaces));
     this->fill_surfaces.append(std::move(bottoms));
@@ -1042,59 +1092,21 @@ void LayerRegion::simplify_entity_collection(ExtrusionEntityCollection* entity_c
 void LayerRegion::simplify_path(ExtrusionPath* path)
 {
     const auto print_config = this->layer()->object()->print()->config();
-    const bool spiral_mode = print_config.spiral_mode;
-    const bool enable_arc_fitting = print_config.enable_arc_fitting;
-    const auto scaled_resolution = scaled<double>(print_config.resolution.value);
-
-    if (enable_arc_fitting &&
-        !spiral_mode) {
-        if (path->role() == erInternalInfill)
-            path->simplify_by_fitting_arc(SCALED_SPARSE_INFILL_RESOLUTION);
-        else
-            path->simplify_by_fitting_arc(scaled_resolution);
-    } else {
-        path->simplify(scaled_resolution);
-    }
+    simplify_extrusion_path(path, print_config, print_config.spiral_mode, print_config.enable_arc_fitting);
 }
 
 void LayerRegion::simplify_multi_path(ExtrusionMultiPath* multipath)
 {
     const auto print_config = this->layer()->object()->print()->config();
-    const bool spiral_mode = print_config.spiral_mode;
-    const bool enable_arc_fitting = print_config.enable_arc_fitting;
-    const auto scaled_resolution = scaled<double>(print_config.resolution.value);
-
-    for (size_t i = 0; i < multipath->paths.size(); ++i) {
-        if (enable_arc_fitting &&
-            !spiral_mode) {
-            if (multipath->paths[i].role() == erInternalInfill)
-                multipath->paths[i].simplify_by_fitting_arc(SCALED_SPARSE_INFILL_RESOLUTION);
-            else
-                multipath->paths[i].simplify_by_fitting_arc(scaled_resolution);
-        } else {
-            multipath->paths[i].simplify(scaled_resolution);
-        }
-    }
+    for (size_t i = 0; i < multipath->paths.size(); ++i)
+        simplify_extrusion_path(&multipath->paths[i], print_config, print_config.spiral_mode, print_config.enable_arc_fitting);
 }
 
 void LayerRegion::simplify_loop(ExtrusionLoop* loop)
 {
     const auto print_config = this->layer()->object()->print()->config();
-    const bool spiral_mode = print_config.spiral_mode;
-    const bool enable_arc_fitting = print_config.enable_arc_fitting;
-    const auto scaled_resolution = scaled<double>(print_config.resolution.value);
-
-    for (size_t i = 0; i < loop->paths.size(); ++i) {
-        if (enable_arc_fitting &&
-            !spiral_mode) {
-            if (loop->paths[i].role() == erInternalInfill)
-                loop->paths[i].simplify_by_fitting_arc(SCALED_SPARSE_INFILL_RESOLUTION);
-            else
-                loop->paths[i].simplify_by_fitting_arc(scaled_resolution);
-        } else {
-            loop->paths[i].simplify(scaled_resolution);
-        }
-    }
+    for (size_t i = 0; i < loop->paths.size(); ++i)
+        simplify_extrusion_path(&loop->paths[i], print_config, print_config.spiral_mode, print_config.enable_arc_fitting);
 }
 
 }

@@ -5,8 +5,10 @@
 #include "libslic3r/BeltPrinter/BeltPrintOrientation.hpp"
 #include "libslic3r/BeltTransform.hpp"
 #include "libslic3r/ExPolygon.hpp"
+#include "libslic3r/Surface.hpp"
 
 #include <cmath>
+#include <fstream>
 #include <string>
 
 using namespace Slic3r;
@@ -338,4 +340,46 @@ TEST_CASE("Cura first-layer Y and Z, toe-first, X center, and machine tokens", "
     REQUIRE(core.find("M109 S225") != std::string::npos);
     REQUIRE(core.find("SET_PRESSURE_ADVANCE ADVANCE=0.05") != std::string::npos);
     REQUIRE(end.find("PRINT_END") != std::string::npos);
+}
+
+TEST_CASE("Belt narrow solid surfaces stay sparse infill in G-code typing", "[BeltOnly]")
+{
+    REQUIRE(BeltPrinter::is_belt_narrow_solid_surface(
+        stInternal, BeltPrinter::BELT_NARROW_SOLID_SURFACE_ANGLE, true));
+    REQUIRE_FALSE(BeltPrinter::is_belt_narrow_solid_surface(
+        stInternalSolid, BeltPrinter::BELT_NARROW_SOLID_SURFACE_ANGLE, true));
+    REQUIRE_FALSE(BeltPrinter::is_belt_narrow_solid_surface(
+        stInternal, BeltPrinter::BELT_NARROW_SOLID_SURFACE_ANGLE, false));
+    REQUIRE_FALSE(BeltPrinter::is_belt_narrow_solid_surface(stInternal, -1.0, true));
+}
+
+static bool fixture_contains(const char *rel_path, const char *needle)
+{
+    const std::string path = std::string(TEST_DATA_DIR) + "/../fixtures/belt_profiles/" + rel_path;
+    std::ifstream in(path);
+    if (!in)
+        return false;
+    std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return body.find(needle) != std::string::npos;
+}
+
+TEST_CASE("ApexLight and ApexCore belt process presets match TPU expert infill keys", "[BeltOnly]")
+{
+    for (const char *file : {"ApexLight_belt_process.json", "ApexCore_belt_process.json"}) {
+        REQUIRE(fixture_contains(file, "\"resolution\": \"0.05\""));
+        REQUIRE(fixture_contains(file, "\"enable_arc_fitting\": \"0\""));
+        REQUIRE(fixture_contains(file, "\"infill_anchor\": \"400%\""));
+        REQUIRE(fixture_contains(file, "\"infill_anchor_max\": \"20\""));
+        REQUIRE(fixture_contains(file, "\"infill_combination\": \"0\""));
+        REQUIRE(fixture_contains(file, "\"minimum_sparse_infill_area\": \"0\""));
+        REQUIRE(fixture_contains(file, "\"detect_narrow_internal_solid_infill\": \"0\""));
+        REQUIRE(fixture_contains(file, "\"reduce_infill_retraction\": \"1\""));
+        REQUIRE(fixture_contains(file, "\"internal_solid_infill_pattern\": \"rectilinear\""));
+        REQUIRE(fixture_contains(file, "\"filter_out_gap_fill\": \"9999\""));
+        REQUIRE(fixture_contains(file, "\"travel_speed\": \"212\""));
+        REQUIRE(fixture_contains(file, "\"wall_loops\": \"2\""));
+        REQUIRE(fixture_contains(file, "\"wall_generator\": \"arachne\""));
+    }
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"layer_height\": \"0.46\""));
+    REQUIRE(fixture_contains("ApexCore_belt_process.json", "\"layer_height\": \"0.42\""));
 }

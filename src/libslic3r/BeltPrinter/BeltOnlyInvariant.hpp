@@ -5,6 +5,7 @@
 #include "libslic3r/Point.hpp"
 #include "libslic3r/Polygon.hpp"
 #include "libslic3r/Polyline.hpp"
+#include "libslic3r/Surface.hpp"
 
 #include <vector>
 
@@ -33,6 +34,16 @@ constexpr double BELT_CONTACT_SPEED_MM_S   = 20.0;
 // a 1.5 mm machine-Y jump (about 1.1 mm virtual). The sole's last accepted
 // step on that print was 0.4 mm virtual, so 0.8 mm separates the two.
 constexpr double END_CAP_RISE_VIRT_MM      = 0.8;
+
+// Sentinel on stInternal surfaces: <=1.5 mm openings filled rectilinear but
+// emitted as sparse (erInternalInfill) so G-code does not alternate types.
+constexpr double BELT_NARROW_SOLID_SURFACE_ANGLE = -9.0;
+
+inline bool is_belt_narrow_solid_surface(SurfaceType type, double bridge_angle, bool printer_is_belt)
+{
+    return printer_is_belt && type == stInternal &&
+           std::abs(bridge_angle - BELT_NARROW_SOLID_SURFACE_ANGLE) < 1e-6;
+}
 
 // Machine XY length of a segment given in virtual (pre-inverse) millimetres.
 // Equals hypot(dx_mach, dy_mach). The previous shear formula
