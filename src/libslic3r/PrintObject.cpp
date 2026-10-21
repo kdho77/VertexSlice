@@ -3404,7 +3404,12 @@ void PrintObject::update_slicing_parameters()
             // (set by trafo_centered). Points with Z_virt < 0 are the 45° overhang
             // (inherent belt limitation, clipped). Only the Z_virt > 0 region is printable.
             if (belt_params.angle != 0.0) {
-                BoundingBoxf3 bbox = this->model_object()->raw_bounding_box();
+                // raw_mesh_bounding_box() is the unrotated mesh. trafo_centered()
+                // already applies the instance rotation. raw_bounding_box() includes
+                // that rotation, so transforming it again collapses belt travel
+                // (Z_virt) whenever arrange rotates the part — the toe then reports
+                // a printable height of <1 mm and slices to zero layers.
+                BoundingBoxf3 bbox = this->model_object()->raw_mesh_bounding_box();
                 if (bbox.defined) {
                     bbox = bbox.transformed(this->trafo_centered());
                     // Use max Z only — the keel-front is at Z=0 after trafo_centered shift.

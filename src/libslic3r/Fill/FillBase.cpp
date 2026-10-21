@@ -196,9 +196,16 @@ void Fill::_create_gap_fill(const Surface* surface, const FillParams& params, Ex
     //Orca: just to be safe, check against null pointer for the print object config and if NULL return.
     if (this->print_object_config == nullptr) return;
 
+    // Belt prints keep filter_out_gap_fill at 9999 so classic solid/perimeter
+    // gap fill stays off. The wall-to-infill channel is a separate fill: only
+    // the band against the perimeter, only gaps narrow enough to be that
+    // channel and not a gyroid cell. Path ends are pulled onto the belt later.
+    const bool belt = this->print_config != nullptr &&
+        (this->print_config->printer_is_belt.value || this->print_config->belt_inclined_gcode.value);
+
     // Orca: Enable gap fill as per the user preference. Return early if gap fill is to not be applied.
-    if ((this->print_object_config->gap_fill_target.value == gftNowhere) ||
-        (surface->surface_type == stInternalSolid && this->print_object_config->gap_fill_target.value != gftEverywhere))
+    if (!belt && ((this->print_object_config->gap_fill_target.value == gftNowhere) ||
+        (surface->surface_type == stInternalSolid && this->print_object_config->gap_fill_target.value != gftEverywhere)))
         return;
 
     Flow new_flow = params.flow;
@@ -208,9 +215,26 @@ void Fill::_create_gap_fill(const Surface* surface, const FillParams& params, Ex
     if (!this->no_overlap_expolygons.empty())
         gapfill_areas = intersection_ex(gapfill_areas, this->no_overlap_expolygons);
 
-    if (gapfill_areas.size() > 0 && params.density >= 1) {
-        double min = 0.2 * new_flow.scaled_spacing() * (1 - INSET_OVERLAP_TOLERANCE);
-        double max = 2. * new_flow.scaled_spacing();
+    double min = 0.2 * new_flow.scaled_spacing() * (1 - INSET_OVERLAP_TOLERANCE);
+    double max = 2. * new_flow.scaled_spacing();
+    double min_len = (params.config != nullptr) ? scale_(params.config->filter_out_gap_fill.value) : scale_(2.0);
+    if (belt) {
+        // 4 mm band inside the infill region. Deeper gyroid cells never reach it.
+        const double band = scale_(4.0);
+        ExPolygons shrunk = offset_ex(this->no_overlap_expolygons, -band);
+        ExPolygons wall_band = diff_ex(this->no_overlap_expolygons, shrunk);
+        gapfill_areas = intersection_ex(gapfill_areas, wall_band);
+        // Width window covers the measured wall channel (~2.5 mm) and drops
+        // gyroid cells (~3.4 mm) that open onto the same band.
+        min = scale_(1.15);
+        max = scale_(3.30);
+        // Shorter than the wall channels that failed the pocket gate (~10 mm).
+        // Tiny medial-axis fragments were emitted as separate travels and
+        // blew the seconds-per-metre budget.
+        min_len = scale_(6.0);
+    }
+
+    if (gapfill_areas.size() > 0 && (belt || params.density >= 1)) {
         ExPolygons gaps_ex = diff_ex(
                                      opening_ex(gapfill_areas, float(min / 2.)),
                                      offset2_ex(gapfill_areas, -float(max / 2.), float(max / 2. + ClipperSafetyOffset)));
@@ -235,13 +259,50 @@ void Fill::_create_gap_fill(const Surface* surface, const FillParams& params, Ex
         if (!polylines.empty() && !is_bridge(params.extrusion_role)) {
             polylines.erase(std::remove_if(polylines.begin(), polylines.end(),
                                            [&](const ThickPolyline& p) {
-                return p.length() < scale_(params.config->filter_out_gap_fill.value);
+                return p.length() < min_len;
             }), polylines.end());
 
             ExtrusionEntityCollection gap_fill;
             variable_width(polylines, erGapFill, params.flow, gap_fill.entities);
-            auto gap = std::move(gap_fill.entities);
-            out->append(gap);
+            ExtrusionEntitiesPtr raw = std::move(gap_fill.entities);
+            ExtrusionEntitiesPtr merged;
+            if (belt) {
+                // variable_width emits one entity per width step. Left split,
+                // each step is its own travel and the belt time estimate triples.
+                ExtrusionMultiPath *cur = nullptr;
+                auto flush = [&]() {
+                    if (cur == nullptr)
+                        return;
+                    if (cur->paths.size() == 1) {
+                        merged.emplace_back(new ExtrusionPath(std::move(cur->paths.front())));
+                        delete cur;
+                    } else {
+                        merged.emplace_back(cur);
+                    }
+                    cur = nullptr;
+                };
+                for (ExtrusionEntity *ee : raw) {
+                    ExtrusionPath *path = dynamic_cast<ExtrusionPath *>(ee);
+                    if (path == nullptr) {
+                        flush();
+                        merged.emplace_back(ee);
+                        continue;
+                    }
+                    if (cur != nullptr && !cur->paths.empty() && cur->last_point() == path->first_point()) {
+                        cur->paths.emplace_back(std::move(*path));
+                        delete path;
+                        continue;
+                    }
+                    flush();
+                    cur = new ExtrusionMultiPath();
+                    cur->paths.emplace_back(std::move(*path));
+                    delete path;
+                }
+                flush();
+            } else {
+                merged = std::move(raw);
+            }
+            out->append(merged);
         }
     }
 }

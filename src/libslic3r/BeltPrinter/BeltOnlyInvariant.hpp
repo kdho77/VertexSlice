@@ -27,6 +27,12 @@ constexpr double SAFE_INTERIOR_MM          = 1.85;
 constexpr double SAFE_ARACHNE_MARGIN_MM    = 0.45;
 constexpr double SAFE_BELT_BAND_VIRT_MM    = 0.12;
 constexpr double BELT_CONTACT_SPEED_MM_S   = 20.0;
+// A new layer whose belt anchor sits this far above the previous layer's belt
+// contact is the raised heel/toe tip, not a new belt-contact line. The
+// layer-change position stays on the previous contact. The ApexCore miss was
+// a 1.5 mm machine-Y jump (about 1.1 mm virtual). The sole's last accepted
+// step on that print was 0.4 mm virtual, so 0.8 mm separates the two.
+constexpr double END_CAP_RISE_VIRT_MM      = 0.8;
 
 // Machine XY length of a segment given in virtual (pre-inverse) millimetres.
 // Equals hypot(dx_mach, dy_mach). The previous shear formula
@@ -82,6 +88,14 @@ bool     is_interior(const Point &p, const WallGeometry &wall);
 bool     is_belt_contact(const Point &p, const WallGeometry &wall);
 // Gate-safe: on the belt contact, or far enough inside that belt_gate2 calls it interior.
 bool     is_safe_event(const Point &p, const WallGeometry &wall);
+
+// The next layer is only the lifted end cap: its lowest outer-wall point is
+// END_CAP_RISE_VIRT_MM or more above the previous belt contact, and that point
+// is not itself on the previous belt band.
+bool     is_end_cap_layer(const WallGeometry &previous, const WallGeometry &next);
+// Where ;LAYER_CHANGE is recorded. On an end cap this is the previous belt
+// contact, not the cap's own lowest vertex.
+Point    layer_change_anchor(const WallGeometry &previous, const WallGeometry &next);
 
 // Vertex (or the belt anchor, if none of the vertices is safe) to open a closed loop on.
 Point    belt_seam_point(const Points &loop_pts, const WallGeometry &wall);

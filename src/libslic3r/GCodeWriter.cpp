@@ -1210,11 +1210,14 @@ std::string GCodeWriter::set_fan(unsigned int speed) const
 }
 
 //BBS: set additional fan speed for BBS machine only
-std::string GCodeWriter::set_additional_fan(unsigned int speed)
+std::string GCodeWriter::set_additional_fan(unsigned int speed, bool belt)
 {
     std::ostringstream gcode;
 
-    gcode << "M106 " << "P2 " << "S" << (int)(255.0 * speed / 100.0);
+    // IdeaFormer belt firmware (and the Cura reference) addresses the auxiliary
+    // fan as P1. Bambu-style machines keep P2.
+    const int pwm = (int)std::lround(255.0 * speed / 100.0);
+    gcode << "M106 " << (belt ? "P1 " : "P2 ") << "S" << pwm;
     if (GCodeWriter::full_gcode_comment) {
         if (speed == 0)
             gcode << " ; disable additional fan ";

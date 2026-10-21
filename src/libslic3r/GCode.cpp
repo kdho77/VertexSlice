@@ -2675,7 +2675,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     if (m_config.auxiliary_fan.value && print.config().close_fan_the_first_x_layers.get_at(initial_extruder_id)) {
         file.write(m_writer.set_fan(0));
         //BBS: disable additional fan
-        file.write(m_writer.set_additional_fan(0));
+        file.write(m_writer.set_additional_fan(0, m_writer.is_belt()));
     }
 
     // Update output variables after the extruders were initialized.
@@ -3290,7 +3290,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     file.write(m_writer.set_fan(0));
     //BBS: make sure the additional fan is closed when end
     if(m_config.auxiliary_fan.value)
-        file.write(m_writer.set_additional_fan(0));
+        file.write(m_writer.set_additional_fan(0, m_writer.is_belt()));
     if (is_bbl_printers) {
         //BBS: close spaghetti detector
         //Note: M981 is also used to tell xcam the last layer is finished, so we need always send it even if spaghetti option is disabled.
@@ -4320,8 +4320,12 @@ LayerResult GCode::process_layer(
     std::string gcode;
     assert(is_decimal_separator_point()); // for the sprintfs
 
-    // Belt: ;LAYER_CHANGE records the nozzle position. Put that position on this
-    // layer's belt contact before the tag is written.
+    // Belt: ;LAYER_CHANGE records the nozzle position. Put that position on the
+    // belt contact before the tag is written. An end-cap layer's own lowest
+    // vertex sits up the heel tip; the tag stays on the previous contact and
+    // the climb is extruded after the tag.
+    bool endcap_bridge = false;
+    Point endcap_target;
     if (m_belt_inclined_gcode) {
         const bool had_wall = m_belt_wall.valid;
         BeltPrinter::WallGeometry previous_wall = m_belt_wall;
@@ -4334,21 +4338,37 @@ LayerResult GCode::process_layer(
         if (m_belt_wall.valid && m_last_pos_defined &&
             (m_last_pos - m_belt_wall.belt_anchor).cast<double>().norm() > scale_(0.15)) {
             const Point anchor = m_belt_wall.belt_anchor;
-            const bool landing_ok = !had_wall || BeltPrinter::is_safe_event(anchor, previous_wall);
-            if (landing_ok) {
-                gcode += this->travel_to(anchor, erMixed, "belt layer change");
+            if (had_wall && BeltPrinter::is_end_cap_layer(previous_wall, m_belt_wall)) {
+                endcap_bridge = true;
+                endcap_target = anchor;
+                if (!BeltPrinter::is_belt_contact(m_last_pos, previous_wall))
+                    gcode += this->travel_to(previous_wall.belt_anchor, erMixed, "belt end-cap layer change");
             } else {
-                const Vec2d from = this->point_to_gcode(this->last_pos());
-                const Vec2d to   = this->point_to_gcode(anchor);
-                const double len = BeltPrinter::machine_xy_length(from, to, m_writer.belt_angle());
-                gcode += m_writer.extrude_to_xy(to, std::max(len, 0.0) * 0.1796, "belt layer bridge");
-                this->set_last_pos(anchor);
+                const bool landing_ok = !had_wall || BeltPrinter::is_safe_event(anchor, previous_wall);
+                if (landing_ok) {
+                    gcode += this->travel_to(anchor, erMixed, "belt layer change");
+                } else {
+                    const Vec2d from = this->point_to_gcode(this->last_pos());
+                    const Vec2d to   = this->point_to_gcode(anchor);
+                    const double len = BeltPrinter::machine_xy_length(from, to, m_writer.belt_angle());
+                    gcode += m_writer.extrude_to_xy(to, std::max(len, 0.0) * 0.1796, "belt layer bridge");
+                    this->set_last_pos(anchor);
+                }
             }
         }
     }
 
     // add tag for processor
     gcode += ";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Layer_Change) + "\n";
+    if (endcap_bridge && m_last_pos_defined) {
+        const Vec2d from = this->point_to_gcode(this->last_pos());
+        const Vec2d to   = this->point_to_gcode(endcap_target);
+        const double len = BeltPrinter::machine_xy_length(from, to, m_writer.belt_angle());
+        if (len > 0.05) {
+            gcode += m_writer.extrude_to_xy(to, len * 0.1796, "belt end-cap bridge");
+            this->set_last_pos(endcap_target);
+        }
+    }
     // export layer z
     char buf[64];
     sprintf(buf, print.is_BBL_printer() ? "; Z_HEIGHT: %g\n" : ";Z:%g\n", print_z);

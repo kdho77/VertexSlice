@@ -432,6 +432,26 @@ bool is_safe_event(const Point &p, const WallGeometry &wall)
     return is_interior(p, wall);
 }
 
+bool is_end_cap_layer(const WallGeometry &previous, const WallGeometry &next)
+{
+    if (!previous.valid || !next.valid)
+        return false;
+    const double rise = (next.belt_anchor.y() - previous.belt_anchor.y()) * SCALING_FACTOR;
+    if (rise < END_CAP_RISE_VIRT_MM)
+        return false;
+    // A point that is still on the previous belt band is the sole, not the tip.
+    return !is_belt_contact(next.belt_anchor, previous);
+}
+
+Point layer_change_anchor(const WallGeometry &previous, const WallGeometry &next)
+{
+    if (!next.valid)
+        return previous.valid ? previous.belt_anchor : Point(0, 0);
+    if (is_end_cap_layer(previous, next))
+        return previous.belt_anchor;
+    return next.belt_anchor;
+}
+
 Point belt_seam_point(const Points &loop_pts, const WallGeometry &wall)
 {
     if (loop_pts.empty())

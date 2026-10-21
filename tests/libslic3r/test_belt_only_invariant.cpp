@@ -149,3 +149,33 @@ TEST_CASE("Belt events stay on the contact side or in the interior", "[BeltOnly]
     for (const Point &p : around.points)
         REQUIRE(is_safe_event(p, concave));
 }
+
+TEST_CASE("End-cap layer change stays on the belt contact", "[BeltOnly]")
+{
+    // The sole still meets the belt. The next slice is only the heel tip, whose
+    // lowest point is ~1.5 mm above that contact (the ApexCore L454→L455 miss
+    // at Y=4.26). The layer-change anchor is the sole's belt contact.
+    const WallGeometry sole = make_wall_geometry({rect_mm(80.0, 12.0)}, 1.0);
+    ExPolygon cap;
+    cap.contour.points = {mm(70.0, 1.5), mm(84.0, 1.5), mm(84.0, 3.4), mm(70.0, 3.4)};
+    const WallGeometry tip = make_wall_geometry({cap}, 1.0);
+    REQUIRE(sole.valid);
+    REQUIRE(tip.valid);
+    REQUIRE(is_end_cap_layer(sole, tip));
+    const Point change = layer_change_anchor(sole, tip);
+    REQUIRE(is_belt_contact(change, sole));
+    REQUIRE_FALSE(is_belt_contact(tip.belt_anchor, sole));
+    const double rise = (tip.belt_anchor.y() - sole.belt_anchor.y()) * SCALING_FACTOR;
+    REQUIRE(rise > 1.0);
+    REQUIRE(change.y() + coord_t(std::llround(scale_(0.5))) < tip.belt_anchor.y());
+
+    // The sole continuing, shifted by a fraction of a millimetre, is not an end
+    // cap. The tag follows the new belt contact.
+    ExPolygon shifted = rect_mm(80.0, 12.0);
+    for (Point &p : shifted.contour.points)
+        p.y() += coord_t(std::llround(scale_(0.05)));
+    const WallGeometry next_sole = make_wall_geometry({shifted}, 1.0);
+    REQUIRE_FALSE(is_end_cap_layer(sole, next_sole));
+    const Point followed = layer_change_anchor(sole, next_sole);
+    REQUIRE(is_belt_contact(followed, next_sole));
+}
