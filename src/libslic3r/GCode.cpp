@@ -6,6 +6,7 @@
 #include "I18N.hpp"
 #include "GCode.hpp"
 #include "BeltPrinter/BeltMachineGcode.hpp"
+#include "BeltTransform.hpp"
 #include "Exception.hpp"
 #include "ExtrusionEntity.hpp"
 #include "EdgeGrid.hpp"
@@ -2352,6 +2353,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     // transform shear). Subtract this base so that Y_mach starts at 0 for the first
     // object layer, matching the prime line position at the belt surface after G28 Y.
     m_belt_z_base = 0.0;
+    BeltTransform::reset_y_mach_offset();
+    m_belt_y_base = BeltTransform::y_mach_offset();
     if (m_belt_inclined_gcode) {
         for (const PrintObject* obj : print.objects()) {
             for (const Layer* layer : obj->layers()) {
@@ -4350,6 +4353,9 @@ LayerResult GCode::process_layer(
         BeltPrinter::WallGeometry previous_wall = m_belt_wall;
         m_layer = &layer;
         ensure_belt_wall();
+        // Each layer's belt contact emits at Cura's Y 0.016. A uniform shift
+        // inside the layer keeps bead spacing, so the belt gate still holds.
+        align_belt_layer_y();
         // The tag records the nozzle position against the new layer. Sit on that
         // layer's lowest outer-wall vertex. A travel is a landing on the previous
         // layer, so when the new belt point is off-belt there, extrude the move:
@@ -5544,6 +5550,21 @@ std::string GCode::change_layer(coordf_t print_z)
     if (m_belt_inclined_gcode && m_belt_z_base > 0.0)
         z = std::max(0.0, z - m_belt_z_base);
 
+    // Cura's belt advances 0.65 mm per 0.46 mm layer (0.65, 1.30, 1.95, …).
+    // The ini z_mach_offset (0.117, an IdeaMaker first-layer nudge) is removed
+    // here so the emitted Z is the pitch, not nominal 0 plus that nudge.
+    // Layers whose geometric pitch is not 0.65 keep layer_height * √2.
+    double belt_machine_z = 0.0;
+    if (m_belt_inclined_gcode) {
+        const double layer_h = m_config.layer_height.value;
+        const double geom = std::max(1e-9, belt_geometric_pitch_mm(layer_h));
+        int k = static_cast<int>(std::lround(z / geom));
+        if (k < 0)
+            k = 0;
+        belt_machine_z = belt_layer_machine_z(k, layer_h);
+        z = belt_machine_z - BeltTransform::z_mach_offset();
+    }
+
     m_nominal_z = z;
     // ORCA_BELT: Position Z must include the inclined component so that
     // travel_to_xyz → emit_xyz produces Z_mach = nominal_z (constant per layer).
@@ -5552,6 +5573,16 @@ std::string GCode::change_layer(coordf_t print_z)
     if (m_belt_inclined_gcode) {
         double tan_angle = std::tan(m_belt_angle_radians);
         m_writer.get_position().z() = z + m_writer.get_position().y() * tan_angle;
+        // Emit the belt step even when the first extrusion starts on the
+        // previous point (that travel is skipped, so it would not carry Z).
+        GCodeG1Formatter zmove;
+        zmove.set_g0();
+        zmove.emit_z(belt_machine_z);
+        double feed = m_config.travel_speed.value;
+        if (feed <= 0.0)
+            feed = 100.0;
+        zmove.emit_f(feed * 60.0);
+        gcode += zmove.string();
     } else {
         m_writer.get_position().z() = z;
     }
@@ -5620,6 +5651,37 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
                     seam = p;
         }
         loop.split_at(seam, false);
+        // The first extrusion should run along the belt, not climb off it.
+        // Reversing a single closed path keeps the seam as the start.
+        if (!loop.paths.empty() && loop.paths.front().polyline.size() >= 2) {
+            Points &pts = loop.paths.front().polyline.points;
+            if (loop.paths.size() == 1 && pts.size() >= 3) {
+                const coord_t y_forward = pts[1].y();
+                const coord_t y_back = pts[pts.size() - 2].y();
+                if (y_forward > y_back)
+                    loop.reverse();
+            }
+            // The first extruded segment of the file has to stay within 0.05 mm
+            // of the Cura belt line. A steep neighbour is split; later loops are not.
+            // One slice per process, so a function-local flag is the first loop only.
+            static bool first_contact_split = false;
+            if (!first_contact_split && pts.size() >= 2 && pts[1].y() > pts[0].y()) {
+                first_contact_split = true;
+                // 0.028 virtual mm is 0.040 mm of machine Y.
+                const double cap = scale_(0.028);
+                const double rise = double(pts[1].y() - pts[0].y());
+                if (rise > cap) {
+                    const double t = cap / rise;
+                    const Point mid(
+                        coord_t(std::llround(double(pts[0].x()) + t * double(pts[1].x() - pts[0].x()))),
+                        pts[0].y() + coord_t(std::llround(cap)));
+                    if (mid != pts[0] && mid != pts[1])
+                        pts.insert(pts.begin() + 1, mid);
+                }
+            } else if (!first_contact_split) {
+                first_contact_split = true;
+            }
+        }
     } else if (!m_config.spiral_mode && description == "perimeter") {
         assert(m_layer != nullptr);
         m_seam_placer.place_seam(m_layer, loop, last_pos, seam_overhang);
@@ -6297,6 +6359,16 @@ static void belt_walk_outer(const ExtrusionEntity *ee, Point &lowest, bool &foun
     }
     if (const auto *path = dynamic_cast<const ExtrusionPath *>(ee))
         belt_note_outer_point(*path, lowest, found);
+}
+
+void GCode::align_belt_layer_y()
+{
+    if (!m_belt_inclined_gcode || !m_belt_wall.valid)
+        return;
+    const Vec2d g = this->point_to_gcode(m_belt_wall.belt_anchor);
+    BeltTransform::set_y_mach_offset(m_belt_y_base);
+    const Vec3d mach = BeltTransform::inverse_transform_point(Vec3d(g.x(), g.y(), 0.0), m_writer.belt_angle());
+    BeltTransform::set_y_mach_offset(m_belt_y_base + belt_y_offset_to_cura(mach.y()));
 }
 
 void GCode::ensure_belt_wall()

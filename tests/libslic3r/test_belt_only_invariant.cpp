@@ -242,3 +242,49 @@ TEST_CASE("PRINT_START is before the first extrusion and PRINT_END is the last c
     REQUIRE(belt_machine_start_gcode(225).find("M104 S225") != std::string::npos);
     REQUIRE(belt_machine_start_gcode(225).find("M109 S225") != std::string::npos);
 }
+
+TEST_CASE("Cura first-layer Y and Z, toe-first, X center, and machine tokens", "[BeltOnly]")
+{
+    // Cura ApexLight starts the first extrusion at Y 0.016. Shifting the
+    // contact (previously ~0.82) lands on that line, and a 0.04 mm rise
+    // along the first segment stays inside the ±0.05 mm band.
+    const double cura_y = BELT_CURA_FIRST_Y_MM;
+    REQUIRE(std::abs(0.82 + belt_y_offset_to_cura(0.82) - cura_y) <= 0.05);
+    const double contact = 0.777;
+    const double first_dest = 0.817;
+    REQUIRE(std::abs(first_dest + belt_y_offset_to_cura(contact) - cura_y) <= 0.05);
+    REQUIRE(near(contact + belt_y_offset_to_cura(contact), cura_y, 1e-12));
+
+    // First-layer Z and the layer step are Cura's 0.65 for a 0.46 mm layer.
+    REQUIRE(near(belt_layer_machine_z(0, 0.46), 0.65, 1e-12));
+    REQUIRE(near(belt_layer_machine_z(1, 0.46), 1.30, 1e-12));
+    REQUIRE(near(belt_layer_machine_z(2, 0.46) - belt_layer_machine_z(1, 0.46), 0.65, 1e-12));
+    REQUIRE(near(belt_layer_machine_z(15, 0.46), 0.65 * 16.0, 1e-12));
+
+    BoundingBoxf3 raw;
+    raw.min = Vec3d(-0.706, -46.344, 0.0);
+    raw.max = Vec3d(272.415, 46.354, 25.24);
+    const BeltPartPlacement toe = belt_place_raw_box(raw, false);
+    REQUIRE_FALSE(toe.heel_first);
+    REQUIRE(near(toe.yaw_rad, M_PI / 2.0, 1e-12));
+    const Vec3d toe_tip = belt_placed_point(Vec3d(raw.min.x(), 0.0, 0.0), toe);
+    const Vec3d heel_tip = belt_placed_point(Vec3d(raw.max.x(), 0.0, 0.0), toe);
+    REQUIRE(toe_tip.y() < heel_tip.y());
+    REQUIRE(near(toe_tip.y(), 0.0, 1e-6));
+    const Vec3d x_lo = belt_placed_point(Vec3d(0.0, raw.min.y(), 0.0), toe);
+    const Vec3d x_hi = belt_placed_point(Vec3d(0.0, raw.max.y(), 0.0), toe);
+    const double x_mid = 0.5 * (std::min(x_lo.x(), x_hi.x()) + std::max(x_lo.x(), x_hi.x()));
+    REQUIRE(std::abs(x_mid - belt_bed_center_x_mm) <= 1.0);
+    REQUIRE(x_lo.x() > 0.0);
+    REQUIRE(x_hi.x() < 250.0);
+
+    const std::string light = belt_machine_start_gcode(260);
+    const std::string core = belt_machine_start_gcode(225);
+    const std::string end = belt_machine_end_gcode();
+    REQUIRE(light.find("PRINT_START") != std::string::npos);
+    REQUIRE(light.find("M109 S260") != std::string::npos);
+    REQUIRE(light.find("SET_PRESSURE_ADVANCE") != std::string::npos);
+    REQUIRE(core.find("M109 S225") != std::string::npos);
+    REQUIRE(core.find("SET_PRESSURE_ADVANCE ADVANCE=0.05") != std::string::npos);
+    REQUIRE(end.find("PRINT_END") != std::string::npos);
+}

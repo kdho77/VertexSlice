@@ -47,6 +47,7 @@ struct BeltConfig {
     double i_z_shift = 0.0;
     double z_mach_offset = 0.0;     // Z offset applied to Z_mach
     double y_mach_offset = 0.0;     // Y offset applied to Y_mach
+    double y_mach_offset_config = 0.0;
     double trafo_z_shift = 0.0;     // Z-shift in trafo_centered()
 
     bool loaded = false;
@@ -78,7 +79,10 @@ struct BeltConfig {
                     else if (key == "i_z_shift")     i_z_shift = val;
                     else if (key == "trafo_z_shift") trafo_z_shift = val;
                     else if (key == "z_mach_offset") z_mach_offset = val;
-                    else if (key == "y_mach_offset") y_mach_offset = val;
+                    else if (key == "y_mach_offset") {
+                        y_mach_offset = val;
+                        y_mach_offset_config = val;
+                    }
                     else if (key == "y_shift") { f_y_shift = val; i_y_shift = val; }
                     // Transform coefficients (f_yy, i_yy, etc.) are intentionally
                     // NOT loaded from ini — they are locked constants above.
@@ -147,6 +151,30 @@ double BeltTransform::get_trafo_z_shift()
 {
     ensure_config();
     return g_belt_config.trafo_z_shift;
+}
+
+double BeltTransform::z_mach_offset()
+{
+    ensure_config();
+    return g_belt_config.z_mach_offset;
+}
+
+double BeltTransform::y_mach_offset()
+{
+    ensure_config();
+    return g_belt_config.y_mach_offset;
+}
+
+void BeltTransform::set_y_mach_offset(double y_mm)
+{
+    ensure_config();
+    g_belt_config.y_mach_offset = y_mm;
+}
+
+void BeltTransform::reset_y_mach_offset()
+{
+    ensure_config();
+    g_belt_config.y_mach_offset = g_belt_config.y_mach_offset_config;
 }
 
 void BeltTransform::reload_config()

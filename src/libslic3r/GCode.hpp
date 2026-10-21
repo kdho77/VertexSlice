@@ -639,7 +639,9 @@ private:
     // Belt inclined slicing
     bool m_belt_inclined_gcode = false;
     double m_belt_angle_radians = 0.0;
-    double m_belt_z_base = 0.0;  // Virtual Z offset of first layer — subtracted so Y_mach starts at 0
+    double m_belt_z_base = 0.0;  // Virtual Z offset of first layer — subtracted so the first object layer is layer 0
+    double m_belt_y_base = 0.0;  // Ini Y offset, restored as the base of the per-layer Cura shift
+    void align_belt_layer_y();
     // Outer-wall geometry of the layer currently being emitted. Belt printers
     // use it to keep every event on the belt contact or in the interior.
     BeltPrinter::WallGeometry m_belt_wall;
