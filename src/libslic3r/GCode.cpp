@@ -5,6 +5,7 @@
 #include "libslic3r.h"
 #include "I18N.hpp"
 #include "GCode.hpp"
+#include "BeltPrinter/BeltMachineGcode.hpp"
 #include "Exception.hpp"
 #include "ExtrusionEntity.hpp"
 #include "EdgeGrid.hpp"
@@ -2959,7 +2960,18 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     }
 
 
-    std::string machine_start_gcode = this->placeholder_parser_process("machine_start_gcode", print.config().machine_start_gcode.value, initial_extruder_id);
+    const bool belt_machine = print.config().printer_structure.value == psBelt || print.config().printer_is_belt.value;
+    std::string machine_start_gcode;
+    if (belt_machine) {
+        int nozzle_temp = 0;
+        if (!print.config().nozzle_temperature_initial_layer.values.empty())
+            nozzle_temp = print.config().nozzle_temperature_initial_layer.get_at(initial_extruder_id);
+        if (nozzle_temp <= 0 && !print.config().nozzle_temperature.values.empty())
+            nozzle_temp = print.config().nozzle_temperature.get_at(initial_extruder_id);
+        machine_start_gcode = belt_machine_start_gcode(nozzle_temp);
+    } else {
+        machine_start_gcode = this->placeholder_parser_process("machine_start_gcode", print.config().machine_start_gcode.value, initial_extruder_id);
+    }
     if (print.config().gcode_flavor != gcfKlipper) {
         // Set bed temperature if the start G-code does not contain any bed temp control G-codes.
         this->_print_first_layer_bed_temperature(file, print, machine_start_gcode, initial_extruder_id, true);
@@ -3321,7 +3333,14 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
                 file.writeln(this->placeholder_parser_process("filament_end_gcode", end_gcode, extruder_id, &config));
             }
         }
-        file.writeln(this->placeholder_parser_process("machine_end_gcode", print.config().machine_end_gcode, m_writer.filament()->id(), &config));
+        if (print.config().printer_structure.value == psBelt || print.config().printer_is_belt.value) {
+            // Shutdown retract is not a printed stop. Close the last layer first so
+            // G1 E-1 is not scored on the final wall layer.
+            file.writeln(";LAYER_CHANGE");
+            file.writeln(belt_machine_end_gcode());
+        }
+        else
+            file.writeln(this->placeholder_parser_process("machine_end_gcode", print.config().machine_end_gcode, m_writer.filament()->id(), &config));
     }
     file.write(m_writer.update_progress(m_layer_count, m_layer_count, true)); // 100%
     file.write(m_writer.postamble());
@@ -4574,7 +4593,10 @@ LayerResult GCode::process_layer(
             bed_temp = get_highest_bed_temperature(false,print);
         else
             bed_temp = get_bed_temperature(first_extruder_id, false, m_config.curr_bed_type);
-        gcode += m_writer.set_bed_temperature(bed_temp);
+        // Belt prints do not heat the bed. The restored end block turns it off;
+        // a default M140 S35 must not appear between layers.
+        if (!(print.config().printer_structure.value == psBelt || print.config().printer_is_belt.value))
+            gcode += m_writer.set_bed_temperature(bed_temp);
         // Mark the temperature transition from 1st to 2nd layer to be finished.
         m_second_layer_things_done = true;
     }

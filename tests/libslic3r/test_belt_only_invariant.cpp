@@ -1,10 +1,13 @@
 #include <catch2/catch_all.hpp>
 
 #include "libslic3r/BeltPrinter/BeltOnlyInvariant.hpp"
+#include "libslic3r/BeltPrinter/BeltMachineGcode.hpp"
+#include "libslic3r/BeltPrinter/BeltPrintOrientation.hpp"
 #include "libslic3r/BeltTransform.hpp"
 #include "libslic3r/ExPolygon.hpp"
 
 #include <cmath>
+#include <string>
 
 using namespace Slic3r;
 using namespace Slic3r::BeltPrinter;
@@ -178,4 +181,64 @@ TEST_CASE("End-cap layer change stays on the belt contact", "[BeltOnly]")
     REQUIRE_FALSE(is_end_cap_layer(sole, next_sole));
     const Point followed = layer_change_anchor(sole, next_sole);
     REQUIRE(is_belt_contact(followed, next_sole));
+}
+
+TEST_CASE("Toe-first is the default belt orientation and the part is centered on X", "[BeltOnly]")
+{
+    // insole_round_2p5mm.stl, unrotated.
+    BoundingBoxf3 raw;
+    raw.min = Vec3d(-0.706, -46.344, 0.0);
+    raw.max = Vec3d(272.415, 46.354, 25.24);
+
+    const BeltPartPlacement toe = belt_place_raw_box(raw, false);
+    REQUIRE(near(toe.yaw_rad, M_PI / 2.0, 1e-12));
+    REQUIRE_FALSE(toe.heel_first);
+
+    const Vec3d toe_tip = belt_placed_point(Vec3d(raw.min.x(), 0.0, 0.0), toe);
+    const Vec3d heel_tip = belt_placed_point(Vec3d(raw.max.x(), 0.0, 0.0), toe);
+    // +90° Z puts the min-X toe at min Y, so the toe enters the belt first.
+    REQUIRE(toe_tip.y() < heel_tip.y());
+    REQUIRE(near(toe_tip.y(), 0.0, 1e-6));
+
+    const Vec3d x_lo = belt_placed_point(Vec3d(0.0, raw.min.y(), 0.0), toe);
+    const Vec3d x_hi = belt_placed_point(Vec3d(0.0, raw.max.y(), 0.0), toe);
+    const double x_mid = 0.5 * (std::min(x_lo.x(), x_hi.x()) + std::max(x_lo.x(), x_hi.x()));
+    REQUIRE(near(x_mid, belt_bed_center_x_mm, belt_bed_center_x_tolerance_mm));
+    REQUIRE(x_lo.x() > 0.0);
+    REQUIRE(x_hi.x() < 250.0);
+
+    const BeltPartPlacement heel = belt_place_raw_box(raw, true);
+    REQUIRE(near(heel.yaw_rad, -M_PI / 2.0, 1e-12));
+    const Vec3d heel_first_end = belt_placed_point(Vec3d(raw.max.x(), 0.0, 0.0), heel);
+    const Vec3d toe_later = belt_placed_point(Vec3d(raw.min.x(), 0.0, 0.0), heel);
+    REQUIRE(heel_first_end.y() < toe_later.y());
+    REQUIRE(near(heel_first_end.y(), 0.0, 1e-6));
+}
+
+TEST_CASE("PRINT_START is before the first extrusion and PRINT_END is the last command", "[BeltOnly]")
+{
+    const std::string start = belt_machine_start_gcode(260);
+    const std::string end = belt_machine_end_gcode();
+    const std::string gcode = start + "G1 X125 Y10 E0.20 F1000\n" + end;
+
+    const auto print_start = gcode.find("PRINT_START");
+    const auto print_end = gcode.rfind("PRINT_END");
+    const auto first_extrude = gcode.find("G1 X125 Y10 E0.20");
+    REQUIRE(print_start != std::string::npos);
+    REQUIRE(first_extrude != std::string::npos);
+    REQUIRE(print_start < first_extrude);
+    REQUIRE(print_end != std::string::npos);
+    REQUIRE(first_extrude < print_end);
+    const auto after_end = gcode.find_first_not_of(" \t\r\n", print_end + std::string("PRINT_END").size());
+    REQUIRE(after_end == std::string::npos);
+
+    REQUIRE(start.find("M104 S260") != std::string::npos);
+    REQUIRE(start.find("M109 S260") != std::string::npos);
+    REQUIRE(start.find("M105") != std::string::npos);
+    REQUIRE(start.find("SET_PRESSURE_ADVANCE ADVANCE=0.05") != std::string::npos);
+    REQUIRE(start.find("M140") == std::string::npos);
+    REQUIRE(end.find("M140 S35") == std::string::npos);
+    REQUIRE(end.find("M140 S0") != std::string::npos);
+    REQUIRE(belt_machine_start_gcode(225).find("M104 S225") != std::string::npos);
+    REQUIRE(belt_machine_start_gcode(225).find("M109 S225") != std::string::npos);
 }

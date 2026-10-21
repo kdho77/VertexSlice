@@ -54,6 +54,7 @@ using namespace nlohmann;
 #include "libslic3r/ModelArrange.hpp"
 #include "libslic3r/Platform.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/BeltPrinter/BeltPrintOrientation.hpp"
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/Format/AMF.hpp"
@@ -5661,6 +5662,14 @@ int CLI::run(int argc, char **argv)
                         BOOST_LOG_TRIVIAL(info) << boost::format("print_volume {%1%,%2%,%3%}->{%4%, %5%, %6%}") % print_volume.min(0) % print_volume.min(1)
                             % print_volume.min(2) % print_volume.max(0) % print_volume.max(1) % print_volume.max(2) << std::endl;
 #else
+                        const bool belt_printer =
+                            (m_print_config.has("printer_is_belt") && m_print_config.opt_bool("printer_is_belt"))
+                            || (m_print_config.has("printer_structure")
+                                && m_print_config.opt_enum<PrinterStructure>("printer_structure") == psBelt);
+                        if (belt_printer) {
+                            for (ModelObject *belt_object : model.objects)
+                                Slic3r::apply_belt_feed_orientation(*belt_object);
+                        }
                         BuildVolume build_volume(part_plate->get_shape(), print_height, part_plate->get_extruder_areas(), current_extruder_print_heights);
                         //model.update_print_volume_state(build_volume);
                         unsigned int count = model.update_print_volume_state(build_volume);
