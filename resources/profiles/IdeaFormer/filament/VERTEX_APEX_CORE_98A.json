@@ -1,0 +1,36 @@
+{
+    "type": "filament",
+    "name": "VERTEX_APEX_CORE_98A",
+    "inherits": "VERTEX_APEX_CORE_95A @base",
+    "from": "system",
+    "setting_id": "OGVTX98A",
+    "filament_id": "OGVTX98A",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Vertex Apex V2 1.0 nozzle"
+    ],
+    "filament_notes": [
+        "UNTESTED BASELINE — expert delta vs Cura-matched 95A (Shore 98A / 60D). Process: 0.42mm TPU Insole 98A @Vertex Apex V2."
+    ],
+    "filament_settings_id": [
+        "VERTEX_APEX_CORE_98A"
+    ],
+    "nozzle_temperature": [
+        "235"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "235"
+    ],
+    "nozzle_temperature_range_low": [
+        "230"
+    ],
+    "nozzle_temperature_range_high": [
+        "240"
+    ],
+    "filament_retraction_length": [
+        "1.35"
+    ],
+    "filament_start_gcode": [
+        "; UNTESTED BASELINE — VERTEX_APEX_CORE_98A (60D)"
+    ]
+}
