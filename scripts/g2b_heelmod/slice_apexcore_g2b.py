@@ -31,12 +31,19 @@ from slice_g2b_heelmod import (  # noqa: E402
     slice_model,
 )
 
-# Shear scale measured on this binary at volumetric ratio 1.0008 (width 1 mm,
-# filament flow 1.03). Applied at the G2b layer height. Gap fill is ApexCore's
-# own target, 0.16 E/mm, not the wall target.
-OUTER_AT_VOL = 0.1843
-SPARSE_AT_VOL = 0.1638
-SOLID_AT_VOL = 0.1778
+# Measured on this binary at layer 0.46 mm, wall_loops 2, overlap 15%, with
+# the volumetric 0.18 ratios (outer=inner 0.8925, sparse 1.0042, solid 0.9251):
+# outer 0.1584, inner 0.1460, sparse 0.1783, solid 0.2031 E/mm. Scale each
+# feature onto 0.18. Gap fill did not appear as its own feature; its ratio
+# follows sparse down to ApexCore's 0.16 E/mm target.
+OUTER_MEASURED = 0.1584
+INNER_MEASURED = 0.1460
+SPARSE_MEASURED = 0.1783
+SOLID_MEASURED = 0.2031
+OUTER_BASE = 0.8925
+INNER_BASE = 0.8925
+SPARSE_BASE = 1.0042
+SOLID_BASE = 0.9251
 GAP_E_PER_MM = 0.16
 # Offset that puts the 0.46 mm toe on the belt the way the G2b file does
 # (outer min Y about 0.02). The heelmod constant -2.136 clips the sole.
@@ -46,13 +53,13 @@ CORE_Y_OFFSET = -1.146
 def _apply_core_flows(process: dict, filament: dict) -> None:
     fil = float(filament.get("filament_flow_ratio", ["1.03"])[0])
     layer_h = float(process["layer_height"])
-    volumetric = feature_flow(0.18, layer_h, 1.0, fil)
-    outer = volumetric * (0.18 / OUTER_AT_VOL)
-    sparse = volumetric * (0.18 / SPARSE_AT_VOL)
-    solid = volumetric * (0.18 / SOLID_AT_VOL)
+    outer = OUTER_BASE * (0.18 / OUTER_MEASURED)
+    inner = INNER_BASE * (0.18 / INNER_MEASURED)
+    sparse = SPARSE_BASE * (0.18 / SPARSE_MEASURED)
+    solid = SOLID_BASE * (0.18 / SOLID_MEASURED)
     gap = sparse * (GAP_E_PER_MM / 0.18)
     process["outer_wall_flow_ratio"] = f"{outer:.4f}"
-    process["inner_wall_flow_ratio"] = f"{outer:.4f}"
+    process["inner_wall_flow_ratio"] = f"{inner:.4f}"
     process["sparse_infill_flow_ratio"] = f"{sparse:.4f}"
     process["internal_solid_infill_flow_ratio"] = f"{solid:.4f}"
     process["gap_fill_flow_ratio"] = f"{gap:.4f}"
@@ -61,7 +68,7 @@ def _apply_core_flows(process: dict, filament: dict) -> None:
         f"fil={fil}",
         f"layer={layer_h}",
         f"outer={outer:.4f}",
-        f"inner={outer:.4f}",
+        f"inner={inner:.4f}",
         f"sparse={sparse:.4f}",
         f"solid={solid:.4f}",
         f"gap={gap:.4f}",
