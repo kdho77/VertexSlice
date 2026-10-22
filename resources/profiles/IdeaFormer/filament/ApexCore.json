@@ -1,0 +1,17 @@
+{
+    "type": "filament",
+    "name": "ApexCore",
+    "inherits": "VERTEX_APEX_CORE_95A",
+    "from": "system",
+    "setting_id": "OGAPXCOR",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Vertex Apex V2 1.0 nozzle"
+    ],
+    "filament_notes": [
+        "ApexCore — same as VERTEX_APEX_CORE_95A (nozzle 225 C, bed off)."
+    ],
+    "filament_settings_id": [
+        "ApexCore"
+    ]
+}

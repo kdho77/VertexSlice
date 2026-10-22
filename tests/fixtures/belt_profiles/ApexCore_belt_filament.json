@@ -1,0 +1,18 @@
+{
+    "type": "filament",
+    "name": "ApexCore belt",
+    "from": "user",
+    "instantiation": "false",
+    "inherits": "fdm_filament_common",
+    "notes": "Belt toe-first ApexCore (VERTEX_APEX_CORE_95A). G2b heelmod: PA 0.05; layer slowdown 4s/20.",
+    "filament_flow_ratio": ["1"],
+    "nozzle_temperature": ["225"],
+    "nozzle_temperature_initial_layer": ["225"],
+    "filament_retraction_length": ["0"],
+    "enable_pressure_advance": ["1"],
+    "pressure_advance": ["0.05"],
+    "slow_down_for_layer_cooling": ["1"],
+    "slow_down_layer_time": ["4"],
+    "slow_down_min_speed": ["20"],
+    "wipe": ["0"]
+}
