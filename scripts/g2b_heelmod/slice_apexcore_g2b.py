@@ -49,6 +49,11 @@ GAP_E_PER_MM = 0.16
 CORE_Y_OFFSET = -1.146
 
 
+def _g2b_off(profile: dict, key: str) -> None:
+    cur = profile.get(key)
+    profile[key] = ["0"] if isinstance(cur, list) or cur is None else "0"
+
+
 def _apply_core_flows(process: dict, filament: dict) -> None:
     fil = float(filament.get("filament_flow_ratio", ["1.03"])[0])
     layer_h = float(process["layer_height"])
@@ -93,6 +98,12 @@ def prepare(work: Path, material: str) -> tuple[dict, dict, dict, float]:
     filament = saved
     if process.get("layer_height") != "0.46":
         raise SystemExit(f"layer height drifted to {process.get('layer_height')!r}")
+    # ApexCore's filament retraction is 1.5 mm and the machine flag is on, so
+    # the slicer emits a retract/prime on travels and at every layer change.
+    # G2b has none of those. The flag is off and the length stays 0.
+    _g2b_off(machine, "retract_when_changing_layer")
+    _g2b_off(filament, "filament_retract_when_changing_layer")
+    _g2b_off(filament, "filament_retraction_length")
     _apply_core_flows(process, filament)
     y_offset = float(os.environ.get("CORE_Y_OFFSET", str(CORE_Y_OFFSET)))
     start = machine.get("machine_start_gcode", "")
