@@ -65,12 +65,16 @@ def reorder_gap_fill(text: str) -> str:
     lines = text.splitlines(keepends=True)
     out: list[str] = []
     x = y = 0.0
+    feat_f = 0.0
     i, n = 0, len(lines)
     while i < n:
         l = lines[i]
         if not l.startswith(";TYPE:Gap infill"):
             if _is_move(l):
                 nx, ny = _xy(l)
+                fv = _word(l, "F")
+                if fv is not None and fv < TRAVEL_F - 1:
+                    feat_f = fv
                 x = nx if nx is not None else x
                 y = ny if ny is not None else y
             out.append(l)
@@ -82,7 +86,7 @@ def reorder_gap_fill(text: str) -> str:
         cur = None
         px, py = x, y
         width = None
-        f = None
+        f = feat_f if feat_f else None
         while i < n:
             lj = lines[i]
             if lj.startswith((";TYPE:", ";LAYER_CHANGE", "; stop printing")):
@@ -99,16 +103,18 @@ def reorder_gap_fill(text: str) -> str:
                     if min(py, ny) <= BELT_CONTACT_Y_MM:
                         px, py = nx, ny
                         continue
-                    if fv is not None:
+                    if fv is not None and fv < TRAVEL_F - 1:
                         f = fv
+                        feat_f = fv
                     if cur is None:
                         cur = [(px, py), []]
                         paths.append(cur)
                     cur[1].append(((nx, ny), e, f, width))
                 elif (nx, ny) != (px, py):
                     cur = None
-                elif fv is not None and e is None:
+                elif fv is not None and e is None and fv < TRAVEL_F - 1:
                     f = fv
+                    feat_f = fv
                 px, py = nx, ny
             # other lines (M204, M73) are dropped inside the block; accel is restored below
             i += 1
@@ -204,7 +210,13 @@ def postprocess_apex_light(text: str) -> str:
                 body = re.sub(rf"\s*\bF{_NUM}", "", body).rstrip()
                 l = f"{body} F{belt_f:g}" + (f" ;{cmt}" if sep else "") + "\n"
                 emitted_f = belt_f
-            elif emitted_f is not None and f is None and commanded_f is not None and emitted_f != commanded_f:
+            elif (
+                emitted_f is not None
+                and f is None
+                and commanded_f is not None
+                and commanded_f < TRAVEL_F - 1
+                and emitted_f != commanded_f
+            ):
                 body, sep, cmt = l.rstrip("\n").partition(";")
                 l = f"{body.rstrip()} F{commanded_f:g}" + (f" ;{cmt}" if sep else "") + "\n"
                 emitted_f = commanded_f

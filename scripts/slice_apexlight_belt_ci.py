@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -97,6 +99,78 @@ def heel_coupon_stl(src: Path, dest: Path) -> Path:
     return dest
 
 
+def _format_duration(seconds: float) -> str:
+    total = int(round(seconds))
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}h {minutes}m {secs}s"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def refresh_header_totals(text: str) -> str:
+    """Rewrite filament and time comments from the finished toolpath.
+
+    Post-process adds beads and slowdown rewrites feeds, so the slicer's
+    footer no longer matches the file. Filament is the sum of positive
+    relative E. Time is distance at the feed written on each move, with
+    belt Y scaled by sqrt(2).
+    """
+    dia = 1.75
+    dens = 1.2
+    found_d = re.search(r"; filament_diameter:\s*([0-9.]+)", text)
+    if found_d:
+        dia = float(found_d.group(1))
+    found_rho = re.search(r"; filament_density:\s*([0-9.]+)", text)
+    if found_rho:
+        dens = float(found_rho.group(1))
+    e_mm = 0.0
+    seconds = 0.0
+    x = y = z = 0.0
+    feed = 0.0
+    y_scale = math.sqrt(2.0)
+    for line in text.splitlines():
+        body = line.split(";", 1)[0].strip()
+        if not body.startswith(("G0", "G1", "G2", "G3")):
+            continue
+        vals: dict[str, float] = {}
+        for match in re.finditer(r"\b([XYZEF])(-?\d*\.?\d+)", body):
+            vals[match.group(1)] = float(match.group(2))
+        if "F" in vals:
+            feed = vals["F"] / 60.0
+        nx, ny, nz = vals.get("X", x), vals.get("Y", y), vals.get("Z", z)
+        dist = math.hypot(nx - x, (ny - y) * y_scale, nz - z)
+        if dist > 0.0 and feed > 0.0:
+            seconds += dist / feed
+        extruded = vals.get("E", 0.0)
+        if extruded > 0.0:
+            e_mm += extruded
+        x, y, z = nx, ny, nz
+    cm3 = e_mm * math.pi * (dia * 0.5) ** 2 / 1000.0
+    grams = cm3 * dens
+    values = {
+        "; filament used [mm] = ": f"{e_mm:.2f}",
+        "; filament used [cm3] = ": f"{cm3:.2f}",
+        "; filament used [g] = ": f"{grams:.2f}",
+        "; total filament used [g] = ": f"{grams:.2f}",
+        "; estimated printing time (normal mode) = ": _format_duration(seconds),
+    }
+    out: list[str] = []
+    for line in text.splitlines(keepends=True):
+        rewritten = False
+        for prefix, value in values.items():
+            if line.startswith(prefix):
+                nl = "\n" if line.endswith("\n") else ""
+                out.append(f"{prefix}{value}{nl}")
+                rewritten = True
+                break
+        if not rewritten:
+            out.append(line)
+    return "".join(out)
+
+
 def slice_raw(stl: Path, profile, dest: Path, target_y: float = 0.016) -> None:
     work = Path(tempfile.mkdtemp(prefix="vs_apex_"))
     flat_m, flat_p, flat_f = flatten_presets(profile, work)
@@ -163,6 +237,7 @@ def slice_raw(stl: Path, profile, dest: Path, target_y: float = 0.016) -> None:
             slow_down_layer_time=float(profile.filament_overrides.get("slow_down_layer_time", ["8"])[0]),
             slow_down_min_speed=float(profile.filament_overrides.get("slow_down_min_speed", ["8"])[0]),
         )
+    text = refresh_header_totals(text)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text, encoding="utf-8")
 

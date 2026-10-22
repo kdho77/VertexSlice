@@ -34,6 +34,23 @@ THIRD_WALL_MM = 1.0
 HOP_MM = 0.4
 _NUM = r"(-?\d*\.?\d+)"
 TRAVEL_F = TRAVEL_MM_S * 60.0
+# Nominal planar E/mm kept for the real walls. New beads use these, not the
+# mean of variable-width neighbours (that mean inflated pure-Y beads).
+OUTER_E_PER_MM = 0.1920
+INNER_E_PER_MM = 0.1788
+SPARSE_E_PER_MM = 0.2054
+# Feature feeds restored when a travel leaves 212 mm/s as the modal F.
+_FEATURE_F = {
+    "Outer wall": 26 * 60.0,
+    "Overhang wall": 26 * 60.0,
+    "Inner wall": 42 * 60.0,
+    "Sparse infill": 26 * 60.0,
+    "Internal solid infill": 26 * 60.0,
+    "Top surface": 26 * 60.0,
+    "Gap infill": 26 * 60.0,
+    "Bridge": 25 * 60.0,
+    "Internal bridge": 25 * 60.0,
+}
 _LOOP_ROLES = {"Outer wall": ("Outer wall", "Overhang wall"), "Inner wall": ("Inner wall",)}
 
 
@@ -207,7 +224,7 @@ def _index_belt_lanes(text: str) -> None:
             LAYER_LANE[lay] = info
 
 
-def _emit_belt_detour(out: list[str], x0: float, y0: float, x1: float, y1: float, z: float | None, *, allow_rise: bool, layer: int | None = None) -> tuple[float, float]:
+def _emit_belt_detour(out: list[str], x0: float, y0: float, x1: float, y1: float, z: float | None, *, allow_rise: bool, layer: int | None = None, restore_f: float | None = None) -> tuple[float, float]:
     """One detour along the belt lane. The travel never uses Y 0.016 and
     never lands on an outer-wall vertex above the lane. A following extrusion
     reaches the seam. Crossing the lateral cup lifts Z for the along-lane move.
@@ -240,6 +257,9 @@ def _emit_belt_detour(out: list[str], x0: float, y0: float, x1: float, y1: float
         out.append(f"G1 X{px:.3f} Y{py:.3f} F{TRAVEL_F:g} ;seam travel\n")
     if hop:
         out.append(f"G1 Z{z:.3f} F{TRAVEL_F:g} ;seam hop\n")
+    # The travel feedrate must not leak into the next extrusion.
+    if restore_f is not None and 0 < restore_f < TRAVEL_F - 1:
+        out.append(f"G1 F{restore_f:g}\n")
     return pts[-1]
 
 
@@ -299,24 +319,13 @@ def _belt_seam(segs, tx: float, ty: float):
     return best[1], best[2], best[3]
 
 
-def _e_over_machine(segs) -> float:
-    """Median-free mean of E per machine millimetre. Keeps a new bead on the wall's flow."""
-    num = den = 0.0
-    scale = math.sqrt(2.0)
-    for a, b, e in segs:
-        mach = math.hypot(b[0] - a[0], (b[1] - a[1]) * scale)
-        if mach > 0.15 and e > 0:
-            num += e
-            den += mach
-    return num / den if den else 0.1788
-
-
-def _emit_join(out: list[str], x0: float, y0: float, x1: float, y1: float, ratio: float) -> tuple[float, float]:
-    """Extrude from the lane onto the seam. This is not a travel, so it never sits on Y 0.016."""
-    mach = math.hypot(x1 - x0, (y1 - y0) * math.sqrt(2.0))
-    if mach < 0.02:
+def _emit_join(out: list[str], x0: float, y0: float, x1: float, y1: float, ratio: float, feed: float | None = None) -> tuple[float, float]:
+    """Extrude from the lane onto the seam at the feature feedrate, in gcode millimetres."""
+    length = math.hypot(x1 - x0, y1 - y0)
+    if length < 0.02:
         return x1, y1
-    out.append(f"G1 X{x1:.3f} Y{y1:.3f} E{ratio * mach:.5f}\n")
+    fs = f" F{feed:g}" if feed and feed < TRAVEL_F - 1 else ""
+    out.append(f"G1 X{x1:.3f} Y{y1:.3f} E{ratio * length:.5f}{fs}\n")
     return x1, y1
 
 
@@ -437,10 +446,13 @@ def rotate_wall_seams(
         if t > 1e-9:
             new.append((a, q, e * t, sf, sr, []))
         _strip_approach_travels(out)
-        ratio = _e_over_machine([(sg[0], sg[1], sg[2]) for sg in segs])
+        ratio = OUTER_E_PER_MM if kind == "Outer wall" else INNER_E_PER_MM
         end_x, end_y = anchor_x, anchor_y
+        restore_f = new[0][3] if new else cf
         if abs(anchor_x - q[0]) > 0.02 or abs(anchor_y - q[1]) > 0.02:
-            end_x, end_y = _emit_belt_detour(out, anchor_x, anchor_y, q[0], q[1], z, allow_rise=False, layer=layer)
+            end_x, end_y = _emit_belt_detour(
+                out, anchor_x, anchor_y, q[0], q[1], z, allow_rise=False, layer=layer, restore_f=restore_f
+            )
         # The lane travel stops at Y 1.4. Extrude the last step onto a seam
         # that sits on the contact line, still inside the part.
         joined_off_type = False
@@ -451,7 +463,7 @@ def rotate_wall_seams(
             if kind == "Outer wall":
                 out.append(";TYPE:Gap infill\n")
                 joined_off_type = True
-            end_x, end_y = _emit_join(out, end_x, end_y, q[0], q[1], ratio)
+            end_x, end_y = _emit_join(out, end_x, end_y, q[0], q[1], ratio, restore_f)
         last_f = None
         cur_role = "Gap infill" if joined_off_type else role
         for a2, b2, e2, f2, r2, pre2 in new:
@@ -548,6 +560,7 @@ def anchor_sparse_infill_belt(text: str) -> str:
     lines = text.splitlines(keepends=True)
     out: list[str] = []
     x = y = z = 0.0
+    feat_f = 0.0
     layer = -1
     i, n = 0, len(lines)
     while i < n:
@@ -558,6 +571,9 @@ def anchor_sparse_infill_belt(text: str) -> str:
             if _is_move(l):
                 nx, ny = _xy(l)
                 nz = _word(l, "Z")
+                fv = _word(l, "F")
+                if fv is not None and fv < TRAVEL_F - 1:
+                    feat_f = fv
                 x = nx if nx is not None else x
                 y = ny if ny is not None else y
                 if nz is not None:
@@ -582,6 +598,9 @@ def anchor_sparse_infill_belt(text: str) -> str:
                 ny = py if ny is None else ny
                 if nz is not None:
                     z = nz
+                fv = _word(lj, "F")
+                if fv is not None and fv < TRAVEL_F - 1:
+                    feat_f = fv
                 if e is not None and e > 0 and (nx, ny) != (px, py):
                     if cur is None:
                         cur = [(px, py), []]
@@ -599,6 +618,12 @@ def anchor_sparse_infill_belt(text: str) -> str:
                 continue
             pts = [st] + [s[0] for s in segs]
             orig_end = segs[-1][0]
+            path_f = feat_f
+            for _end, raw in segs:
+                fv = _word(raw, "F")
+                if fv is not None and fv < TRAVEL_F - 1:
+                    path_f = fv
+                    break
             if _sparse_wants_belt(layer, pts):
                 chains = _chain_from_belt(st, segs)
                 for entry, chain in chains:
@@ -606,31 +631,37 @@ def anchor_sparse_infill_belt(text: str) -> str:
                         continue
                     if abs(entry[0] - cx) > 0.02 or abs(entry[1] - cy) > 0.02:
                         cx, cy = _emit_belt_detour(
-                            out, cx, cy, entry[0], entry[1], z, allow_rise=entry[1] <= RISE_MAX_Y, layer=layer
+                            out, cx, cy, entry[0], entry[1], z, allow_rise=entry[1] <= RISE_MAX_Y, layer=layer, restore_f=path_f or None
                         )
                     if abs(cx - entry[0]) > 0.02 or abs(cy - entry[1]) > 0.02:
                         end0, e0, _fv0 = chain[0]
-                        mach = math.hypot(end0[0] - entry[0], (end0[1] - entry[1]) * math.sqrt(2.0))
-                        ratio = (e0 / mach) if mach > 0.15 and e0 > 0 else 0.2054
-                        cx, cy = _emit_join(out, cx, cy, entry[0], entry[1], ratio)
+                        length = math.hypot(end0[0] - entry[0], end0[1] - entry[1])
+                        ratio = (e0 / length) if length > 0.15 and e0 > 0 else SPARSE_E_PER_MM
+                        cx, cy = _emit_join(out, cx, cy, entry[0], entry[1], ratio, path_f or None)
                     for end, e, fv in chain:
                         fs = f" F{fv:g}" if fv is not None else ""
                         out.append(f"G1 X{end[0]:.3f} Y{end[1]:.3f} E{e:.5f}{fs}\n")
+                        if fv is not None and fv < TRAVEL_F - 1:
+                            path_f = fv
                     cx, cy = chain[-1][0]
                 # The next extrusion was planned from the original end. Leaving
                 # the nozzle on a wall changes that bead and the next layer change.
                 if abs(cx - orig_end[0]) > 0.02 or abs(cy - orig_end[1]) > 0.02:
                     out.append(f"G1 X{orig_end[0]:.3f} Y{orig_end[1]:.3f} F{TRAVEL_F:g}\n")
+                    if path_f and path_f < TRAVEL_F - 1:
+                        out.append(f"G1 F{path_f:g}\n")
                     cx, cy = orig_end
             else:
                 if abs(st[0] - cx) > 0.02 or abs(st[1] - cy) > 0.02:
-                    cx, cy = _emit_belt_detour(out, cx, cy, st[0], st[1], z, allow_rise=False, layer=layer)
+                    cx, cy = _emit_belt_detour(
+                        out, cx, cy, st[0], st[1], z, allow_rise=False, layer=layer, restore_f=path_f or None
+                    )
                     if abs(cx - st[0]) > 0.02 or abs(cy - st[1]) > 0.02:
                         end0 = segs[0][0]
                         e0 = _word(segs[0][1], "E") or 0.0
-                        mach = math.hypot(end0[0] - st[0], (end0[1] - st[1]) * math.sqrt(2.0))
-                        ratio = (e0 / mach) if mach > 0.15 and e0 > 0 else 0.2054
-                        cx, cy = _emit_join(out, cx, cy, st[0], st[1], ratio)
+                        length = math.hypot(end0[0] - st[0], end0[1] - st[1])
+                        ratio = (e0 / length) if length > 0.15 and e0 > 0 else SPARSE_E_PER_MM
+                        cx, cy = _emit_join(out, cx, cy, st[0], st[1], ratio, path_f or None)
                 for end, raw in segs:
                     out.append(raw)
                 cx, cy = segs[-1][0]
@@ -644,6 +675,7 @@ def fix_off_belt_travels(text: str, layer: int = 19, min_y: float = 1.5) -> str:
     out: list[str] = []
     cur_layer = -1
     x = y = z = 0.0
+    feat_f = 0.0
     for l in lines:
         if l.startswith(";LAYER_CHANGE"):
             cur_layer += 1
@@ -655,11 +687,16 @@ def fix_off_belt_travels(text: str, layer: int = 19, min_y: float = 1.5) -> str:
             if nz is not None:
                 z = nz
             if ny >= min_y and nx > 100.0 and (abs(nx - x) > 0.02 or abs(ny - y) > 0.02):
-                x, y = _emit_belt_detour(out, x, y, nx, ny, z, allow_rise=ny <= RISE_MAX_Y, layer=cur_layer)
+                x, y = _emit_belt_detour(
+                    out, x, y, nx, ny, z, allow_rise=ny <= RISE_MAX_Y, layer=cur_layer, restore_f=feat_f or None
+                )
                 continue
         if _is_move(l):
             nx, ny = _xy(l)
             nz = _word(l, "Z")
+            fv = _word(l, "F")
+            if fv is not None and fv < TRAVEL_F - 1:
+                feat_f = fv
             x = nx if nx is not None else x
             y = ny if ny is not None else y
             if nz is not None:
@@ -775,15 +812,15 @@ def _gap_polylines(inner, other):
 def fill_inner_wall_gaps(text: str) -> str:
     """Third wall down a measured inner-wall gap, spliced into that wall.
 
-    The bead uses that layer's inner-wall E per machine millimetre, so the
-    flow average does not move. The spur returns to the splice point, so it
-    adds no start, stop, or travel.
+    The bead uses that layer's inner-wall E per gcode millimetre, on both
+    axes. The spur returns to the splice point, so it adds no start or travel.
     """
     lines = text.splitlines(keepends=True)
     layer = -1
     x = y = 0.0
     role = ""
     width = 1.0
+    feat_f = 0.0
     inner: dict[int, list] = {}
     segs: dict[int, list] = {}
     for idx, raw in enumerate(lines):
@@ -798,6 +835,9 @@ def fill_inner_wall_gaps(text: str) -> str:
             width = float(m.group(1))
         if not _is_move(raw):
             continue
+        fv = _word(raw, "F")
+        if fv is not None and fv < TRAVEL_F - 1:
+            feat_f = fv
         e = _word(raw, "E") or 0.0
         nx, ny = _xy(raw)
         nx = x if nx is None else nx
@@ -805,7 +845,7 @@ def fill_inner_wall_gaps(text: str) -> str:
         if layer in _GAP_LAYERS and e > 0 and (abs(nx - x) > 1e-6 or abs(ny - y) > 1e-6):
             segs.setdefault(layer, []).append((x, y, nx, ny, role))
             if role == "Inner wall" and "third wall" not in raw:
-                inner.setdefault(layer, []).append((idx, x, y, nx, ny, e))
+                inner.setdefault(layer, []).append((idx, x, y, nx, ny, e, feat_f))
         if _word(raw, "X") is not None:
             x = nx
         if _word(raw, "Y") is not None:
@@ -815,14 +855,15 @@ def fill_inner_wall_gaps(text: str) -> str:
         walls = inner.get(layer) or []
         if len(walls) < 3 or not layer_segs:
             continue
-        inner_xy = [(a, b, c, d) for _i, a, b, c, d, _e in walls]
+        inner_xy = [(a, b, c, d) for _i, a, b, c, d, _e, _f in walls]
         other = [(a, b, c, d) for a, b, c, d, r in layer_segs if r != "Inner wall"]
         polylines = _gap_polylines(inner_xy, other)
-        ratio = _e_over_machine([((a, b), (c, d), e) for _i, a, b, c, d, e in walls])
+        ratio = INNER_E_PER_MM
         for poly in polylines:
             best_d = 1e9
             best = None
-            for widx, x0, y0, x1, y1, _e in walls:
+            wall_f = 0.0
+            for widx, x0, y0, x1, y1, _e, wf in walls:
                 for cand in (poly, list(reversed(poly))):
                     vx, vy = x1 - x0, y1 - y0
                     l2 = vx * vx + vy * vy
@@ -832,6 +873,7 @@ def fill_inner_wall_gaps(text: str) -> str:
                     if d < best_d:
                         best_d = d
                         best = (widx, x1, y1, qx, qy, cand)
+                        wall_f = wf
             # The gap centre is about half the centreline spacing off each wall.
             if best is None or best_d > 2.6:
                 continue
@@ -840,11 +882,12 @@ def fill_inner_wall_gaps(text: str) -> str:
             block = []
             px, py = path[0]
             for qx, qy in path[1:]:
-                mach = math.hypot(qx - px, (qy - py) * math.sqrt(2.0))
-                if mach < 0.05:
+                length = math.hypot(qx - px, qy - py)
+                if length < 0.05:
                     px, py = qx, qy
                     continue
-                block.append(f"G1 X{qx:.3f} Y{qy:.3f} E{ratio * mach:.5f} ;third wall\n")
+                fs = f" F{wall_f:g}" if wall_f and wall_f < TRAVEL_F - 1 else ""
+                block.append(f"G1 X{qx:.3f} Y{qy:.3f} E{ratio * length:.5f}{fs} ;third wall\n")
                 px, py = qx, qy
             if block:
                 inserts.setdefault(widx, []).extend(block)
@@ -856,6 +899,51 @@ def fill_inner_wall_gaps(text: str) -> str:
         extra = inserts.get(idx)
         if extra:
             out.extend(extra)
+    return "".join(out)
+
+
+def restore_feature_after_travel(text: str) -> str:
+    """Put the feature feed back before an extrusion that would inherit travel F.
+
+    Seam travels and the slicer's G0 moves both set F12720. A following
+    extrusion with no feed word keeps that 212 mm/s.
+    """
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    role = ""
+    feat = 0.0
+    modal_travel = False
+    for raw in lines:
+        if raw.startswith(";TYPE:"):
+            role = raw[6:].strip()
+            out.append(raw)
+            continue
+        if raw.startswith(";LAYER_CHANGE"):
+            role = ""
+            out.append(raw)
+            continue
+        body = raw.split(";", 1)[0].strip()
+        if not body.startswith(("G0", "G1", "G2", "G3")):
+            out.append(raw)
+            continue
+        f = _word(raw, "F")
+        e = _word(raw, "E") or 0.0
+        has_xy = _word(raw, "X") is not None or _word(raw, "Y") is not None
+        if f is not None and f < TRAVEL_F - 1:
+            feat = f
+            modal_travel = False
+        elif f is not None and f >= TRAVEL_F - 1 and e <= 0:
+            modal_travel = True
+        if e > 0 and has_xy and (modal_travel or (f is not None and f >= TRAVEL_F - 1)):
+            role_f = _FEATURE_F.get(role) or feat
+            if role_f and role_f < TRAVEL_F - 1:
+                if f is not None and f >= TRAVEL_F - 1:
+                    raw = re.sub(rf"\bF{_NUM}", f"F{role_f:g}", raw, count=1)
+                elif f is None:
+                    out.append(f"G1 F{role_f:g}\n")
+                feat = role_f
+            modal_travel = False
+        out.append(raw)
     return "".join(out)
 
 
@@ -884,4 +972,5 @@ def apply_belt_seam_postprocess(text: str) -> str:
     text = cap_end_cap_extrusion_speed(text)
     text = fix_off_belt_travels(text)
     text = fill_inner_wall_gaps(text)
+    text = restore_feature_after_travel(text)
     return text

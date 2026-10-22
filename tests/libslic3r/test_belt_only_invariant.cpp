@@ -394,6 +394,16 @@ TEST_CASE("ApexLight and ApexCore belt process presets match TPU expert infill k
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"outer_wall_line_width\": \"1.0\""));
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"slow_down_layer_time\": \"8\""));
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"wipe_on_loops\": \"0\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"outer_wall_speed\": \"26\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"inner_wall_speed\": \"42\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"sparse_infill_speed\": \"26\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"top_surface_speed\": \"26\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"default_acceleration\": \"8000\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"outer_wall_acceleration\": \"8000\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"bridge_acceleration\": \"4000\""));
+    REQUIRE(fixture_contains("ApexLight_belt_machine.json", "\"machine_max_acceleration_extruding\": [\"8000\"]"));
+    REQUIRE(fixture_contains("ApexLight_belt_machine.json", "\"machine_max_acceleration_x\": [\"8000\"]"));
+    REQUIRE(fixture_contains("ApexLight_belt_machine.json", "\"machine_max_acceleration_y\": [\"8000\"]"));
     REQUIRE(fixture_contains("ApexLight_belt_filament.json", "\"slow_down_min_speed\": [\"8\"]"));
     REQUIRE(fixture_contains("ApexLight_belt_filament.json", "\"fan_max_speed\": [\"35\"]"));
     REQUIRE(fixture_contains("ApexLight_belt_filament.json", "\"additional_cooling_fan_speed\": [\"18\"]"));
