@@ -389,6 +389,24 @@ def mintime(text: str, target_s: float = 8.0, floor_mm_s: float = 10.0) -> tuple
     return "".join(out_lines), {"under_target_before": under_before, "stretched": stretched, "still_under": still_under}
 
 
+def splice(toe: str, heel: str, index: int) -> str:
+    """Layers [0, index) from the toe slice, index..end from the bead slice.
+
+    Both files must share layer count and Z. min_bead_width is a print-object
+    key on this binary, so the heel bead floor is a second global slice spliced
+    in rather than a layer-range option.
+    """
+    toe_lines = toe.splitlines(keepends=True)
+    heel_lines = heel.splitlines(keepends=True)
+    tb = [i for i, l in enumerate(toe_lines) if l.startswith(";LAYER_CHANGE")]
+    hb = [i for i, l in enumerate(heel_lines) if l.startswith(";LAYER_CHANGE")]
+    if index >= len(tb) or index >= len(hb):
+        raise SystemExit(f"splice index {index} but toe has {len(tb)} layers and heel has {len(hb)}")
+    if len(tb) != len(hb):
+        raise SystemExit(f"splice layer count mismatch toe {len(tb)} heel {len(hb)}")
+    return "".join(toe_lines[: tb[index]] + heel_lines[hb[index] :])
+
+
 def coupon(text: str, start_index: int) -> str:
     """Keep the preamble and layers whose 0-based ;LAYER_CHANGE ordinal is >= start_index."""
     lines = text.splitlines(keepends=True)
@@ -493,6 +511,14 @@ def main() -> None:
         out, n = efix(text)
         Path(sys.argv[3]).write_text(out)
         print("efix", n)
+    elif cmd == "splice":
+        heel = Path(sys.argv[3]).read_text(errors="replace")
+        index = int(sys.argv[4])
+        Path(sys.argv[5]).write_text(splice(text, heel, index))
+        print("spliced at", index)
+    elif cmd == "coupon":
+        Path(sys.argv[3]).write_text(coupon(text, int(sys.argv[4])))
+        print("coupon from", sys.argv[4])
     elif cmd == "all":
         out, n = efix(text)
         out, counts = seam(out)

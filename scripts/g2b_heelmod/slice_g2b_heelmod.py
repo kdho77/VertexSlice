@@ -12,6 +12,10 @@ ApexCore uses the same heel structure on the ApexCore filament and the
 0.42 mm medium process: outer/inner/sparse about 0.18 E/mm, its own gap-fill
 ratio, +10% in the heel range, 225 C and fan 50/25 left as the filament
 preset has them. Pressure advance stays ADVANCE=0.05.
+The same physical heel plane (min_z 191.30) is layer ordinal 293 on
+ApexLight's 0.46 mm spacing and ordinal 320 on ApexCore's 0.42 mm spacing.
+ApexCore's default min_bead_width is already 85%, so a second global bead
+slice does not change its geometry.
 """
 from __future__ import annotations
 
@@ -94,8 +98,13 @@ def assert_g2b_identity(process: dict, filament: dict, machine: dict) -> None:
         "print_direction": "toe_first",
         "outer_wall_speed": "26",
     }
+    def scalar(v) -> str:
+        if isinstance(v, list):
+            return "" if not v else str(v[0])
+        return str(v)
+
     for key, expect in checks.items():
-        got = str(process.get(key, filament.get(key, machine.get(key))))
+        got = scalar(process.get(key, filament.get(key, machine.get(key))))
         if got != expect:
             raise SystemExit(f"G2b identity failed: {key}={got!r} expected {expect!r}")
     start = machine.get("machine_start_gcode", "")
@@ -137,7 +146,6 @@ def write_3mf(path: Path, stl: Path, options: dict[str, str], min_z: float, laye
     parts = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">',
-        '<metadata name="Application">OrcaSlicer-2.3.2-dev</metadata>',
         '<resources><object id="1" type="model"><mesh><vertices>',
     ]
     for x, y, z in verts:
@@ -226,7 +234,16 @@ def prepare_core(work: Path) -> tuple[dict, dict, dict, dict[str, str]]:
     process = flatten("process/0.42mm TPU Insole Medium @Vertex Apex V2.json", work)
     filament = flatten("filament/ApexCore.json", work)
     # Keep the belt start block, including pressure advance, from the G2b machine.
+    # Absolute E on this binary ignores flow ratios (E becomes path length).
+    # G2b is relative, and the post-process assumes relative E.
     machine["machine_start_gcode"] = unescape(CFG["machine_start_gcode"])
+    machine["use_relative_e_distances"] = "1"
+    # Relative E is rejected unless each layer resets E. G2b does that here.
+    machine["before_layer_change_gcode"] = unescape(CFG["before_layer_change_gcode"])
+    # Heel flow ratios are ignored unless per-feature flow is enabled. The
+    # medium preset leaves this off; turning it on does not change the toe
+    # ratios written below.
+    process["set_other_flow_ratios"] = "1"
     process["print_direction"] = "toe_first"
     process["infill_wall_overlap"] = "25%"
     process["minimum_sparse_infill_area"] = "0"
@@ -235,21 +252,30 @@ def prepare_core(work: Path) -> tuple[dict, dict, dict, dict[str, str]]:
     fil = float(filament.get("filament_flow_ratio", ["1.03"])[0])
     lh = float(process.get("layer_height", "0.42"))
     width = 1.0
-    outer = feature_flow(0.18, lh, width, fil)
-    gap = feature_flow(0.16, lh, width, fil)
+    # Volumetric ratio for 0.18 E/mm at a 1 mm bead. On this binary the
+    # shear-corrected gcode does not land on that number: at ratio 1.0008 the
+    # length-weighted rates were outer 0.1843, sparse 0.1638 (width 1.0),
+    # solid 0.1778. Scale each feature so the measured rate is 0.18. Gap fill
+    # uses the same width-1 correction as sparse, aimed at 0.16 rather than
+    # ApexLight's 0.192.
+    volumetric = feature_flow(0.18, lh, width, fil)
+    outer = volumetric * (0.18 / 0.1843)
+    sparse = volumetric * (0.18 / 0.1638)
+    solid = volumetric * (0.18 / 0.1778)
+    gap = sparse * (0.16 / 0.18)
     for key, val in (
         ("outer_wall_flow_ratio", outer),
         ("inner_wall_flow_ratio", outer),
-        ("sparse_infill_flow_ratio", outer),
-        ("internal_solid_infill_flow_ratio", outer),
+        ("sparse_infill_flow_ratio", sparse),
+        ("internal_solid_infill_flow_ratio", solid),
         ("gap_fill_flow_ratio", gap),
     ):
         process[key] = f"{val:.4f}"
     heel = {
         "outer_wall_flow_ratio": f"{outer * 1.10:.4f}",
         "inner_wall_flow_ratio": f"{outer * 1.10:.4f}",
-        "sparse_infill_flow_ratio": f"{outer * 1.10:.4f}",
-        "internal_solid_infill_flow_ratio": f"{outer * 1.10:.4f}",
+        "sparse_infill_flow_ratio": f"{sparse * 1.10:.4f}",
+        "internal_solid_infill_flow_ratio": f"{solid * 1.10:.4f}",
         "gap_fill_flow_ratio": f"{gap * 1.10:.4f}",
         "min_bead_width": "85%",
         "ensure_vertical_shell_thickness": "ensure_all",
@@ -283,7 +309,9 @@ def main() -> None:
             process["min_bead_width"] = min_bead
         # Same STL and belt math as ApexLight. ApexCore's first-layer target is
         # 0.05 mm higher (0.066 vs 0.016), so the offset shifts by that amount.
-        y_offset = float(os.environ.get("CORE_Y_OFFSET", str(Y_MACH_OFFSET_LIGHT + 0.050)))
+        # Probed on this mesh at h=0.42: offset 20 -> first extrusion Y 21.066.
+        # target 0.066 gives y_mach_offset = -1.0. Light's -2.136 clamps Core to Y=0.
+        y_offset = float(os.environ.get("CORE_Y_OFFSET", "-1.0"))
         lh = float(process.get("layer_height", "0.42")) * math.sqrt(2)
         # Same physical heel plane as ApexLight. Virtual Z is the model, not the
         # layer spacing, so the cutoff stays at the Light layer-293 plane.
