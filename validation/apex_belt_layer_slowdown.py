@@ -27,11 +27,8 @@ def apply_belt_layer_slowdown(
     gcode: str,
     *,
     slow_down_layer_time: float = 8.0,
-    slow_down_min_speed: float = 10.0,
+    slow_down_min_speed: float = 8.0,
 ) -> str:
-    if ";_EXTRUDE_SET_SPEED" in gcode:
-        return gcode
-
     lines = gcode.splitlines(keepends=True)
     layer_spans: List[Tuple[int, int]] = []
     i = 0
@@ -86,16 +83,39 @@ def apply_belt_layer_slowdown(
             cur_f = f_l
             continue
 
-        scale = min(1.0, slow_down_layer_time / max(t, 1e-9))
+        # One ratio for every extruding feature. The floor is slow_down_min_speed
+        # (8 mm/s), not the 20 mm/s belt-contact cap applied earlier.
         min_f = slow_down_min_speed
+
+        def _time_at(ratio: float) -> float:
+            total = 0.0
+            for _j, seg_len, f_mm_s in moves:
+                total += seg_len / max(min_f, f_mm_s * ratio)
+            return total
+
+        if _time_at(0.0) <= slow_down_layer_time:
+            ratio = 0.0
+        else:
+            lo, hi = 0.0, 1.0
+            for _ in range(28):
+                mid = (lo + hi) * 0.5
+                if _time_at(mid) >= slow_down_layer_time:
+                    lo = mid
+                else:
+                    hi = mid
+            ratio = lo
+        last_speed = f_l
         for j, seg_len, f_mm_s in moves:
-            new_f = max(min_f, f_mm_s * scale)
+            new_f = max(min_f, f_mm_s * ratio)
             line = out[j]
             if re.search(r"\bF[\d.]+", line):
                 line = re.sub(r"\bF[\d.]+", f"F{int(round(new_f * 60))}", line, count=1)
             else:
                 line = line.rstrip("\n") + f" F{int(round(new_f * 60))}\n"
             out[j] = line
+            last_speed = new_f
+        # The next layer inherits the feedrate the printer actually has.
+        cur_f = last_speed
         pos = pos_l
 
     return "".join(out)

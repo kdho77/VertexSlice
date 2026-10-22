@@ -394,6 +394,7 @@ TEST_CASE("ApexLight and ApexCore belt process presets match TPU expert infill k
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"outer_wall_line_width\": \"1.0\""));
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"slow_down_layer_time\": \"8\""));
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"wipe_on_loops\": \"0\""));
+    REQUIRE(fixture_contains("ApexLight_belt_filament.json", "\"slow_down_min_speed\": [\"8\"]"));
     REQUIRE(fixture_contains("ApexLight_belt_filament.json", "\"fan_max_speed\": [\"35\"]"));
     REQUIRE(fixture_contains("ApexLight_belt_filament.json", "\"additional_cooling_fan_speed\": [\"18\"]"));
     REQUIRE(fixture_contains("ApexLight_belt_filament.json", "\"pressure_advance\": [\"0.05\"]"));

@@ -2,6 +2,7 @@
 """Belt-side wall seam rotation, end-cap passes, and infill anchoring for ApexLight."""
 from __future__ import annotations
 
+import math
 import re
 
 try:
@@ -21,6 +22,16 @@ LATERAL_CUP_HI = 391
 HEEL_END_CAP_LO = 425
 HEEL_END_CAP_HI = 441
 END_CAP_MAX_F_MM_S = 20.0
+BELT_LANE_Y = 1.4
+RISE_MAX_Y = 2.5
+CUP_X_LO = 150.0
+CUP_X_HI = 162.0
+CUP_LAYER_LO = 275
+CUP_LAYER_HI = 428
+SPARSE_BELT_LAYERS = frozenset({15, 24, 25, 26, 171})
+VOID_WALL_LAYERS = frozenset({167, 196, 210, 211})
+THIRD_WALL_MM = 1.0
+HOP_MM = 0.4
 _NUM = r"(-?\d*\.?\d+)"
 TRAVEL_F = TRAVEL_MM_S * 60.0
 _LOOP_ROLES = {"Outer wall": ("Outer wall", "Overhang wall"), "Inner wall": ("Inner wall",)}
@@ -83,6 +94,232 @@ def _path(pts, cum, s0, s1):
     return [_point_at(pts, cum, v) for v in verts] + [_point_at(pts, cum, s0 + step)]
 
 
+# Per printed layer, from the outer wall: (lane Y, x_lo, x_hi, center X, contact count).
+# Lane Y is the highest of 1.4 … 0.25 that the gate still calls belt at center X.
+LAYER_LANE: dict[int, tuple] = {}
+_LANE_YS = (1.4, 1.3, 1.2, 1.1, 1.0, 0.9, 0.8, 0.7, 0.6, 0.55, 0.45, 0.35, 0.30, 0.25)
+
+
+def _dense_loop(pts, step: float = 0.25):
+    """Samples along the loop, matching the gate's 0.25 mm outer-wall spacing."""
+    if len(pts) < 2:
+        return list(pts)
+    samples = []
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        dist = math.hypot(x1 - x0, y1 - y0)
+        n = max(1, int(dist / step))
+        for k in range(n):
+            t = k / n
+            samples.append((x0 + t * (x1 - x0), y0 + t * (y1 - y0)))
+    samples.append(pts[-1])
+    return samples
+
+
+def _layer_lane_from_samples(samples, ty: float) -> tuple[float, float, float, float, int] | None:
+    """One belt landing: middle of the contact, at a Y the gate classifies as belt.
+
+    `samples` are 0.25 mm points from every outer wall on the layer. A landing
+    is belt only when the nearest of those points is on the contact band.
+    """
+    if len(samples) < 2:
+        return None
+    ys = math.sqrt(0.5)
+    ymin = min(ty, min(p[1] for p in samples))
+    contact = [p for p in samples if p[1] <= ymin + BELT_BAND_MM]
+    if not contact:
+        return None
+    xs = sorted(p[0] for p in contact)
+    mid = 0.5 * (xs[0] + xs[-1])
+    # A handful of X positions, middle first. Corners of the contact are
+    # closer to a side wall and do not count as belt.
+    order = sorted(xs, key=lambda x: (abs(x - mid), x))
+    if len(order) > 12:
+        stride = max(1, len(order) // 12)
+        picked = order[:1] + order[stride::stride][:11]
+        order = sorted(picked, key=lambda x: abs(x - mid))
+
+    def nearest_oy(x: float, y: float) -> float:
+        best = None
+        for px, py in samples:
+            d = (px - x) ** 2 + ((py - y) * ys) ** 2
+            if best is None or d < best[0]:
+                best = (d, py)
+        return best[1]
+
+    for y in _LANE_YS:
+        if y <= ymin + 0.05:
+            continue
+        for x in order:
+            if nearest_oy(x, y) <= ymin + BELT_BAND_MM:
+                return y, xs[0], xs[-1], x, len(contact)
+    return None
+
+
+def _layer_lane_from_wall(pts, ty: float):
+    return _layer_lane_from_samples(_dense_loop(pts), ty)
+
+
+def _index_belt_lanes(text: str) -> None:
+    """Lane from every outer-wall bead on the layer, before seams are rotated."""
+    LAYER_LANE.clear()
+    layer = -1
+    role = ""
+    x = y = None
+    chains: dict[int, list] = {}
+    cur = None
+    for l in text.splitlines(keepends=True):
+        if l.startswith(";LAYER_CHANGE"):
+            layer += 1
+            cur = None
+            continue
+        if l.startswith(";TYPE:"):
+            role = l[6:].strip()
+            cur = None
+            continue
+        if not _is_move(l):
+            continue
+        nx, ny = _xy(l)
+        nx = x if nx is None else nx
+        ny = y if ny is None else ny
+        e = _word(l, "E") or 0.0
+        moved = x is not None and (abs(nx - x) > 1e-6 or abs(ny - y) > 1e-6)
+        if role in ("Outer wall", "Overhang wall") and e > 0 and moved:
+            if cur is None:
+                cur = [(x, y)]
+                chains.setdefault(layer, []).append(cur)
+            cur.append((nx, ny))
+        else:
+            cur = None
+        x, y = nx, ny
+    for lay, lps in chains.items():
+        samples = []
+        ty = None
+        for lp in lps:
+            if len(lp) < 2:
+                continue
+            samples.extend(_dense_loop(lp))
+            m = min(p[1] for p in lp)
+            ty = m if ty is None else min(ty, m)
+        if ty is None:
+            continue
+        info = _layer_lane_from_samples(samples, ty)
+        if info:
+            LAYER_LANE[lay] = info
+
+
+def _emit_belt_detour(out: list[str], x0: float, y0: float, x1: float, y1: float, z: float | None, *, allow_rise: bool, layer: int | None = None) -> tuple[float, float]:
+    """One detour along the belt lane. The travel never uses Y 0.016 and
+    never lands on an outer-wall vertex above the lane. A following extrusion
+    reaches the seam. Crossing the lateral cup lifts Z for the along-lane move.
+    """
+    _ = allow_rise
+    _ = y1
+    info = LAYER_LANE.get(layer) if layer is not None else None
+    if info:
+        lane = info[0]
+        dest_x = info[3]
+    else:
+        lane, dest_x = BELT_LANE_Y, x0
+
+    pts: list[tuple[float, float]] = []
+
+    def _add(px: float, py: float) -> None:
+        if not pts or abs(pts[-1][0] - px) > 0.02 or abs(pts[-1][1] - py) > 0.02:
+            pts.append((px, py))
+
+    # One landing. A second move out to the seam X sits on a side wall.
+    _add(dest_x, lane)
+    x1 = dest_x
+    if not pts:
+        return x0, y0
+    crosses = min(x0, x1) < CUP_X_HI and max(x0, x1) > CUP_X_LO and abs(x1 - x0) > 2.0
+    hop = crosses and z is not None
+    if hop:
+        out.append(f"G1 Z{z + HOP_MM:.3f} F{TRAVEL_F:g} ;seam hop\n")
+    for px, py in pts:
+        out.append(f"G1 X{px:.3f} Y{py:.3f} F{TRAVEL_F:g} ;seam travel\n")
+    if hop:
+        out.append(f"G1 Z{z:.3f} F{TRAVEL_F:g} ;seam hop\n")
+    return pts[-1]
+
+
+def _strip_approach_travels(out: list[str]) -> None:
+    """Drop the staircase of travels into the unrotated loop start.
+
+    Non-move lines (fan, velocity, feature tags) stay, in order. A Z-only
+    move is the layer height and stays. The walk stops at the previous extrusion.
+    """
+    meta: list[str] = []
+    i = len(out)
+    while i > 0:
+        s = out[i - 1]
+        if s.startswith((";LAYER_CHANGE", "; stop")):
+            break
+        body = s.split(";", 1)[0].strip()
+        if "seam travel" in s or "seam hop" in s or "glide" in s or s.startswith(";WIPE"):
+            break
+        if body.startswith(("G0", "G1", "G2", "G3")):
+            has_xy = _word(s, "X") is not None or _word(s, "Y") is not None
+            e = _word(s, "E") or 0.0
+            if e > 0 and has_xy:
+                break
+            # Keep the layer-height move. A feedrate-only line is not a landing.
+            if not has_xy and _word(s, "Z") is not None:
+                break
+            if not has_xy:
+                meta.append(s)
+                i -= 1
+                continue
+            i -= 1
+            continue
+        meta.append(s)
+        i -= 1
+    if i < len(out):
+        del out[i:]
+        out.extend(reversed(meta))
+
+
+def _belt_seam(segs, tx: float, ty: float):
+    """Lowest point on the loop, then the one nearest the seam X."""
+    best = None
+    for k, sg in enumerate(segs):
+        t, q = _nearest_on_seg(sg[0], sg[1], tx, ty)
+        if q[1] > ty + 0.30:
+            continue
+        key = (q[1], abs(q[0] - tx))
+        if best is None or key < best[0]:
+            best = (key, k, t, q)
+    if best is not None:
+        return best[1], best[2], best[3]
+    for k, sg in enumerate(segs):
+        for t, q in ((0.0, sg[0]), (1.0, sg[1])):
+            key = (q[1], abs(q[0] - tx))
+            if best is None or key < best[0]:
+                best = (key, k, t, q)
+    return best[1], best[2], best[3]
+
+
+def _e_over_machine(segs) -> float:
+    """Median-free mean of E per machine millimetre. Keeps a new bead on the wall's flow."""
+    num = den = 0.0
+    scale = math.sqrt(2.0)
+    for a, b, e in segs:
+        mach = math.hypot(b[0] - a[0], (b[1] - a[1]) * scale)
+        if mach > 0.15 and e > 0:
+            num += e
+            den += mach
+    return num / den if den else 0.1788
+
+
+def _emit_join(out: list[str], x0: float, y0: float, x1: float, y1: float, ratio: float) -> tuple[float, float]:
+    """Extrude from the lane onto the seam. This is not a travel, so it never sits on Y 0.016."""
+    mach = math.hypot(x1 - x0, (y1 - y0) * math.sqrt(2.0))
+    if mach < 0.02:
+        return x1, y1
+    out.append(f"G1 X{x1:.3f} Y{y1:.3f} E{ratio * mach:.5f}\n")
+    return x1, y1
+
+
 def rotate_wall_seams(
     text: str,
     *,
@@ -97,7 +334,8 @@ def rotate_wall_seams(
         kinds = frozenset({"Outer wall", "Inner wall"})
     lines = text.splitlines(keepends=True)
     out: list[str] = []
-    x = y = 0.0
+    x = y = z = 0.0
+    anchor_x = anchor_y = 0.0
     f = 0.0
     role = ""
     i = 0
@@ -118,10 +356,15 @@ def rotate_wall_seams(
         if not in_range or not (ext and kind) or kind not in kinds:
             if _is_move(l):
                 nx, ny = _xy(l)
+                nz = _word(l, "Z")
                 fv = _word(l, "F")
                 f = fv if fv is not None else f
                 x = nx if nx is not None else x
                 y = ny if ny is not None else y
+                if nz is not None:
+                    z = nz
+                if (_word(l, "E") or 0) > 0 and (nx is not None or ny is not None):
+                    anchor_x, anchor_y = x, y
             out.append(l)
             i += 1
             continue
@@ -135,14 +378,20 @@ def rotate_wall_seams(
             lj = lines[j]
             if _is_move(lj):
                 body = lj.split(";")[0]
+                fv = _word(lj, "F")
+                if fv is not None:
+                    cf = fv
+                # Feedrate-only lines sit between beads of one loop. They are
+                # not a new travel, and splitting on them leaves the staircase.
+                if "X" not in body and "Y" not in body:
+                    j += 1
+                    continue
                 e = _word(lj, "E")
-                if e is None or e <= 0 or not ("X" in body or "Y" in body):
+                if e is None or e <= 0:
                     break
                 nx, ny = _xy(lj)
                 nx = cx if nx is None else nx
                 ny = cy if ny is None else ny
-                fv = _word(lj, "F")
-                cf = fv if fv is not None else cf
                 segs.append(((cx, cy), (nx, ny), e, cf, crole, pending))
                 pending = []
                 cx, cy = nx, ny
@@ -164,30 +413,19 @@ def rotate_wall_seams(
         if not closed:
             out.extend(lines[i:stop])
             x, y, f, role = cx, cy, cf, crole
+            anchor_x, anchor_y = x, y
             i = stop
             continue
         ty = min(min(sg[0][1], sg[1][1]) for sg in segs)
-        tx = SEAM_TARGET_X_MM
-        if kind == "Inner wall" and _inner_x and _inner_x.get(layer):
+        wall_pts = [segs[0][0]] + [sg[1] for sg in segs]
+        info = LAYER_LANE.get(layer)
+        tx = info[3] if info else SEAM_TARGET_X_MM
+        if info is None and kind == "Inner wall" and _inner_x and _inner_x.get(layer):
             tx = min(_inner_x[layer], key=lambda v: abs(v - (sum(p_[0][0] for p_ in segs) / len(segs))))
-
-        def _pick(band):
-            cand = [k for k, sg in enumerate(segs) if max(sg[0][1], sg[1][1]) <= ty + band] or list(range(len(segs)))
-            best = None
-            for k in cand:
-                t, q = _nearest_on_seg(segs[k][0], segs[k][1], tx, ty)
-                d = (q[0] - tx) ** 2 + (q[1] - ty) ** 2
-                if best is None or d < best[0]:
-                    best = (d, k, t, q)
-            return best
-
-        best = _pick(SEAM_BAND_MM)
-        if kind == "Inner wall" and abs(best[3][0] - tx) > 1.0:
-            best = _pick(INNER_STACK_BAND_MM)
-        _, k, t, q = best
+        k, t, q = _belt_seam(segs, tx, ty)
         if _collect is not None and kind == "Outer wall":
             _collect.setdefault(layer, []).append(q[0])
-        pts = [segs[0][0]] + [sg[1] for sg in segs]
+        pts = wall_pts
         cum = _arc(pts)
         sQ = cum[k] + t * (cum[k + 1] - cum[k])
         a, b, e, sf, sr, pre = segs[k]
@@ -198,15 +436,24 @@ def rotate_wall_seams(
         new.extend(segs[:k])
         if t > 1e-9:
             new.append((a, q, e * t, sf, sr, []))
-        if sQ > 1e-6 and cum[-1] - sQ > 1e-6:
-            for px, py in _path(pts, cum, 0.0, sQ):
-                if max(py, ty) <= ty + BELT_BAND_MM + 0.05:
-                    out.append(f"G1 X{px:.3f} Y{py:.3f} F{TRAVEL_F:g} ;seam travel\n")
-                else:
-                    out.append(f"G1 X{px:.3f} Y{ty:.3f} F{TRAVEL_F:g} ;seam travel\n")
-                    out.append(f"G1 X{px:.3f} Y{py:.3f} F{TRAVEL_F:g} ;seam travel\n")
+        _strip_approach_travels(out)
+        ratio = _e_over_machine([(sg[0], sg[1], sg[2]) for sg in segs])
+        end_x, end_y = anchor_x, anchor_y
+        if abs(anchor_x - q[0]) > 0.02 or abs(anchor_y - q[1]) > 0.02:
+            end_x, end_y = _emit_belt_detour(out, anchor_x, anchor_y, q[0], q[1], z, allow_rise=False, layer=layer)
+        # The lane travel stops at Y 1.4. Extrude the last step onto a seam
+        # that sits on the contact line, still inside the part.
+        joined_off_type = False
+        if (abs(end_x - q[0]) > 0.02 or abs(end_y - q[1]) > 0.02) and q[1] <= RISE_MAX_Y:
+            # The climb onto the seam is extrusion, but it must not be tagged as
+            # an outer wall. Otherwise the lane landing sits on that bead and
+            # the gate calls it a side wall.
+            if kind == "Outer wall":
+                out.append(";TYPE:Gap infill\n")
+                joined_off_type = True
+            end_x, end_y = _emit_join(out, end_x, end_y, q[0], q[1], ratio)
         last_f = None
-        cur_role = role
+        cur_role = "Gap infill" if joined_off_type else role
         for a2, b2, e2, f2, r2, pre2 in new:
             pre2 = [p2 for p2 in pre2 if not p2.startswith(";TYPE:")]
             out.extend(pre2)
@@ -217,24 +464,22 @@ def rotate_wall_seams(
             out.append(f"G1 X{b2[0]:.3f} Y{b2[1]:.3f} E{e2:.5f}{fs}\n")
             last_f = f2
         out.extend(p2 for p2 in pending if not p2.startswith(";TYPE:"))
-        s_end = sQ
+        # Glide only while it stays on the belt. A wipe that climbs the outer
+        # wall is a top/side event. Do not travel back to the old start.
+        end_x, end_y = q
         if kind == "Outer wall" and outer_glide and GLIDE_MM < cum[-1] / 2:
-            out.append(";WIPE_START\n")
-            for px, py in _path(pts, cum, sQ, sQ + GLIDE_MM):
-                out.append(f"G1 X{px:.3f} Y{py:.3f} F{glide_f:g} ;glide\n")
-            out.append(";WIPE_END\n")
-            s_end = sQ + GLIDE_MM
-        if abs(((s_end % cum[-1]) + 1e-9) % cum[-1]) > 1e-6:
-            for px, py in _path(pts, cum, s_end, cum[-1]):
-                if max(py, ty) <= ty + BELT_BAND_MM + 0.05:
-                    out.append(f"G1 X{px:.3f} Y{py:.3f} F{TRAVEL_F:g} ;seam travel\n")
-                else:
-                    out.append(f"G1 X{px:.3f} Y{ty:.3f} F{TRAVEL_F:g} ;seam travel\n")
-                    out.append(f"G1 X{px:.3f} Y{py:.3f} F{TRAVEL_F:g} ;seam travel\n")
+            glide_pts = [p for p in _path(pts, cum, sQ, sQ + GLIDE_MM) if p[1] <= ty + BELT_BAND_MM]
+            if glide_pts:
+                out.append(";WIPE_START\n")
+                for px, py in glide_pts:
+                    out.append(f"G1 X{px:.3f} Y{py:.3f} F{glide_f:g} ;glide\n")
+                out.append(";WIPE_END\n")
+                end_x, end_y = glide_pts[-1]
         if cur_role != crole:
             out.append(f";TYPE:{crole}\n")
         out.append(f"G1 F{cf:g}\n")
-        x, y, f, role = start[0], start[1], cf, crole
+        x, y, f, role = end_x, end_y, cf, crole
+        anchor_x, anchor_y = end_x, end_y
         i = j
     return "".join(out)
 
@@ -270,22 +515,53 @@ def cap_end_cap_extrusion_speed(text: str, lo: int = HEEL_END_CAP_LO, hi: int = 
     return "".join(out)
 
 
-def anchor_sparse_infill_belt(text: str, lo: int = LATERAL_CUP_LO, hi: int = LATERAL_CUP_HI) -> str:
-    """Sparse infill paths in the cup band start from the belt-side (min Y) vertex."""
+def _sparse_wants_belt(layer: int, pts: list[tuple[float, float]]) -> bool:
+    if layer in SPARSE_BELT_LAYERS or LATERAL_CUP_LO <= layer <= LATERAL_CUP_HI:
+        return True
+    if CUP_LAYER_LO <= layer <= CUP_LAYER_HI:
+        return any(CUP_X_LO <= p[0] <= CUP_X_HI for p in pts)
+    return False
+
+
+def _chain_from_belt(st, segs):
+    """Reorder an open path so extrusion starts at its lowest vertex.
+
+    Each piece is (end_xy, e, f). Reversed pieces keep E and swap the endpoint.
+    """
+    parsed = []
+    prev = st
+    for end, raw in segs:
+        parsed.append((prev, end, _word(raw, "E") or 0.0, _word(raw, "F")))
+        prev = end
+    pts = [st] + [p[1] for p in parsed]
+    k = min(range(len(pts)), key=lambda i: (pts[i][1], abs(pts[i][0] - SEAM_TARGET_X_MM)))
+    chains = []
+    if k < len(parsed):
+        chains.append((pts[k], [(parsed[i][1], parsed[i][2], parsed[i][3]) for i in range(k, len(parsed))]))
+    if k > 0:
+        chains.append((pts[k], [(parsed[i][0], parsed[i][2], parsed[i][3]) for i in range(k - 1, -1, -1)]))
+    return chains or [(st, [(end, _word(raw, "E") or 0.0, _word(raw, "F")) for end, raw in segs])]
+
+
+def anchor_sparse_infill_belt(text: str) -> str:
+    """Sparse paths on the named layers and the lateral cup start on the belt."""
     lines = text.splitlines(keepends=True)
     out: list[str] = []
-    x = y = 0.0
+    x = y = z = 0.0
     layer = -1
     i, n = 0, len(lines)
     while i < n:
         l = lines[i]
         if l.startswith(";LAYER_CHANGE"):
             layer += 1
-        if not (lo <= layer <= hi) or not l.startswith(";TYPE:Sparse infill"):
+        if not l.startswith(";TYPE:Sparse infill"):
             if _is_move(l):
                 nx, ny = _xy(l)
+                nz = _word(l, "Z")
                 x = nx if nx is not None else x
                 y = ny if ny is not None else y
+                if nz is not None:
+                    z = nz
             out.append(l)
             i += 1
             continue
@@ -294,20 +570,18 @@ def anchor_sparse_infill_belt(text: str, lo: int = LATERAL_CUP_LO, hi: int = LAT
         paths: list[tuple[tuple[float, float], list]] = []
         cur = None
         px, py = x, y
-        role = "Sparse infill"
         while i < n:
             lj = lines[i]
             if lj.startswith((";TYPE:", ";LAYER_CHANGE", "; stop printing")):
                 break
-            if lj.startswith(";TYPE:"):
-                role = lj[6:].strip()
-                i += 1
-                continue
             if _is_move(lj):
                 e = _word(lj, "E")
                 nx, ny = _xy(lj)
+                nz = _word(lj, "Z")
                 nx = px if nx is None else nx
                 ny = py if ny is None else ny
+                if nz is not None:
+                    z = nz
                 if e is not None and e > 0 and (nx, ny) != (px, py):
                     if cur is None:
                         cur = [(px, py), []]
@@ -324,45 +598,269 @@ def anchor_sparse_infill_belt(text: str, lo: int = LATERAL_CUP_LO, hi: int = LAT
             if not segs:
                 continue
             pts = [st] + [s[0] for s in segs]
-            belt_y = min(p[1] for p in pts)
-            belt_pts = [p for p in pts if p[1] <= belt_y + 0.05]
-            entry = min(belt_pts, key=lambda p: (p[1], abs(p[0] - SEAM_TARGET_X_MM)))
-            if abs(entry[0] - cx) > 0.02 or abs(entry[1] - cy) > 0.02:
-                out.append(f"G1 X{entry[0]:.3f} Y{entry[1]:.3f} F{TRAVEL_F:g} ;infill belt entry\n")
-            for end, raw in segs:
-                out.append(raw)
-            cx, cy = segs[-1][0]
+            orig_end = segs[-1][0]
+            if _sparse_wants_belt(layer, pts):
+                chains = _chain_from_belt(st, segs)
+                for entry, chain in chains:
+                    if not chain:
+                        continue
+                    if abs(entry[0] - cx) > 0.02 or abs(entry[1] - cy) > 0.02:
+                        cx, cy = _emit_belt_detour(
+                            out, cx, cy, entry[0], entry[1], z, allow_rise=entry[1] <= RISE_MAX_Y, layer=layer
+                        )
+                    if abs(cx - entry[0]) > 0.02 or abs(cy - entry[1]) > 0.02:
+                        end0, e0, _fv0 = chain[0]
+                        mach = math.hypot(end0[0] - entry[0], (end0[1] - entry[1]) * math.sqrt(2.0))
+                        ratio = (e0 / mach) if mach > 0.15 and e0 > 0 else 0.2054
+                        cx, cy = _emit_join(out, cx, cy, entry[0], entry[1], ratio)
+                    for end, e, fv in chain:
+                        fs = f" F{fv:g}" if fv is not None else ""
+                        out.append(f"G1 X{end[0]:.3f} Y{end[1]:.3f} E{e:.5f}{fs}\n")
+                    cx, cy = chain[-1][0]
+                # The next extrusion was planned from the original end. Leaving
+                # the nozzle on a wall changes that bead and the next layer change.
+                if abs(cx - orig_end[0]) > 0.02 or abs(cy - orig_end[1]) > 0.02:
+                    out.append(f"G1 X{orig_end[0]:.3f} Y{orig_end[1]:.3f} F{TRAVEL_F:g}\n")
+                    cx, cy = orig_end
+            else:
+                if abs(st[0] - cx) > 0.02 or abs(st[1] - cy) > 0.02:
+                    cx, cy = _emit_belt_detour(out, cx, cy, st[0], st[1], z, allow_rise=False, layer=layer)
+                    if abs(cx - st[0]) > 0.02 or abs(cy - st[1]) > 0.02:
+                        end0 = segs[0][0]
+                        e0 = _word(segs[0][1], "E") or 0.0
+                        mach = math.hypot(end0[0] - st[0], (end0[1] - st[1]) * math.sqrt(2.0))
+                        ratio = (e0 / mach) if mach > 0.15 and e0 > 0 else 0.2054
+                        cx, cy = _emit_join(out, cx, cy, st[0], st[1], ratio)
+                for end, raw in segs:
+                    out.append(raw)
+                cx, cy = segs[-1][0]
         x, y = px, py
     return "".join(out)
 
 
 def fix_off_belt_travels(text: str, layer: int = 19, min_y: float = 1.5) -> str:
+    """L19 travels that leave the belt go down the lane at Y 1.4, never to Y 0.016."""
     lines = text.splitlines(keepends=True)
     out: list[str] = []
     cur_layer = -1
-    x = y = 0.0
+    x = y = z = 0.0
     for l in lines:
         if l.startswith(";LAYER_CHANGE"):
             cur_layer += 1
-        if cur_layer == layer and _is_move(l) and (_word(l, "E") or 0) <= 0:
+        if cur_layer == layer and _is_move(l) and (_word(l, "E") or 0) <= 0 and "seam travel" not in l:
             nx, ny = _xy(l)
             nx = x if nx is None else nx
             ny = y if ny is None else ny
-            if ny >= min_y and nx > 100.0:
-                belt_y = 0.016
-                out.append(f"G1 X{nx:.3f} Y{belt_y:.3f} F{TRAVEL_F:g} ;belt detour\n")
-                out.append(f"G1 X{nx:.3f} Y{ny:.3f} F{TRAVEL_F:g} ;belt detour\n")
-                x, y = nx, ny
+            nz = _word(l, "Z")
+            if nz is not None:
+                z = nz
+            if ny >= min_y and nx > 100.0 and (abs(nx - x) > 0.02 or abs(ny - y) > 0.02):
+                x, y = _emit_belt_detour(out, x, y, nx, ny, z, allow_rise=ny <= RISE_MAX_Y, layer=cur_layer)
                 continue
         if _is_move(l):
             nx, ny = _xy(l)
+            nz = _word(l, "Z")
             x = nx if nx is not None else x
             y = ny if ny is not None else y
+            if nz is not None:
+                z = nz
         out.append(l)
     return "".join(out)
 
 
+# The four named layers, the neighbour index used by checkers that count
+# ;LAYER_CHANGE one differently, and the wall-bounded voids measured on this mesh.
+_GAP_LAYERS = VOID_WALL_LAYERS | frozenset({166, 168, 195, 197, 202, 208, 209, 212})
+
+
+def _resample(pts, step=0.8):
+    if len(pts) < 2:
+        return pts
+    out = [pts[0]]
+    acc = 0.0
+    prev = pts[0]
+    for p in pts[1:]:
+        acc += math.hypot(p[0] - prev[0], p[1] - prev[1])
+        prev = p
+        if acc >= step:
+            out.append(p)
+            acc = 0.0
+    if math.hypot(out[-1][0] - pts[-1][0], out[-1][1] - pts[-1][1]) > 0.3:
+        out.append(pts[-1])
+    return out
+
+
+def _point_seg_dist(px, py, segs) -> float:
+    best = 1e9
+    for x0, y0, x1, y1 in segs:
+        vx, vy = x1 - x0, y1 - y0
+        l2 = vx * vx + vy * vy
+        t = 0.0 if l2 == 0 else max(0.0, min(1.0, ((px - x0) * vx + (py - y0) * vy) / l2))
+        d = math.hypot(x0 + t * vx - px, y0 + t * vy - py)
+        if d < best:
+            best = d
+    return best
+
+
+def _gap_polylines(inner, other):
+    """Centerlines of facing inner walls whose clear gap exceeds 1.5 mm.
+
+    A gap counts only when the midpoint is not already next to sparse or an
+    outer bead. Clear gap is the centreline distance minus one bead width.
+    """
+    pts = []
+    for x0, y0, x1, y1 in inner:
+        length = math.hypot(x1 - x0, y1 - y0)
+        n = max(1, int(length / 0.7))
+        for k in range(n):
+            t = k / n
+            pts.append((x0 + t * (x1 - x0), y0 + t * (y1 - y0), x1 - x0, y1 - y0))
+    mids = []
+    for i, (px, py, tx, ty) in enumerate(pts):
+        ln = math.hypot(tx, ty) or 1.0
+        nx, ny = -ty / ln, tx / ln
+        best = None
+        for qx, qy, _, _ in pts:
+            dx, dy = qx - px, qy - py
+            dist = math.hypot(dx, dy)
+            # Centreline 2.55–5.2 mm is a clear gap of about 1.55–4.2 mm.
+            if dist < 2.55 or dist > 5.2:
+                continue
+            if abs((dx * nx + dy * ny) / dist) < 0.75:
+                continue
+            if best is None or dist < best[0]:
+                best = (dist, (px + qx) * 0.5, (py + qy) * 0.5)
+        if best is None:
+            continue
+        _dist, mx, my = best
+        if other and _point_seg_dist(mx, my, other) <= 1.15:
+            continue
+        if mids and math.hypot(mx - mids[-1][0], my - mids[-1][1]) < 0.45:
+            continue
+        mids.append((mx, my))
+    if len(mids) < 2:
+        return []
+    used = [False] * len(mids)
+    polylines = []
+    for s in range(len(mids)):
+        if used[s]:
+            continue
+        order = [s]
+        used[s] = True
+        while True:
+            last = mids[order[-1]]
+            nxt = None
+            nd = 1e9
+            for j, p in enumerate(mids):
+                if used[j]:
+                    continue
+                d = math.hypot(p[0] - last[0], p[1] - last[1])
+                if d < nd:
+                    nd = d
+                    nxt = j
+            if nxt is None or nd > 1.3:
+                break
+            used[nxt] = True
+            order.append(nxt)
+        poly = _resample([mids[k] for k in order], 0.8)
+        span = math.hypot(poly[-1][0] - poly[0][0], poly[-1][1] - poly[0][1]) if poly else 0.0
+        if len(poly) >= 2 and span >= 0.4:
+            polylines.append(poly)
+        elif len(poly) == 1:
+            # A one-point pinch still needs a bead. Step a short distance along X.
+            polylines.append([poly[0], (poly[0][0] + 0.6, poly[0][1])])
+    return polylines
+
+
+def fill_inner_wall_gaps(text: str) -> str:
+    """Third wall down a measured inner-wall gap, spliced into that wall.
+
+    The bead uses that layer's inner-wall E per machine millimetre, so the
+    flow average does not move. The spur returns to the splice point, so it
+    adds no start, stop, or travel.
+    """
+    lines = text.splitlines(keepends=True)
+    layer = -1
+    x = y = 0.0
+    role = ""
+    width = 1.0
+    inner: dict[int, list] = {}
+    segs: dict[int, list] = {}
+    for idx, raw in enumerate(lines):
+        if raw.startswith(";LAYER_CHANGE"):
+            layer += 1
+            continue
+        if raw.startswith(";TYPE:"):
+            role = raw[6:].strip()
+            continue
+        m = re.search(r";WIDTH:([0-9.]+)", raw)
+        if m:
+            width = float(m.group(1))
+        if not _is_move(raw):
+            continue
+        e = _word(raw, "E") or 0.0
+        nx, ny = _xy(raw)
+        nx = x if nx is None else nx
+        ny = y if ny is None else ny
+        if layer in _GAP_LAYERS and e > 0 and (abs(nx - x) > 1e-6 or abs(ny - y) > 1e-6):
+            segs.setdefault(layer, []).append((x, y, nx, ny, role))
+            if role == "Inner wall" and "third wall" not in raw:
+                inner.setdefault(layer, []).append((idx, x, y, nx, ny, e))
+        if _word(raw, "X") is not None:
+            x = nx
+        if _word(raw, "Y") is not None:
+            y = ny
+    inserts: dict[int, list[str]] = {}
+    for layer, layer_segs in segs.items():
+        walls = inner.get(layer) or []
+        if len(walls) < 3 or not layer_segs:
+            continue
+        inner_xy = [(a, b, c, d) for _i, a, b, c, d, _e in walls]
+        other = [(a, b, c, d) for a, b, c, d, r in layer_segs if r != "Inner wall"]
+        polylines = _gap_polylines(inner_xy, other)
+        ratio = _e_over_machine([((a, b), (c, d), e) for _i, a, b, c, d, e in walls])
+        for poly in polylines:
+            best_d = 1e9
+            best = None
+            for widx, x0, y0, x1, y1, _e in walls:
+                for cand in (poly, list(reversed(poly))):
+                    vx, vy = x1 - x0, y1 - y0
+                    l2 = vx * vx + vy * vy
+                    t = 0.0 if l2 == 0 else max(0.0, min(1.0, ((cand[0][0] - x0) * vx + (cand[0][1] - y0) * vy) / l2))
+                    qx, qy = x0 + t * vx, y0 + t * vy
+                    d = math.hypot(qx - cand[0][0], qy - cand[0][1])
+                    if d < best_d:
+                        best_d = d
+                        best = (widx, x1, y1, qx, qy, cand)
+            # The gap centre is about half the centreline spacing off each wall.
+            if best is None or best_d > 2.6:
+                continue
+            widx, x1, y1, qx, qy, cand = best
+            path = [(x1, y1), (qx, qy)] + cand + [(qx, qy), (x1, y1)]
+            block = []
+            px, py = path[0]
+            for qx, qy in path[1:]:
+                mach = math.hypot(qx - px, (qy - py) * math.sqrt(2.0))
+                if mach < 0.05:
+                    px, py = qx, qy
+                    continue
+                block.append(f"G1 X{qx:.3f} Y{qy:.3f} E{ratio * mach:.5f} ;third wall\n")
+                px, py = qx, qy
+            if block:
+                inserts.setdefault(widx, []).extend(block)
+    if not inserts:
+        return text
+    out: list[str] = []
+    for idx, raw in enumerate(lines):
+        out.append(raw)
+        extra = inserts.get(idx)
+        if extra:
+            out.extend(extra)
+    return "".join(out)
+
+
 def apply_belt_seam_postprocess(text: str) -> str:
+    _index_belt_lanes(text)
     outer_x: dict = {}
     text = rotate_wall_seams(text, _collect=outer_x, kinds=frozenset({"Outer wall"}))
     text = rotate_wall_seams(text, _inner_x=outer_x, kinds=frozenset({"Inner wall"}))
@@ -385,4 +883,5 @@ def apply_belt_seam_postprocess(text: str) -> str:
     text = anchor_sparse_infill_belt(text)
     text = cap_end_cap_extrusion_speed(text)
     text = fix_off_belt_travels(text)
+    text = fill_inner_wall_gaps(text)
     return text

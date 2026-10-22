@@ -430,7 +430,10 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
             // ORCA: Dont slowdown external perimeters for layer time feature
             // use the adjustment pointer to ensure the value for the current extruder (filament) is used.
             bool adjust_external = true;
-            if(adjustment->dont_slow_down_outer_wall && external_perimeter) adjust_external = false;
+            if (m_config.printer_is_belt.value)
+                adjust_external = true;
+            else if (adjustment->dont_slow_down_outer_wall && external_perimeter)
+                adjust_external = false;
             
             // ORCA: Dont slowdown external perimeters for layer time works by not marking the external perimeter as adjustable, 
             // hence the slowdown algorithm ignores it.
@@ -448,9 +451,10 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
                     dif[i] = new_pos[i] - current_pos[i];
                 const bool extrusion_move = std::abs(dif[3]) > 0.f
                     && (line.type & (CoolingLine::TYPE_G1 | CoolingLine::TYPE_G2 | CoolingLine::TYPE_G3));
-                if (m_config.printer_is_belt.value && layer_had_extrusion && extrusion_move && ! wipe && adjust_external
-                    && line.feedrate > 0.f && (line.type & CoolingLine::TYPE_ADJUSTABLE) == 0) {
-                    // Belt G1 paths often omit ;_EXTRUDE_SET_SPEED on F-only lines.
+                if (m_config.printer_is_belt.value && extrusion_move && ! wipe && adjust_external
+                    && new_pos[4] > 0.f && (line.type & CoolingLine::TYPE_ADJUSTABLE) == 0) {
+                    // Belt G1 paths often omit ;_EXTRUDE_SET_SPEED. feedrate is still 0 here;
+                    // the parsed F word lives in new_pos until it is copied below.
                     line.type |= CoolingLine::TYPE_ADJUSTABLE;
                 }
                 float dxy2 = 0;
@@ -692,7 +696,17 @@ float CoolingBuffer::calculate_layer_slowdown(std::vector<PerExtruderAdjustments
             for (auto it = cur_begin; it != by_slowdown_time.end(); ++ it)
                 max_time += (*it)->time_maximum;
             if (max_time > slow_down_layer_time) {
-                extruder_range_slow_down_non_proportional(cur_begin, by_slowdown_time.end(), slow_down_layer_time - total);
+                if (m_config.printer_is_belt.value) {
+                    // Scale every feature by one ratio, down to slow_down_min_speed.
+                    // The tiered slowdown leaves inner walls at 30–42 mm/s and
+                    // stops on the 20 mm/s belt-contact floor while the layer
+                    // is still under slow_down_layer_time.
+                    const float factor = slow_down_layer_time / std::max(total, 1e-3f);
+                    for (auto it = cur_begin; it != by_slowdown_time.end(); ++it)
+                        (*it)->slow_down_proportional(factor, true);
+                } else {
+                    extruder_range_slow_down_non_proportional(cur_begin, by_slowdown_time.end(), slow_down_layer_time - total);
+                }
             } else {
                 // Slow down to maximum possible.
                 for (auto it = cur_begin; it != by_slowdown_time.end(); ++ it)

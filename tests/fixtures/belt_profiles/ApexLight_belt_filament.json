@@ -23,6 +23,6 @@
     "pressure_advance": ["0.05"],
     "slow_down_for_layer_cooling": ["1"],
     "slow_down_layer_time": ["8"],
-    "slow_down_min_speed": ["10"],
+    "slow_down_min_speed": ["8"],
     "wipe": ["0"]
 }

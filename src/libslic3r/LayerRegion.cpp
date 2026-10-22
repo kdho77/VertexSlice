@@ -606,21 +606,43 @@ void LayerRegion::process_external_surfaces(const Layer *lower_layer, const Poly
     }
 
     ExPolygons belt_narrow_solid;
-    // Belt: a region that cannot hold a 2.5 mm opening prints solid. Wider
-    // regions stay sparse when minimum_sparse_infill_area is 0. The test is
-    // the whole region: opening also eats a boundary band, and that band is
-    // not a thin section.
+    // Belt: a gap between inner walls is often a neck on a region that is
+    // wide somewhere else. Opening the whole region stays non-empty, so the
+    // neck never becomes solid and the checker still sees a 2.0–2.5 mm
+    // wall-bounded void. The wide core is offset(opening(R, r), r). The
+    // difference is the neck. Corner fillets from that opening are under 1 mm².
     if (this->layer()->object()->print()->config().printer_is_belt.value) {
-        const float half_thin = float(scale_(1.25));
+        const float half_thin = float(scale_(1.40));
+        const double dust = double(scale_(scale_(1.0)));
         ExPolygons thin_regions;
+        ExPolygons kept;
         auto &sparse_regions = expansion_zones[1].expolygons;
-        sparse_regions.erase(std::remove_if(sparse_regions.begin(), sparse_regions.end(), [&](ExPolygon &ex) {
-            if (opening_ex(ExPolygons{ex}, half_thin).empty()) {
+        kept.reserve(sparse_regions.size());
+        for (ExPolygon &ex : sparse_regions) {
+            ExPolygons opened = opening_ex(ExPolygons{ex}, half_thin);
+            if (opened.empty()) {
                 thin_regions.push_back(std::move(ex));
-                return true;
+                continue;
             }
-            return false;
-        }), sparse_regions.end());
+            ExPolygons core = offset_ex(opened, half_thin);
+            ExPolygons neck = diff_ex(ExPolygons{ex}, core);
+            ExPolygons accepted;
+            for (ExPolygon &n : neck) {
+                if (n.area() < dust)
+                    continue;
+                accepted.push_back(std::move(n));
+            }
+            if (accepted.empty()) {
+                kept.push_back(std::move(ex));
+                continue;
+            }
+            ExPolygons remain = diff_ex(ExPolygons{ex}, accepted);
+            for (ExPolygon &n : accepted)
+                thin_regions.push_back(std::move(n));
+            for (ExPolygon &r : remain)
+                kept.push_back(std::move(r));
+        }
+        sparse_regions = std::move(kept);
         if (!thin_regions.empty())
             belt_narrow_solid = std::move(thin_regions);
     }

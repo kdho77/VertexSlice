@@ -161,7 +161,7 @@ def slice_raw(stl: Path, profile, dest: Path, target_y: float = 0.016) -> None:
         text = apply_belt_layer_slowdown(
             text,
             slow_down_layer_time=float(profile.filament_overrides.get("slow_down_layer_time", ["8"])[0]),
-            slow_down_min_speed=float(profile.filament_overrides.get("slow_down_min_speed", ["10"])[0]),
+            slow_down_min_speed=float(profile.filament_overrides.get("slow_down_min_speed", ["8"])[0]),
         )
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text, encoding="utf-8")
