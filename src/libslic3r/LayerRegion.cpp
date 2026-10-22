@@ -625,6 +625,12 @@ void LayerRegion::process_external_surfaces(const Layer *lower_layer, const Poly
             belt_narrow_solid = std::move(thin_regions);
     }
 
+    if (this->layer()->object()->print()->config().printer_is_belt.value) {
+        // Belt: only belt_narrow_solid (<=1.5 mm) may print as solid infill.
+        expansion_zones[1].expolygons = union_ex(expansion_zones[1].expolygons, expansion_zones[0].expolygons);
+        expansion_zones[0].expolygons.clear();
+    }
+
 //    this->fill_surfaces.remove_types({ stBottomBridge, stBottom, stTop, stInternal, stInternalSolid });
     this->fill_surfaces.clear();
     unsigned zones_expolygons_count = 0;

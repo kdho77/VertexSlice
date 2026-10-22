@@ -1,5 +1,6 @@
 #include "../GCode.hpp"
 #include "CoolingBuffer.hpp"
+#include "BeltPrinter/BeltOnlyInvariant.hpp"
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/log/trivial.hpp>
@@ -445,6 +446,13 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
                 float dif[4];
                 for (size_t i = 0; i < 4; ++ i)
                     dif[i] = new_pos[i] - current_pos[i];
+                const bool extrusion_move = std::abs(dif[3]) > 0.f
+                    && (line.type & (CoolingLine::TYPE_G1 | CoolingLine::TYPE_G2 | CoolingLine::TYPE_G3));
+                if (m_config.printer_is_belt.value && layer_had_extrusion && extrusion_move && ! wipe && adjust_external
+                    && line.feedrate > 0.f && (line.type & CoolingLine::TYPE_ADJUSTABLE) == 0) {
+                    // Belt G1 paths often omit ;_EXTRUDE_SET_SPEED on F-only lines.
+                    line.type |= CoolingLine::TYPE_ADJUSTABLE;
+                }
                 float dxy2 = 0;
                 //BBS: support to calculate length of arc
                 if (line.type & CoolingLine::TYPE_G2 || line.type & CoolingLine::TYPE_G3) {
@@ -458,7 +466,12 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
                     dxy2 = dif[0] * dif[0] + dif[1] * dif[1];
                 }
                 float dxyz2 = dxy2 + dif[2] * dif[2];
-                if (dxyz2 > 0.f) {
+                if (m_config.printer_is_belt.value && dxy2 > 0.f) {
+                    // Belt: layer-time uses machine XY length; inclined Z is not print-axis travel.
+                    const Vec2d from_mm(current_pos[0], current_pos[1]);
+                    const Vec2d to_mm(new_pos[0], new_pos[1]);
+                    line.length = float(BeltPrinter::machine_xy_length(from_mm, to_mm, m_config.belt_angle.value));
+                } else if (dxyz2 > 0.f) {
                     // Movement in xyz, calculate time from the xyz Euclidian distance.
                     line.length = sqrt(dxyz2);
                 } else if (std::abs(dif[3]) > 0.f) {
@@ -689,7 +702,10 @@ float CoolingBuffer::calculate_layer_slowdown(std::vector<PerExtruderAdjustments
         elapsed_time_total0 += adj.elapsed_time_total();
     }
 
-    return elapsed_time_total0;
+    float layer_time_after_slowdown = 0.f;
+    for (const PerExtruderAdjustments &adj : per_extruder_adjustments)
+        layer_time_after_slowdown += adj.time_total;
+    return layer_time_after_slowdown;
 }
 
 // Apply slow down over G-code lines stored in per_extruder_adjustments, enable fan if needed.

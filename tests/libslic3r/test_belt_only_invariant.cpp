@@ -375,15 +375,22 @@ TEST_CASE("ApexLight and ApexCore belt process presets match TPU expert infill k
         REQUIRE(fixture_contains(file, "\"detect_narrow_internal_solid_infill\": \"0\""));
         REQUIRE(fixture_contains(file, "\"reduce_infill_retraction\": \"1\""));
         REQUIRE(fixture_contains(file, "\"internal_solid_infill_pattern\": \"rectilinear\""));
-        REQUIRE(fixture_contains(file, "\"filter_out_gap_fill\": \"9999\""));
+        if (std::string(file).find("ApexCore") != std::string::npos) {
+            REQUIRE(fixture_contains(file, "\"filter_out_gap_fill\": \"9999\""));
+            REQUIRE(fixture_contains(file, "\"wall_generator\": \"arachne\""));
+        }
         REQUIRE(fixture_contains(file, "\"travel_speed\": \"212\""));
         REQUIRE(fixture_contains(file, "\"wall_loops\": \"2\""));
-        if (std::string(file).find("ApexCore") != std::string::npos)
-            REQUIRE(fixture_contains(file, "\"wall_generator\": \"arachne\""));
     }
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"filter_out_gap_fill\": \"0.5\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"outer_wall_flow_ratio\": \"1.547\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"sparse_infill_flow_ratio\": \"1.655\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"internal_solid_infill_flow_ratio\": \"1.655\""));
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"layer_height\": \"0.46\""));
     REQUIRE(fixture_contains("ApexCore_belt_process.json", "\"layer_height\": \"0.42\""));
-    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"wall_generator\": \"classic\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"wall_generator\": \"arachne\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"min_bead_width\": \"85%\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"wall_transition_length\": \"100%\""));
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"outer_wall_line_width\": \"1.0\""));
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"slow_down_layer_time\": \"8\""));
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"wipe_on_loops\": \"0\""));
