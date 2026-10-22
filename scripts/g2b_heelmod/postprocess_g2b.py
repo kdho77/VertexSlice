@@ -22,6 +22,15 @@ from pathlib import Path
 
 WORD = re.compile(r"([XYZEF])([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)")
 WALLS = {"Outer wall", "Inner wall", "Overhang wall"}
+INFILL = {
+    "Sparse infill",
+    "Internal solid infill",
+    "Gap infill",
+    "Top surface",
+    "Bottom surface",
+    "Bridge",
+    "Internal Bridge",
+}
 RETRACT = 0.5
 PRIME = 0.45
 LIFT = 0.4
@@ -125,9 +134,9 @@ def _belt_split(segments: list[dict]) -> list[dict]:
     return [b] + segments[best_i + 1 :] + segments[:best_i] + [a]
 
 
-def _emit_approach(out: list[str], x: float, y: float, z: float, dx: float, dy: float, dz: float, wall: bool) -> None:
+def _emit_approach(out: list[str], x: float, y: float, z: float, dx: float, dy: float, dz: float, retract: bool) -> None:
     out.append(";C seam travel: lift + direct\n")
-    if wall:
+    if retract:
         out.append(f"G1 E-{RETRACT:.1f} F{RETRACT_F:.0f}\n")
     out.append(f"G1 Y{_fmt(y + LIFT, 3)} F{TRAVEL_F:.0f} ;lift\n")
     travel = f"G1 X{_fmt(dx, 3)} Y{_fmt(dy + LIFT, 3)}"
@@ -136,12 +145,12 @@ def _emit_approach(out: list[str], x: float, y: float, z: float, dx: float, dy: 
     travel += f" F{TRAVEL_F:.0f} ;seam travel\n"
     out.append(travel)
     out.append(f"G1 Y{_fmt(dy, 3)} F{TRAVEL_F:.0f} ;lower\n")
-    if wall:
+    if retract:
         out.append(f"G1 E{PRIME:.2f} F{RETRACT_F:.0f}\n")
     out.append(f"G1 F{TRAVEL_F:.0f}\n")
 
 
-def seam(text: str) -> tuple[str, dict]:
+def seam(text: str, *, retract_min_mm: float | None = None, skip_infill_travel: bool = False) -> tuple[str, dict]:
     lines = text.splitlines(keepends=True)
     out: list[str] = []
     x = y = z = None
@@ -198,6 +207,7 @@ def seam(text: str) -> tuple[str, dict]:
                     continue
                 break
             if j < n and extrusion(lines[j]) and x is not None:
+                src_type = typ
                 dx, dy, dz = x, y, z
                 feeds: list[str] = []
                 for tl in gap:
@@ -257,18 +267,41 @@ def seam(text: str) -> tuple[str, dict]:
                         k += 1
                         continue
                     break
+                # G2b leaves infill-to-infill travels as plain moves. Seaming
+                # them is what produced 1752 travels / 1134 retracts against
+                # the reference file's 1368 / 682.
+                if skip_infill_travel and src_type in INFILL and dest_type in INFILL:
+                    for ln in lines[i:k]:
+                        out.append(ln if ln.endswith("\n") else ln + "\n")
+                        if ln.startswith(";TYPE:"):
+                            typ = ln[6:].strip()
+                        if _is_g01(ln):
+                            w = _words(ln)
+                            if "X" in w:
+                                x = float(w["X"])
+                            if "Y" in w:
+                                y = float(w["Y"])
+                            if "Z" in w:
+                                z = float(w["Z"])
+                            if "F" in w:
+                                f = float(w["F"])
+                    i = k
+                    continue
                 wall = dest_type in WALLS
                 if wall and segs:
                     segs = _belt_split(segs)
                     dx, dy = segs[0]["x0"], segs[0]["y0"]
+                travel_dist = math.hypot(dx - x, dy - y)
+                # Retract only on wall approaches of at least retraction_minimum_travel (2 mm).
+                do_retract = wall and (retract_min_mm is None or travel_dist + 1e-6 >= retract_min_mm)
                 for tl in gap:
                     if not travelish(tl) and not (_is_g01(tl) and not extrusion(tl)):
                         out.append(tl)
                         if tl.startswith(";TYPE:"):
                             typ = tl[6:].strip()
-                _emit_approach(out, x, y, z if z is not None else 0.0, dx, dy, dz if dz is not None else 0.0, wall)
+                _emit_approach(out, x, y, z if z is not None else 0.0, dx, dy, dz if dz is not None else 0.0, do_retract)
                 counts["seam_travel"] += 1
-                if wall:
+                if do_retract:
                     counts["retract"] += 1
                     counts["prime"] += 1
                 out.extend(feeds)
@@ -519,6 +552,13 @@ def main() -> None:
     elif cmd == "coupon":
         Path(sys.argv[3]).write_text(coupon(text, int(sys.argv[4])))
         print("coupon from", sys.argv[4])
+    elif cmd == "match":
+        # G2b toe seam, without the heelmod min-time pass.
+        out, n = efix(text)
+        out, counts = seam(out, retract_min_mm=2.0, skip_infill_travel=True)
+        Path(sys.argv[3]).write_text(out)
+        print("efix", n)
+        print("seam", counts)
     elif cmd == "all":
         out, n = efix(text)
         out, counts = seam(out)
