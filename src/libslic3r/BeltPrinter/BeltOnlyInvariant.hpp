@@ -35,7 +35,7 @@ constexpr double BELT_CONTACT_SPEED_MM_S   = 20.0;
 // step on that print was 0.4 mm virtual, so 0.8 mm separates the two.
 constexpr double END_CAP_RISE_VIRT_MM      = 0.8;
 
-// Sentinel on stInternal surfaces: <=1.5 mm openings filled rectilinear but
+// Sentinel on stInternal surfaces: <=2.5 mm openings filled rectilinear but
 // emitted as sparse (erInternalInfill) so G-code does not alternate types.
 constexpr double BELT_NARROW_SOLID_SURFACE_ANGLE = -9.0;
 

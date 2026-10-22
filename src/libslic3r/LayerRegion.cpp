@@ -606,12 +606,12 @@ void LayerRegion::process_external_surfaces(const Layer *lower_layer, const Poly
     }
 
     ExPolygons belt_narrow_solid;
-    // Belt: a region that cannot hold a 1.5 mm opening prints solid. Wider
+    // Belt: a region that cannot hold a 2.5 mm opening prints solid. Wider
     // regions stay sparse when minimum_sparse_infill_area is 0. The test is
     // the whole region: opening also eats a boundary band, and that band is
     // not a thin section.
     if (this->layer()->object()->print()->config().printer_is_belt.value) {
-        const float half_thin = float(scale_(0.75));
+        const float half_thin = float(scale_(1.25));
         ExPolygons thin_regions;
         auto &sparse_regions = expansion_zones[1].expolygons;
         sparse_regions.erase(std::remove_if(sparse_regions.begin(), sparse_regions.end(), [&](ExPolygon &ex) {
@@ -626,7 +626,7 @@ void LayerRegion::process_external_surfaces(const Layer *lower_layer, const Poly
     }
 
     if (this->layer()->object()->print()->config().printer_is_belt.value) {
-        // Belt: only belt_narrow_solid (<=1.5 mm) may print as solid infill.
+        // Belt: only belt_narrow_solid (<=2.5 mm) may print as solid infill.
         expansion_zones[1].expolygons = union_ex(expansion_zones[1].expolygons, expansion_zones[0].expolygons);
         expansion_zones[0].expolygons.clear();
     }

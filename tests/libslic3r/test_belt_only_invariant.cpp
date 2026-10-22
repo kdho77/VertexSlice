@@ -389,7 +389,7 @@ TEST_CASE("ApexLight and ApexCore belt process presets match TPU expert infill k
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"layer_height\": \"0.46\""));
     REQUIRE(fixture_contains("ApexCore_belt_process.json", "\"layer_height\": \"0.42\""));
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"wall_generator\": \"arachne\""));
-    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"min_bead_width\": \"85%\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"min_bead_width\": \"60%\""));
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"wall_transition_length\": \"100%\""));
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"outer_wall_line_width\": \"1.0\""));
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"slow_down_layer_time\": \"8\""));
