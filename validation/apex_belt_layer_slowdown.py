@@ -28,6 +28,8 @@ def apply_belt_layer_slowdown(
     *,
     slow_down_layer_time: float = 8.0,
     slow_down_min_speed: float = 10.0,
+    heel_layer_start: int | None = None,
+    heel_min_layer_time: float | None = None,
 ) -> str:
     if ";_EXTRUDE_SET_SPEED" in gcode:
         return gcode
@@ -49,7 +51,10 @@ def apply_belt_layer_slowdown(
     pos = [0.0, 0.0, 0.0]
     cur_f = 0.0
 
-    for start, end in layer_spans:
+    for layer_no, (start, end) in enumerate(layer_spans, start=0):
+        layer_target = slow_down_layer_time
+        if heel_layer_start is not None and heel_min_layer_time is not None and layer_no + 1 >= heel_layer_start:
+            layer_target = max(slow_down_layer_time, heel_min_layer_time)
         moves: List[Tuple[int, float, float]] = []
         t = 0.0
         pos_l = pos[:]
@@ -81,12 +86,12 @@ def apply_belt_layer_slowdown(
                 t += seg_len / f_l
             pos_l = npos
 
-        if t >= slow_down_layer_time or not moves:
+        if t >= layer_target or not moves:
             pos = pos_l
             cur_f = f_l
             continue
 
-        scale = min(1.0, slow_down_layer_time / max(t, 1e-9))
+        scale = min(1.0, layer_target / max(t, 1e-9))
         min_f = slow_down_min_speed
         for j, seg_len, f_mm_s in moves:
             new_f = max(min_f, f_mm_s * scale)
