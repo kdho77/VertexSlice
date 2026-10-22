@@ -3,7 +3,9 @@
 
 No heelmod: no layer-range flow, min_bead, ensure_all, min-time, and no
 global infill_wall_overlap or minimum_sparse_infill_area edits. Layer height
-is the 0.42 mm spacing ApexCore G2b-equivalents use on this branch.
+stays at the G2b value, 0.46 mm. The only ApexCore additions are nozzle
+temperature, part/aux fan, the wall/sparse/gap flow ratios, and the G2b
+pressure-advance line (already 0.05 in the CONFIG_BLOCK).
 """
 from __future__ import annotations
 
@@ -29,19 +31,22 @@ from slice_g2b_heelmod import (  # noqa: E402
     slice_model,
 )
 
-# Shear-corrected rates at volumetric ratio 1.0008 (0.18 mm target, 0.42 mm
-# layer, 1 mm width, filament flow 1.03) on this binary. Each feature is
-# scaled so the measured E/mm is the target. Gap fill is not the wall ratio.
+# Shear scale measured on this binary at volumetric ratio 1.0008 (width 1 mm,
+# filament flow 1.03). Applied at the G2b layer height. Gap fill is ApexCore's
+# own target, 0.16 E/mm, not the wall target.
 OUTER_AT_VOL = 0.1843
 SPARSE_AT_VOL = 0.1638
 SOLID_AT_VOL = 0.1778
-LAYER_H = 0.42
 GAP_E_PER_MM = 0.16
+# Offset that puts the 0.46 mm toe on the belt the way the G2b file does
+# (outer min Y about 0.02). The heelmod constant -2.136 clips the sole.
+CORE_Y_OFFSET = -1.146
 
 
 def _apply_core_flows(process: dict, filament: dict) -> None:
     fil = float(filament.get("filament_flow_ratio", ["1.03"])[0])
-    volumetric = feature_flow(0.18, LAYER_H, 1.0, fil)
+    layer_h = float(process["layer_height"])
+    volumetric = feature_flow(0.18, layer_h, 1.0, fil)
     outer = volumetric * (0.18 / OUTER_AT_VOL)
     sparse = volumetric * (0.18 / SPARSE_AT_VOL)
     solid = volumetric * (0.18 / SOLID_AT_VOL)
@@ -51,16 +56,16 @@ def _apply_core_flows(process: dict, filament: dict) -> None:
     process["sparse_infill_flow_ratio"] = f"{sparse:.4f}"
     process["internal_solid_infill_flow_ratio"] = f"{solid:.4f}"
     process["gap_fill_flow_ratio"] = f"{gap:.4f}"
-    process["first_layer_flow_ratio"] = f"{outer:.4f}"
     print(
         "flows",
         f"fil={fil}",
-        f"layer={LAYER_H}",
+        f"layer={layer_h}",
         f"outer={outer:.4f}",
         f"inner={outer:.4f}",
         f"sparse={sparse:.4f}",
         f"solid={solid:.4f}",
         f"gap={gap:.4f}",
+        f"first_layer={process.get('first_layer_flow_ratio')}",
     )
 
 
@@ -80,14 +85,10 @@ def prepare(work: Path, material: str) -> tuple[dict, dict, dict, float]:
     assert_g2b_identity(process, filament, machine)
     # Filament block is ApexCore. Process/machine stay on the G2b CONFIG_BLOCK.
     filament = saved
-    process["layer_height"] = f"{LAYER_H}"
-    process["initial_layer_print_height"] = f"{LAYER_H}"
-    if "first_layer_height" in process:
-        process["first_layer_height"] = f"{LAYER_H}"
+    if process.get("layer_height") != "0.46":
+        raise SystemExit(f"layer height drifted to {process.get('layer_height')!r}")
     _apply_core_flows(process, filament)
-    # Probed on this mesh at 0.42 mm: offset 20 -> first extrusion Y 21.066,
-    # so -1.0 lands the first bead at Y 0.066.
-    y_offset = float(os.environ.get("CORE_Y_OFFSET", "-1.0"))
+    y_offset = float(os.environ.get("CORE_Y_OFFSET", str(CORE_Y_OFFSET)))
     start = machine.get("machine_start_gcode", "")
     if "SET_PRESSURE_ADVANCE ADVANCE=0.05" not in start:
         raise SystemExit("ApexCore start gcode lost pressure advance")
