@@ -135,6 +135,9 @@ def main() -> None:
         "initial", process.get("initial_layer_print_height"),
         "walls", process.get("wall_loops"),
         "y", y_offset,
+        "layer_retract", machine.get("retract_when_changing_layer"),
+        "fil_retract_len", fil.get("filament_retraction_length"),
+        "fil_layer_retract", fil.get("filament_retract_when_changing_layer"),
     )
     if os.environ.get("PREP_ONLY") == "1":
         return
