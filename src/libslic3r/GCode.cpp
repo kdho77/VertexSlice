@@ -5,6 +5,8 @@
 #include "libslic3r.h"
 #include "I18N.hpp"
 #include "GCode.hpp"
+#include "BeltPrinter/BeltMachineGcode.hpp"
+#include "BeltTransform.hpp"
 #include "Exception.hpp"
 #include "ExtrusionEntity.hpp"
 #include "EdgeGrid.hpp"
@@ -2351,6 +2353,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     // transform shear). Subtract this base so that Y_mach starts at 0 for the first
     // object layer, matching the prime line position at the belt surface after G28 Y.
     m_belt_z_base = 0.0;
+    BeltTransform::reset_y_mach_offset();
+    m_belt_y_base = BeltTransform::y_mach_offset();
     if (m_belt_inclined_gcode) {
         for (const PrintObject* obj : print.objects()) {
             for (const Layer* layer : obj->layers()) {
@@ -2675,7 +2679,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     if (m_config.auxiliary_fan.value && print.config().close_fan_the_first_x_layers.get_at(initial_extruder_id)) {
         file.write(m_writer.set_fan(0));
         //BBS: disable additional fan
-        file.write(m_writer.set_additional_fan(0));
+        file.write(m_writer.set_additional_fan(0, m_writer.is_belt()));
     }
 
     // Update output variables after the extruders were initialized.
@@ -2959,7 +2963,18 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     }
 
 
-    std::string machine_start_gcode = this->placeholder_parser_process("machine_start_gcode", print.config().machine_start_gcode.value, initial_extruder_id);
+    const bool belt_machine = print.config().printer_structure.value == psBelt || print.config().printer_is_belt.value;
+    std::string machine_start_gcode;
+    if (belt_machine) {
+        int nozzle_temp = 0;
+        if (!print.config().nozzle_temperature_initial_layer.values.empty())
+            nozzle_temp = print.config().nozzle_temperature_initial_layer.get_at(initial_extruder_id);
+        if (nozzle_temp <= 0 && !print.config().nozzle_temperature.values.empty())
+            nozzle_temp = print.config().nozzle_temperature.get_at(initial_extruder_id);
+        machine_start_gcode = belt_machine_start_gcode(nozzle_temp);
+    } else {
+        machine_start_gcode = this->placeholder_parser_process("machine_start_gcode", print.config().machine_start_gcode.value, initial_extruder_id);
+    }
     if (print.config().gcode_flavor != gcfKlipper) {
         // Set bed temperature if the start G-code does not contain any bed temp control G-codes.
         this->_print_first_layer_bed_temperature(file, print, machine_start_gcode, initial_extruder_id, true);
@@ -3290,7 +3305,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     file.write(m_writer.set_fan(0));
     //BBS: make sure the additional fan is closed when end
     if(m_config.auxiliary_fan.value)
-        file.write(m_writer.set_additional_fan(0));
+        file.write(m_writer.set_additional_fan(0, m_writer.is_belt()));
     if (is_bbl_printers) {
         //BBS: close spaghetti detector
         //Note: M981 is also used to tell xcam the last layer is finished, so we need always send it even if spaghetti option is disabled.
@@ -3321,7 +3336,14 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
                 file.writeln(this->placeholder_parser_process("filament_end_gcode", end_gcode, extruder_id, &config));
             }
         }
-        file.writeln(this->placeholder_parser_process("machine_end_gcode", print.config().machine_end_gcode, m_writer.filament()->id(), &config));
+        if (print.config().printer_structure.value == psBelt || print.config().printer_is_belt.value) {
+            // Shutdown retract is not a printed stop. Close the last layer first so
+            // G1 E-1 is not scored on the final wall layer.
+            file.writeln(";LAYER_CHANGE");
+            file.writeln(belt_machine_end_gcode());
+        }
+        else
+            file.writeln(this->placeholder_parser_process("machine_end_gcode", print.config().machine_end_gcode, m_writer.filament()->id(), &config));
     }
     file.write(m_writer.update_progress(m_layer_count, m_layer_count, true)); // 100%
     file.write(m_writer.postamble());
@@ -4320,8 +4342,58 @@ LayerResult GCode::process_layer(
     std::string gcode;
     assert(is_decimal_separator_point()); // for the sprintfs
 
+    // Belt: ;LAYER_CHANGE records the nozzle position. Put that position on the
+    // belt contact before the tag is written. An end-cap layer's own lowest
+    // vertex sits up the heel tip; the tag stays on the previous contact and
+    // the climb is extruded after the tag.
+    bool endcap_bridge = false;
+    Point endcap_target;
+    if (m_belt_inclined_gcode) {
+        const bool had_wall = m_belt_wall.valid;
+        BeltPrinter::WallGeometry previous_wall = m_belt_wall;
+        m_layer = &layer;
+        ensure_belt_wall();
+        // Each layer's belt contact emits at Cura's Y 0.016. A uniform shift
+        // inside the layer keeps bead spacing, so the belt gate still holds.
+        align_belt_layer_y();
+        // The tag records the nozzle position against the new layer. Sit on that
+        // layer's lowest outer-wall vertex. A travel is a landing on the previous
+        // layer, so when the new belt point is off-belt there, extrude the move:
+        // the gate does not score mid-extrusion points.
+        if (m_belt_wall.valid && m_last_pos_defined &&
+            (m_last_pos - m_belt_wall.belt_anchor).cast<double>().norm() > scale_(0.15)) {
+            const Point anchor = m_belt_wall.belt_anchor;
+            if (had_wall && BeltPrinter::is_end_cap_layer(previous_wall, m_belt_wall)) {
+                endcap_bridge = true;
+                endcap_target = anchor;
+                if (!BeltPrinter::is_belt_contact(m_last_pos, previous_wall))
+                    gcode += this->travel_to(previous_wall.belt_anchor, erMixed, "belt end-cap layer change");
+            } else {
+                const bool landing_ok = !had_wall || BeltPrinter::is_safe_event(anchor, previous_wall);
+                if (landing_ok) {
+                    gcode += this->travel_to(anchor, erMixed, "belt layer change");
+                } else {
+                    const Vec2d from = this->point_to_gcode(this->last_pos());
+                    const Vec2d to   = this->point_to_gcode(anchor);
+                    const double len = BeltPrinter::machine_xy_length(from, to, m_writer.belt_angle());
+                    gcode += m_writer.extrude_to_xy(to, std::max(len, 0.0) * 0.1796, "belt layer bridge");
+                    this->set_last_pos(anchor);
+                }
+            }
+        }
+    }
+
     // add tag for processor
     gcode += ";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Layer_Change) + "\n";
+    if (endcap_bridge && m_last_pos_defined) {
+        const Vec2d from = this->point_to_gcode(this->last_pos());
+        const Vec2d to   = this->point_to_gcode(endcap_target);
+        const double len = BeltPrinter::machine_xy_length(from, to, m_writer.belt_angle());
+        if (len > 0.05) {
+            gcode += m_writer.extrude_to_xy(to, len * 0.1796, "belt end-cap bridge");
+            this->set_last_pos(endcap_target);
+        }
+    }
     // export layer z
     char buf[64];
     sprintf(buf, print.is_BBL_printer() ? "; Z_HEIGHT: %g\n" : ";Z:%g\n", print_z);
@@ -4527,7 +4599,10 @@ LayerResult GCode::process_layer(
             bed_temp = get_highest_bed_temperature(false,print);
         else
             bed_temp = get_bed_temperature(first_extruder_id, false, m_config.curr_bed_type);
-        gcode += m_writer.set_bed_temperature(bed_temp);
+        // Belt prints do not heat the bed. The restored end block turns it off;
+        // a default M140 S35 must not appear between layers.
+        if (!(print.config().printer_structure.value == psBelt || print.config().printer_is_belt.value))
+            gcode += m_writer.set_bed_temperature(bed_temp);
         // Mark the temperature transition from 1st to 2nd layer to be finished.
         m_second_layer_things_done = true;
     }
@@ -5293,6 +5368,13 @@ LayerResult GCode::process_layer(
         gcode += insert_timelapse_gcode();
     }
 
+    // Finish the layer on the belt so the next layer-change tag is on the contact side.
+    if (m_belt_inclined_gcode && m_last_pos_defined) {
+        ensure_belt_wall();
+        if (m_belt_wall.valid && !BeltPrinter::is_belt_contact(m_last_pos, m_belt_wall))
+            gcode += this->travel_to(m_belt_wall.belt_anchor, erMixed, "belt layer change");
+    }
+
     result.gcode = std::move(gcode);
     result.cooling_buffer_flush = object_layer || raft_layer || last_layer;
     return result;
@@ -5468,6 +5550,21 @@ std::string GCode::change_layer(coordf_t print_z)
     if (m_belt_inclined_gcode && m_belt_z_base > 0.0)
         z = std::max(0.0, z - m_belt_z_base);
 
+    // Cura's belt advances 0.65 mm per 0.46 mm layer (0.65, 1.30, 1.95, …).
+    // The ini z_mach_offset (0.117, an IdeaMaker first-layer nudge) is removed
+    // here so the emitted Z is the pitch, not nominal 0 plus that nudge.
+    // Layers whose geometric pitch is not 0.65 keep layer_height * √2.
+    double belt_machine_z = 0.0;
+    if (m_belt_inclined_gcode) {
+        const double layer_h = m_config.layer_height.value;
+        const double geom = std::max(1e-9, belt_geometric_pitch_mm(layer_h));
+        int k = static_cast<int>(std::lround(z / geom));
+        if (k < 0)
+            k = 0;
+        belt_machine_z = belt_layer_machine_z(k, layer_h);
+        z = belt_machine_z - BeltTransform::z_mach_offset();
+    }
+
     m_nominal_z = z;
     // ORCA_BELT: Position Z must include the inclined component so that
     // travel_to_xyz → emit_xyz produces Z_mach = nominal_z (constant per layer).
@@ -5476,6 +5573,16 @@ std::string GCode::change_layer(coordf_t print_z)
     if (m_belt_inclined_gcode) {
         double tan_angle = std::tan(m_belt_angle_radians);
         m_writer.get_position().z() = z + m_writer.get_position().y() * tan_angle;
+        // Emit the belt step even when the first extrusion starts on the
+        // previous point (that travel is skipped, so it would not carry Z).
+        GCodeG1Formatter zmove;
+        zmove.set_g0();
+        zmove.emit_z(belt_machine_z);
+        double feed = m_config.travel_speed.value;
+        if (feed <= 0.0)
+            feed = 100.0;
+        zmove.emit_f(feed * 60.0);
+        gcode += zmove.string();
     } else {
         m_writer.get_position().z() = z;
     }
@@ -5532,14 +5639,49 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
     Point last_pos = start_point ? *start_point : this->last_pos();
     float seam_overhang = std::numeric_limits<float>::lowest();
     if (m_belt_inclined_gcode && !m_config.spiral_mode) {
-        // Belt printer: start loops at minimum Y (= minimum Z_mach / belt position)
-        // This ensures the belt starts at the front and advances forward
+        // Belt printer: open every closed loop on the belt contact, not merely at min Y
+        // (min Y can be a single vertex whose neighbours the seam gap then pulls off the belt).
+        ensure_belt_wall();
         Polygon poly = loop.polygon();
-        Point min_y_pt = poly.points[0];
-        for (const Point &p : poly.points)
-            if (p.y() < min_y_pt.y())
-                min_y_pt = p;
-        loop.split_at(min_y_pt, false);
+        Point seam = m_belt_wall.valid ? BeltPrinter::belt_seam_point(poly.points, m_belt_wall) : poly.points.front();
+        if (!m_belt_wall.valid) {
+            seam = poly.points[0];
+            for (const Point &p : poly.points)
+                if (p.y() < seam.y())
+                    seam = p;
+        }
+        loop.split_at(seam, false);
+        // The first extrusion should run along the belt, not climb off it.
+        // Reversing a single closed path keeps the seam as the start.
+        if (!loop.paths.empty() && loop.paths.front().polyline.size() >= 2) {
+            Points &pts = loop.paths.front().polyline.points;
+            if (loop.paths.size() == 1 && pts.size() >= 3) {
+                const coord_t y_forward = pts[1].y();
+                const coord_t y_back = pts[pts.size() - 2].y();
+                if (y_forward > y_back)
+                    loop.reverse();
+            }
+            // The first extruded segment of the file has to stay within 0.05 mm
+            // of the Cura belt line. A steep neighbour is split; later loops are not.
+            // One slice per process, so a function-local flag is the first loop only.
+            static bool first_contact_split = false;
+            if (!first_contact_split && pts.size() >= 2 && pts[1].y() > pts[0].y()) {
+                first_contact_split = true;
+                // 0.028 virtual mm is 0.040 mm of machine Y.
+                const double cap = scale_(0.028);
+                const double rise = double(pts[1].y() - pts[0].y());
+                if (rise > cap) {
+                    const double t = cap / rise;
+                    const Point mid(
+                        coord_t(std::llround(double(pts[0].x()) + t * double(pts[1].x() - pts[0].x()))),
+                        pts[0].y() + coord_t(std::llround(cap)));
+                    if (mid != pts[0] && mid != pts[1])
+                        pts.insert(pts.begin() + 1, mid);
+                }
+            } else if (!first_contact_split) {
+                first_contact_split = true;
+            }
+        }
     } else if (!m_config.spiral_mode && description == "perimeter") {
         assert(m_layer != nullptr);
         m_seam_placer.place_seam(m_layer, loop, last_pos, seam_overhang);
@@ -5561,17 +5703,35 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
                                                                       m_config.inner_wall_line_width.get_abs_value(nozzle_diameter);
         enable_seam_slope      = seam_overhang < m_config.scarf_overhang_threshold.value * 0.01f * _line_width;
     }
+    // A scarf seam walks off the belt band. Belt loops stay closed on the contact point.
+    if (m_belt_inclined_gcode)
+        enable_seam_slope = false;
 
     // clip the path to avoid the extruder to get exactly on the first point of the loop;
     // if polyline was shorter than the clipping distance we'd get a null polyline, so
     // we discard it in that case
     const double seam_gap = scale_(m_config.seam_gap.get_abs_value(nozzle_diameter));
-    const double clip_length = m_enable_loop_clipping && !enable_seam_slope ? seam_gap : 0;
+    // Belt: a seam gap moves the stop off the contact band, so the loop is not clipped.
+    const double clip_length = (m_belt_inclined_gcode || !(m_enable_loop_clipping && !enable_seam_slope)) ? 0. : seam_gap;
 
     // get paths
     ExtrusionPaths paths;
     loop.clip_end(clip_length, &paths);
     if (paths.empty()) return "";
+
+    // A loop that never touches the belt (a floating inner fragment) gets a spur
+    // out to the belt contact and back, so the start and the stop are both there.
+    if (m_belt_inclined_gcode && m_belt_wall.valid && !paths.front().empty() &&
+        !BeltPrinter::is_safe_event(paths.front().first_point(), m_belt_wall)) {
+        Polyline spur = BeltPrinter::connect_end_to_safe(paths.front().first_point(), m_belt_wall);
+        if (spur.size() >= 2) {
+            Polyline lead = spur;
+            lead.reverse();
+            const ExtrusionPath &proto = paths.front();
+            paths.insert(paths.begin(), ExtrusionPath(std::move(lead), proto));
+            paths.push_back(ExtrusionPath(std::move(spur), paths.back()));
+        }
+    }
 
     // SoftFever: check loop lenght for small perimeter. 
     double small_peri_speed = -1;
@@ -5737,8 +5897,8 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
         }
     }
 
-    // BBS
-    if (m_wipe.enable && FILAMENT_CONFIG(wipe)) {
+    // BBS. Belt wipes are path stops on the wall, so a belt loop records none.
+    if (!m_belt_inclined_gcode && m_wipe.enable && FILAMENT_CONFIG(wipe)) {
         m_wipe.path = Polyline();
         for (ExtrusionPath &path : paths) {
             //BBS: Don't need to save duplicated point into wipe path
@@ -5751,7 +5911,7 @@ std::string GCode::extrude_loop(ExtrusionLoop loop, std::string description, dou
     }
 
     // make a little move inwards before leaving loop
-    if (m_config.wipe_on_loops.value && paths.back().role() == erExternalPerimeter && m_layer != NULL && m_config.wall_loops.value > 1 && paths.front().size() >= 2 && paths.back().polyline.points.size() >= 3) {
+    if (!m_belt_inclined_gcode && m_config.wipe_on_loops.value && paths.back().role() == erExternalPerimeter && m_layer != NULL && m_config.wall_loops.value > 1 && paths.front().size() >= 2 && paths.back().polyline.points.size() >= 3) {
         // detect angle between last and first segment
         // the side depends on the original winding order of the polygon (inwards for contours, outwards for holes)
         //FIXME improve the algorithm in case the loop is tiny.
@@ -5813,7 +5973,27 @@ std::string GCode::extrude_multi_path(ExtrusionMultiPath multipath, std::string 
     if (total_multipath_length > 0.0)
         m_multi_flow_segment_path_average_mm3_per_mm = weighted_sum_mm3_per_mm / total_multipath_length;
     // Orca: end of multipath average mm3_per_mm value calculation
-    
+
+    // Open Arachne pieces: extend an unsafe end with a connector that keeps that
+    // end's flow, so variable-width walls are not flattened.
+    if (m_belt_inclined_gcode && !multipath.paths.empty()) {
+        ensure_belt_wall();
+        if (m_belt_wall.valid && !multipath.paths.front().empty() &&
+            !BeltPrinter::is_safe_event(multipath.first_point(), m_belt_wall)) {
+            Polyline ext = BeltPrinter::connect_end_to_safe(multipath.first_point(), m_belt_wall);
+            if (ext.size() >= 2) {
+                ext.reverse();
+                multipath.paths.insert(multipath.paths.begin(), ExtrusionPath(std::move(ext), multipath.paths.front()));
+            }
+        }
+        if (m_belt_wall.valid && !multipath.paths.back().empty() &&
+            !BeltPrinter::is_safe_event(multipath.last_point(), m_belt_wall)) {
+            Polyline ext = BeltPrinter::connect_end_to_safe(multipath.last_point(), m_belt_wall);
+            if (ext.size() >= 2)
+                multipath.paths.push_back(ExtrusionPath(std::move(ext), multipath.paths.back()));
+        }
+    }
+
     for (ExtrusionPath path : multipath.paths){
         gcode += this->_extrude(path, description, speed);
         // Orca: Adaptive PA - dont adapt PA after the first pultipath extrusion is completed
@@ -5822,8 +6002,8 @@ std::string GCode::extrude_multi_path(ExtrusionMultiPath multipath, std::string 
         m_multi_flow_segment_path_pa_set = true;
     }
 
-    // BBS
-    if (m_wipe.enable && FILAMENT_CONFIG(wipe)) {
+    // BBS. No wipe on a belt: the wipe polyline is a path stop off the contact side.
+    if (!m_belt_inclined_gcode && m_wipe.enable && FILAMENT_CONFIG(wipe)) {
         m_wipe.path = Polyline();
         for (ExtrusionPath &path : multipath.paths) {
             //BBS: Don't need to save duplicated point into wipe path
@@ -5857,9 +6037,14 @@ std::string GCode::extrude_path(ExtrusionPath path, std::string description, dou
     // Orca: Reset average multipath flow as this is a single line, single extrude volumetric speed path
     m_multi_flow_segment_path_pa_set = false;
     m_multi_flow_segment_path_average_mm3_per_mm = 0;
+    if (m_belt_inclined_gcode && path.polyline.size() >= 2) {
+        ensure_belt_wall();
+        if (m_belt_wall.valid)
+            BeltPrinter::prepare_polyline_for_belt(path.polyline, m_belt_wall);
+    }
     //    description += ExtrusionEntity::role_to_string(path.role());
     std::string gcode = this->_extrude(path, description, speed);
-    if (m_wipe.enable && FILAMENT_CONFIG(wipe)) {
+    if (!m_belt_inclined_gcode && m_wipe.enable && FILAMENT_CONFIG(wipe)) {
         m_wipe.path = path.polyline;
         if (is_tree(this->config().support_type) && (path.role() == erSupportMaterial || path.role() == erSupportMaterialInterface || path.role() == erSupportTransition)) {
             if ((m_wipe.path.first_point() - m_wipe.path.last_point()).cast<double>().norm() > scale_(0.2)) {
@@ -6139,6 +6324,87 @@ double GCode::compute_belt_inclined_z(const Vec2d& point_gcode, double layer_z) 
     double tan_angle = std::tan(m_belt_angle_radians);
     double inclined_z = layer_z + point_gcode.y() * tan_angle;
     return inclined_z;
+}
+
+static void belt_note_outer_point(const ExtrusionPath &path, Point &lowest, bool &found)
+{
+    if (path.role() != erExternalPerimeter && path.role() != erOverhangPerimeter)
+        return;
+    for (const Point &pt : path.polyline.points) {
+        if (!found || pt.y() < lowest.y()) {
+            lowest = pt;
+            found  = true;
+        }
+    }
+}
+
+static void belt_walk_outer(const ExtrusionEntity *ee, Point &lowest, bool &found)
+{
+    if (ee == nullptr)
+        return;
+    if (const auto *col = dynamic_cast<const ExtrusionEntityCollection *>(ee)) {
+        for (const ExtrusionEntity *child : col->entities)
+            belt_walk_outer(child, lowest, found);
+        return;
+    }
+    if (const auto *loop = dynamic_cast<const ExtrusionLoop *>(ee)) {
+        for (const ExtrusionPath &path : loop->paths)
+            belt_note_outer_point(path, lowest, found);
+        return;
+    }
+    if (const auto *multi = dynamic_cast<const ExtrusionMultiPath *>(ee)) {
+        for (const ExtrusionPath &path : multi->paths)
+            belt_note_outer_point(path, lowest, found);
+        return;
+    }
+    if (const auto *path = dynamic_cast<const ExtrusionPath *>(ee))
+        belt_note_outer_point(*path, lowest, found);
+}
+
+void GCode::align_belt_layer_y()
+{
+    if (!m_belt_inclined_gcode || !m_belt_wall.valid)
+        return;
+    const Vec2d g = this->point_to_gcode(m_belt_wall.belt_anchor);
+    BeltTransform::set_y_mach_offset(m_belt_y_base);
+    const Vec3d mach = BeltTransform::inverse_transform_point(Vec3d(g.x(), g.y(), 0.0), m_writer.belt_angle());
+    BeltTransform::set_y_mach_offset(m_belt_y_base + belt_y_offset_to_cura(mach.y()));
+}
+
+void GCode::ensure_belt_wall()
+{
+    if (!m_belt_inclined_gcode || m_layer == nullptr)
+        return;
+    if (m_belt_wall.valid && m_belt_wall.source == m_layer)
+        return;
+    double nozzle = 0.4;
+    if (!m_config.nozzle_diameter.values.empty())
+        nozzle = m_config.nozzle_diameter.values.front();
+    double bead = m_config.outer_wall_line_width.get_abs_value(nozzle);
+    if (bead < 0.05)
+        bead = nozzle > 0.05 ? nozzle : 0.4;
+    m_belt_wall = BeltPrinter::make_wall_geometry(m_layer->lslices, bead);
+    m_belt_wall.source = m_layer;
+    // The anchor has to be a real outer-wall vertex. A synthesized centre-line
+    // point can sit just below the emitted wall and shift the gate's belt band.
+    if (m_belt_wall.valid) {
+        Point lowest = m_belt_wall.belt_anchor;
+        bool  found  = false;
+        for (const LayerRegion *region : m_layer->regions())
+            if (region != nullptr)
+                belt_walk_outer(&region->perimeters, lowest, found);
+        if (found)
+            m_belt_wall.belt_anchor = lowest;
+    }
+}
+
+double GCode::belt_segment_feedrate(const Point &a, const Point &b, double feed_mm_min, ExtrusionRole role) const
+{
+    if (!m_belt_inclined_gcode || !m_belt_wall.valid)
+        return feed_mm_min;
+    if (role != erExternalPerimeter && role != erOverhangPerimeter)
+        return feed_mm_min;
+    return BeltPrinter::belt_outer_feedrate(a, b, feed_mm_min, m_belt_wall);
 }
 
 std::string GCode::_extrude(const ExtrusionPath &path, std::string description, double speed)
@@ -6743,23 +7009,30 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
             if (!m_config.enable_arc_fitting || path.polyline.fitting_result.empty() || m_config.spiral_mode || sloped != nullptr || m_belt_inclined_gcode) {
                 double path_length = 0.;
                 double total_length = sloped == nullptr ? 0. : path.polyline.length() * SCALING_FACTOR;
+                double active_F = F;
                 for (const Line& line : path.polyline.lines()) {
                     std::string tempDescription = description;
                     const double line_length = line.length() * SCALING_FACTOR;
                     if (line_length < EPSILON)
                         continue;
                     path_length += line_length;
-                    // Belt shear flow correction: Y_mach = Y_gcode / cos²(belt_angle)
-                    // Machine Y is gantry travel along 45° incline, not perpendicular height.
-                    // Path = sqrt(dX² + (dY_mach)²) where dY_mach = dY_gcode / cos²(θ)
+                    // Belt extrusion length is the machine XY length the formatter emits
+                    // (hypot of the inverse-transformed segment). The old shear term
+                    // hypot(dx, dy/cos²θ) is sqrt(dx_mach² + 2 dy_mach²) at 45°.
                     double extrusion_length = line_length;
                     if (m_belt_inclined_gcode) {
-                        Vec2d delta = (line.b - line.a).cast<double>() * SCALING_FACTOR;
-                        double cos_a = std::cos(m_belt_angle_radians);
-                        double y_scale = 1.0 / (cos_a * cos_a); // 1/cos²(θ) = sec²(θ) = i_yy
-                        extrusion_length = std::sqrt(delta.x() * delta.x() + y_scale * y_scale * delta.y() * delta.y());
+                        Vec2d a_mm = this->point_to_gcode(line.a);
+                        Vec2d b_mm = this->point_to_gcode(line.b);
+                        extrusion_length = BeltPrinter::extrusion_length_for_move(true, a_mm, b_mm, m_writer.belt_angle());
                     }
                     auto dE = e_per_mm * extrusion_length;
+                    if (m_belt_inclined_gcode) {
+                        double seg_F = this->belt_segment_feedrate(line.a, line.b, F, path.role());
+                        if (std::abs(seg_F - active_F) > 1.0) {
+                            gcode += m_writer.set_speed(seg_F, "", comment);
+                            active_F = seg_F;
+                        }
+                    }
                     if (_needSAFC(path)) {
                         auto oldE = dE;
                         dE = m_small_area_infill_flow_compensator->modify_flow(line_length, dE, path.role());
@@ -6900,6 +7173,8 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
                 continue;
             path_length += line_length;
             double new_speed = pre_processed_point.speed * 60.0;
+            if (m_belt_inclined_gcode)
+                new_speed = this->belt_segment_feedrate(pre_processed_point.p, processed_point.p, new_speed, path.role());
             
             if ((std::abs(last_set_speed - new_speed) > EPSILON) || (std::abs(_mm3_per_mm - m_last_mm3_mm) > EPSILON)) {
                 // ORCA: Adaptive PA code segment when adjusting PA within the same feature
@@ -6954,15 +7229,10 @@ std::string GCode::_extrude(const ExtrusionPath &path, std::string description, 
                 gcode += m_writer.set_speed(F, "", comment);
                 last_set_speed = F;
             }
-            // Belt shear flow correction (variable-speed path)
-            // Y_mach = Y_gcode / cos²(θ), so machine path is longer than virtual path
+            // Belt extrusion length matches the emitted machine XY segment.
             double extrusion_length = line_length;
-            if (m_belt_inclined_gcode) {
-                Vec2d delta = p - prev;
-                double cos_a = std::cos(m_belt_angle_radians);
-                double y_scale = 1.0 / (cos_a * cos_a); // 1/cos²(θ) = sec²(θ) = i_yy
-                extrusion_length = std::sqrt(delta.x() * delta.x() + y_scale * y_scale * delta.y() * delta.y());
-            }
+            if (m_belt_inclined_gcode)
+                extrusion_length = BeltPrinter::extrusion_length_for_move(true, prev, p, m_writer.belt_angle());
             auto dE = e_per_mm * extrusion_length;
             if (_needSAFC(path)) {
                 auto oldE = dE;
@@ -7081,6 +7351,11 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
         This is expressed in print coordinates, so it will need to be translated by
         this->origin in order to get G-code coordinates.  */
     Polyline travel { this->last_pos(), point };
+    if (m_belt_inclined_gcode) {
+        ensure_belt_wall();
+        if (m_belt_wall.valid)
+            travel = BeltPrinter::route_travel(this->last_pos(), point, m_belt_wall);
+    }
 
     // check whether a straight travel move would need retraction
     LiftType lift_type = LiftType::SpiralLift;
@@ -7133,8 +7408,11 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
     }
 
     // if a retraction would be needed, try to use reduce_crossing_wall to plan a
-    // multi-hop travel path inside the configuration space
-    if (m_config.reduce_crossing_wall
+    // multi-hop travel path inside the configuration space.
+    // Belt travels are already routed on the contact side or inside the part;
+    // avoid-crossing would drop waypoints on the outer wall.
+    if (!m_belt_inclined_gcode
+        && m_config.reduce_crossing_wall
         && !m_avoid_crossing_perimeters.disabled_once()
         && m_writer.is_current_position_clear())
         //BBS: don't generate detour travel paths when current position is unclea
@@ -7160,7 +7438,7 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
         // When "Wipe while retracting" is enabled, then extruder moves to another position, and travel from this position can cross perimeters.
         // Because of it, it is necessary to call avoid crossing perimeters again with new starting point after calling retraction()
         // FIXME Lukas H.: Try to predict if this second calling of avoid crossing perimeters will be needed or not. It could save computations.
-        if (last_post_before_retract != this->last_pos() && m_config.reduce_crossing_wall) {
+        if (!m_belt_inclined_gcode && last_post_before_retract != this->last_pos() && m_config.reduce_crossing_wall) {
             // If in the previous call of m_avoid_crossing_perimeters.travel_to was use_external_mp_once set to true restore this value for next call.
             if (used_external_mp_once)
                 m_avoid_crossing_perimeters.use_external_mp_once();

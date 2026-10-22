@@ -2,6 +2,7 @@
 
 #include "GCodeReader.hpp"
 
+#include <cmath>
 #include <iomanip>
 /*
 #include <memory.h>
@@ -301,6 +302,14 @@ void FanMover::_process_gcode_line(GCodeReader& reader, const GCodeReader::GCode
         case 'M':
         {
             fan_speed = get_fan_speed(line.raw(), m_writer.config.gcode_flavor);
+            // Belt firmware addresses the auxiliary fan as M106 P1. That P index
+            // is otherwise the part-cooling fan, and FanMover drops or rewrites
+            // the line so the body only keeps the startup P1 S0.
+            if (fan_speed >= 0 && m_writer.is_belt()) {
+                const float p_idx = get_axis_value(line.raw(), 'P');
+                if (!std::isnan(p_idx) && p_idx == 1.f)
+                    fan_speed = -1;
+            }
             if (fan_speed >= 0) {
                 const auto fan_baseline = 255.0;
                 fan_speed = 100 * fan_speed / fan_baseline;

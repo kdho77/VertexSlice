@@ -103,8 +103,14 @@ bool Fill::use_bridge_flow(const InfillPattern type)
 
 Polylines Fill::fill_surface(const Surface *surface, const FillParams &params)
 {
-    // Perform offset.
-    Slic3r::ExPolygons expp = offset_ex(surface->expolygon, float(scale_(this->overlap - 0.5 * this->spacing)));
+    // Sparse infill meets the wall bead. The clip is half the bead inside the
+    // fill surface, and that surface is already the inner-wall centerline
+    // minus half the wall bead plus infill/wall overlap. Half the pattern
+    // pitch would leave the wall-to-gyroid channel open.
+    const double half = (!params.full_infill() && params.flow.width() > 0.)
+        ? 0.5 * params.flow.width()
+        : 0.5 * this->spacing;
+    Slic3r::ExPolygons expp = offset_ex(surface->expolygon, float(scale_(this->overlap - half)));
     // Create the infills for each of the regions.
     Polylines polylines_out;
     for (size_t i = 0; i < expp.size(); ++ i)
@@ -119,8 +125,10 @@ Polylines Fill::fill_surface(const Surface *surface, const FillParams &params)
 
 ThickPolylines Fill::fill_surface_arachne(const Surface* surface, const FillParams& params)
 {
-    // Perform offset.
-    Slic3r::ExPolygons expp = offset_ex(surface->expolygon, float(scale_(this->overlap - 0.5 * this->spacing)));
+    const double half = (!params.full_infill() && params.flow.width() > 0.)
+        ? 0.5 * params.flow.width()
+        : 0.5 * this->spacing;
+    Slic3r::ExPolygons expp = offset_ex(surface->expolygon, float(scale_(this->overlap - half)));
     // Create the infills for each of the regions.
     ThickPolylines thick_polylines_out;
     for (ExPolygon& expoly : expp)
@@ -184,6 +192,10 @@ void Fill::fill_surface_extrusion(const Surface* surface, const FillParams& para
                 eec->entities[i]->set_reverse();
         }
 
+        // The wall-to-gyroid channel is closed by the half-bead clip above and
+        // by infill/wall overlap reaching the inner wall bead. A closed sparse
+        // loop on that boundary is not extruded.
+
         // Orca: run gap fill
         this->_create_gap_fill(surface, params, eec);
     }
@@ -197,6 +209,8 @@ void Fill::_create_gap_fill(const Surface* surface, const FillParams& params, Ex
     if (this->print_object_config == nullptr) return;
 
     // Orca: Enable gap fill as per the user preference. Return early if gap fill is to not be applied.
+    // The wall-to-gyroid channel is closed by extending the sparse infill to the
+    // inner wall, not by gap fill.
     if ((this->print_object_config->gap_fill_target.value == gftNowhere) ||
         (surface->surface_type == stInternalSolid && this->print_object_config->gap_fill_target.value != gftEverywhere))
         return;
@@ -208,9 +222,11 @@ void Fill::_create_gap_fill(const Surface* surface, const FillParams& params, Ex
     if (!this->no_overlap_expolygons.empty())
         gapfill_areas = intersection_ex(gapfill_areas, this->no_overlap_expolygons);
 
+    double min = 0.2 * new_flow.scaled_spacing() * (1 - INSET_OVERLAP_TOLERANCE);
+    double max = 2. * new_flow.scaled_spacing();
+    double min_len = (params.config != nullptr) ? scale_(params.config->filter_out_gap_fill.value) : scale_(2.0);
+
     if (gapfill_areas.size() > 0 && params.density >= 1) {
-        double min = 0.2 * new_flow.scaled_spacing() * (1 - INSET_OVERLAP_TOLERANCE);
-        double max = 2. * new_flow.scaled_spacing();
         ExPolygons gaps_ex = diff_ex(
                                      opening_ex(gapfill_areas, float(min / 2.)),
                                      offset2_ex(gapfill_areas, -float(max / 2.), float(max / 2. + ClipperSafetyOffset)));
@@ -235,13 +251,12 @@ void Fill::_create_gap_fill(const Surface* surface, const FillParams& params, Ex
         if (!polylines.empty() && !is_bridge(params.extrusion_role)) {
             polylines.erase(std::remove_if(polylines.begin(), polylines.end(),
                                            [&](const ThickPolyline& p) {
-                return p.length() < scale_(params.config->filter_out_gap_fill.value);
+                return p.length() < min_len;
             }), polylines.end());
 
             ExtrusionEntityCollection gap_fill;
             variable_width(polylines, erGapFill, params.flow, gap_fill.entities);
-            auto gap = std::move(gap_fill.entities);
-            out->append(gap);
+            out->append(std::move(gap_fill.entities));
         }
     }
 }

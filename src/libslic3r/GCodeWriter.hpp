@@ -112,7 +112,7 @@ public:
     // Keeping the state is left to the CoolingBuffer, which runs asynchronously on another thread.
     std::string set_fan(unsigned int speed) const;
     //BBS: set additional fan speed for BBS machine only
-    static std::string set_additional_fan(unsigned int speed);
+    static std::string set_additional_fan(unsigned int speed, bool belt = false);
     static std::string set_exhaust_fan(int speed,bool add_eol);
     //BBS
     void set_object_start_str(std::string start_string) { m_gcode_label_objects_start = start_string; }
@@ -354,6 +354,10 @@ public:
         this->buf_end = buf + buflen;
         this->ptr_err.ptr = this->buf + 2;
     }
+
+    // Marlin applies M204 T to G0 and M204 P to G1. Belt travels are G0 so
+    // travel_acceleration is the accel of the move.
+    void set_g0() { this->buf[1] = '0'; }
 
     GCodeG1Formatter(const GCodeG1Formatter&) = delete;
     GCodeG1Formatter& operator=(const GCodeG1Formatter&) = delete;

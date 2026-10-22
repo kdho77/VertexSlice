@@ -1,5 +1,6 @@
 #include "../GCode.hpp"
 #include "CoolingBuffer.hpp"
+#include "BeltPrinter/BeltOnlyInvariant.hpp"
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/log/trivial.hpp>
@@ -429,7 +430,10 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
             // ORCA: Dont slowdown external perimeters for layer time feature
             // use the adjustment pointer to ensure the value for the current extruder (filament) is used.
             bool adjust_external = true;
-            if(adjustment->dont_slow_down_outer_wall && external_perimeter) adjust_external = false;
+            if (m_config.printer_is_belt.value)
+                adjust_external = true;
+            else if (adjustment->dont_slow_down_outer_wall && external_perimeter)
+                adjust_external = false;
             
             // ORCA: Dont slowdown external perimeters for layer time works by not marking the external perimeter as adjustable, 
             // hence the slowdown algorithm ignores it.
@@ -445,6 +449,14 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
                 float dif[4];
                 for (size_t i = 0; i < 4; ++ i)
                     dif[i] = new_pos[i] - current_pos[i];
+                const bool extrusion_move = std::abs(dif[3]) > 0.f
+                    && (line.type & (CoolingLine::TYPE_G1 | CoolingLine::TYPE_G2 | CoolingLine::TYPE_G3));
+                if (m_config.printer_is_belt.value && extrusion_move && ! wipe && adjust_external
+                    && new_pos[4] > 0.f && (line.type & CoolingLine::TYPE_ADJUSTABLE) == 0) {
+                    // Belt G1 paths often omit ;_EXTRUDE_SET_SPEED. feedrate is still 0 here;
+                    // the parsed F word lives in new_pos until it is copied below.
+                    line.type |= CoolingLine::TYPE_ADJUSTABLE;
+                }
                 float dxy2 = 0;
                 //BBS: support to calculate length of arc
                 if (line.type & CoolingLine::TYPE_G2 || line.type & CoolingLine::TYPE_G3) {
@@ -458,7 +470,12 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
                     dxy2 = dif[0] * dif[0] + dif[1] * dif[1];
                 }
                 float dxyz2 = dxy2 + dif[2] * dif[2];
-                if (dxyz2 > 0.f) {
+                if (m_config.printer_is_belt.value && dxy2 > 0.f) {
+                    // Belt: layer-time uses machine XY length; inclined Z is not print-axis travel.
+                    const Vec2d from_mm(current_pos[0], current_pos[1]);
+                    const Vec2d to_mm(new_pos[0], new_pos[1]);
+                    line.length = float(BeltPrinter::machine_xy_length(from_mm, to_mm, m_config.belt_angle.value));
+                } else if (dxyz2 > 0.f) {
                     // Movement in xyz, calculate time from the xyz Euclidian distance.
                     line.length = sqrt(dxyz2);
                 } else if (std::abs(dif[3]) > 0.f) {
@@ -679,7 +696,17 @@ float CoolingBuffer::calculate_layer_slowdown(std::vector<PerExtruderAdjustments
             for (auto it = cur_begin; it != by_slowdown_time.end(); ++ it)
                 max_time += (*it)->time_maximum;
             if (max_time > slow_down_layer_time) {
-                extruder_range_slow_down_non_proportional(cur_begin, by_slowdown_time.end(), slow_down_layer_time - total);
+                if (m_config.printer_is_belt.value) {
+                    // Scale every feature by one ratio, down to slow_down_min_speed.
+                    // The tiered slowdown leaves inner walls at 30–42 mm/s and
+                    // stops on the 20 mm/s belt-contact floor while the layer
+                    // is still under slow_down_layer_time.
+                    const float factor = slow_down_layer_time / std::max(total, 1e-3f);
+                    for (auto it = cur_begin; it != by_slowdown_time.end(); ++it)
+                        (*it)->slow_down_proportional(factor, true);
+                } else {
+                    extruder_range_slow_down_non_proportional(cur_begin, by_slowdown_time.end(), slow_down_layer_time - total);
+                }
             } else {
                 // Slow down to maximum possible.
                 for (auto it = cur_begin; it != by_slowdown_time.end(); ++ it)
@@ -689,7 +716,10 @@ float CoolingBuffer::calculate_layer_slowdown(std::vector<PerExtruderAdjustments
         elapsed_time_total0 += adj.elapsed_time_total();
     }
 
-    return elapsed_time_total0;
+    float layer_time_after_slowdown = 0.f;
+    for (const PerExtruderAdjustments &adj : per_extruder_adjustments)
+        layer_time_after_slowdown += adj.time_total;
+    return layer_time_after_slowdown;
 }
 
 // Apply slow down over G-code lines stored in per_extruder_adjustments, enable fan if needed.
@@ -812,7 +842,7 @@ std::string CoolingBuffer::apply_layer_cooldown(
         if (additional_fan_speed_new != m_additional_fan_speed) {
             m_additional_fan_speed = additional_fan_speed_new;
             if (immediately_apply && m_config.auxiliary_fan.value)
-                new_gcode += GCodeWriter::set_additional_fan(m_additional_fan_speed);
+                new_gcode += GCodeWriter::set_additional_fan(m_additional_fan_speed, m_config.printer_is_belt.value);
         }
     };
 
@@ -891,7 +921,7 @@ std::string CoolingBuffer::apply_layer_cooldown(
                 need_set_fan = true;
             }
             if (m_additional_fan_speed != -1 && m_config.auxiliary_fan.value)
-                new_gcode += GCodeWriter::set_additional_fan(m_additional_fan_speed);
+                new_gcode += GCodeWriter::set_additional_fan(m_additional_fan_speed, m_config.printer_is_belt.value);
         }
         else if (line->type & CoolingLine::TYPE_EXTRUDE_END) {
             // Just remove this comment.

@@ -801,8 +801,10 @@ std::string GCodeWriter::travel_to_xyz(const Vec3d &point, const std::string &co
         w.emit_comment(GCodeWriter::full_gcode_comment, comment);
         out_string = w.string() + _travel_to_z(point_on_plate.z(), comment);
     } else {
-        // ORCA_BELT: Belt printers always emit XYZ together.
+        // ORCA_BELT: Belt printers always emit XYZ together, as G0 so M204 T applies.
         GCodeG1Formatter w(m_is_belt, m_belt_angle);
+        if (m_is_belt)
+            w.set_g0();
         // if (m_belt_profile) w.set_z_offset(m_y_offset);
         w.emit_xyz(point_on_plate);
         w.emit_f(this->config.travel_speed.value * 60.0);
@@ -829,6 +831,7 @@ std::string GCodeWriter::belt_set_layer_z(double z_nominal, const std::string &c
                                  : this->config.travel_speed.value;
 
     GCodeG1Formatter w(m_is_belt, m_belt_angle);
+    w.set_g0();
     w.emit_z(z_nominal);  // Direct Z_mach, no inverse transform needed
     w.emit_f(speed * 60.0);
     w.emit_comment(GCodeWriter::full_gcode_comment, comment);
@@ -858,6 +861,7 @@ std::string GCodeWriter::belt_travel_to_xy(const Vec3d &point, const std::string
     Vec3d point_on_plate = { dest_point(0) - m_x_offset, dest_point(1) - m_y_offset, dest_point(2) };
 
     GCodeG1Formatter w(m_is_belt, m_belt_angle);
+    w.set_g0();
     w.emit_xy(point_on_plate);  // Belt emit_xy: inverse transform → X, Y_mach only
     w.emit_f(travel_speed * 60.0);
     w.emit_comment(GCodeWriter::full_gcode_comment, comment);
@@ -1210,11 +1214,14 @@ std::string GCodeWriter::set_fan(unsigned int speed) const
 }
 
 //BBS: set additional fan speed for BBS machine only
-std::string GCodeWriter::set_additional_fan(unsigned int speed)
+std::string GCodeWriter::set_additional_fan(unsigned int speed, bool belt)
 {
     std::ostringstream gcode;
 
-    gcode << "M106 " << "P2 " << "S" << (int)(255.0 * speed / 100.0);
+    // IdeaFormer belt firmware (and the Cura reference) addresses the auxiliary
+    // fan as P1. Bambu-style machines keep P2.
+    const int pwm = (int)std::lround(255.0 * speed / 100.0);
+    gcode << "M106 " << (belt ? "P1 " : "P2 ") << "S" << pwm;
     if (GCodeWriter::full_gcode_comment) {
         if (speed == 0)
             gcode << " ; disable additional fan ";

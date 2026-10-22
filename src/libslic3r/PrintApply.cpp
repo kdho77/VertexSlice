@@ -1,6 +1,7 @@
 #include "ClipperUtils.hpp"
 #include "Model.hpp"
 #include "Print.hpp"
+#include "BeltPrinter/BeltPrintOrientation.hpp"
 
 #include <boost/log/trivial.hpp>
 #include <cfloat>
@@ -1509,6 +1510,8 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         // Walk over all new model objects and check, whether there are matching PrintObjects.
         for (ModelObject *model_object : m_model.objects) {
             ModelObjectStatus &model_object_status = const_cast<ModelObjectStatus&>(model_object_status_db.reuse(*model_object));
+            if (this->config().printer_structure.value == psBelt || this->config().printer_is_belt.value)
+                apply_belt_feed_orientation(*model_object);
             // Orca: Updated for XYZ filament shrink compensation
             model_object_status.print_instances = print_objects_from_model_object(*model_object, this->shrinkage_compensation());
             std::vector<const PrintObjectStatus*> old;

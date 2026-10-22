@@ -4,6 +4,7 @@
 #include <wx/panel.h>
 #include <wx/string.h>
 #include <wx/timer.h>
+#include <cstdint>
 
 // The WebKit-subprocess isolator in PrinterWebView.cpp only runs on Linux
 // (Windows uses Edge WebView2 directly, macOS uses WKWebView), so the
