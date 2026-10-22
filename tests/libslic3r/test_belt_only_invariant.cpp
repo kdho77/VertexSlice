@@ -378,8 +378,16 @@ TEST_CASE("ApexLight and ApexCore belt process presets match TPU expert infill k
         REQUIRE(fixture_contains(file, "\"filter_out_gap_fill\": \"9999\""));
         REQUIRE(fixture_contains(file, "\"travel_speed\": \"212\""));
         REQUIRE(fixture_contains(file, "\"wall_loops\": \"2\""));
-        REQUIRE(fixture_contains(file, "\"wall_generator\": \"arachne\""));
+        if (std::string(file).find("ApexCore") != std::string::npos)
+            REQUIRE(fixture_contains(file, "\"wall_generator\": \"arachne\""));
     }
     REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"layer_height\": \"0.46\""));
     REQUIRE(fixture_contains("ApexCore_belt_process.json", "\"layer_height\": \"0.42\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"wall_generator\": \"classic\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"outer_wall_line_width\": \"1.0\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"slow_down_layer_time\": \"8\""));
+    REQUIRE(fixture_contains("ApexLight_belt_process.json", "\"wipe_on_loops\": \"0\""));
+    REQUIRE(fixture_contains("ApexLight_belt_filament.json", "\"fan_max_speed\": [\"35\"]"));
+    REQUIRE(fixture_contains("ApexLight_belt_filament.json", "\"additional_cooling_fan_speed\": [\"18\"]"));
+    REQUIRE(fixture_contains("ApexLight_belt_filament.json", "\"pressure_advance\": [\"0.05\"]"));
 }
