@@ -25,7 +25,6 @@ os.environ["LD_LIBRARY_PATH"] = lib + (":" + os.environ["LD_LIBRARY_PATH"] if os
 from slice_g2b_heelmod import (  # noqa: E402
     Y_MACH_OFFSET_LIGHT,
     assert_g2b_identity,
-    feature_flow,
     flatten,
     overlay_g2b,
     slice_model,
