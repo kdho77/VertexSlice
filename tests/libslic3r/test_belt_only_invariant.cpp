@@ -228,7 +228,7 @@ TEST_CASE("Toe-first feeds the wide forefoot before the narrow end", "[BeltOnly]
         {98.3, 76.8}, {139.3, 84.7}, {166.6, 91.4}, {180.2, 92.3}, {193.9, 91.3},
         {207.5, 88.0}, {221.2, 82.6}, {234.8, 75.4}, {248.5, 66.0}, {262.2, 52.4},
     };
-    auto max_width = [](const BeltPartPlacement &place, bool first_band) {
+    auto max_width = [&](const BeltPartPlacement &place, bool first_band) {
         double y_min = std::numeric_limits<double>::infinity();
         double y_max = -y_min;
         double feed[15];
