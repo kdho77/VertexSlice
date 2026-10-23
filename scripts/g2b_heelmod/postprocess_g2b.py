@@ -22,6 +22,15 @@ from pathlib import Path
 
 WORD = re.compile(r"([XYZEF])([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)")
 WALLS = {"Outer wall", "Inner wall", "Overhang wall"}
+INFILL = {
+    "Sparse infill",
+    "Internal solid infill",
+    "Gap infill",
+    "Top surface",
+    "Bottom surface",
+    "Bridge",
+    "Internal Bridge",
+}
 RETRACT = 0.5
 PRIME = 0.45
 LIFT = 0.4
@@ -125,9 +134,125 @@ def _belt_split(segments: list[dict]) -> list[dict]:
     return [b] + segments[best_i + 1 :] + segments[:best_i] + [a]
 
 
-def _emit_approach(out: list[str], x: float, y: float, z: float, dx: float, dy: float, dz: float, wall: bool) -> None:
+def _synth_move(x1: float, y1: float, ee: float, ff: str | None) -> str:
+    parts = ["G1", f"X{_fmt(x1, 3)}", f"Y{_fmt(y1, 3)}", f"E{ee:.5f}"]
+    if ff:
+        parts.append(f"F{float(ff):.0f}")
+    return " ".join(parts) + "\n"
+
+
+def _rev_seg(s: dict) -> dict:
+    r = dict(s)
+    r["x0"], r["x1"] = s["x1"], s["x0"]
+    r["y0"], r["y1"] = s["y1"], s["y0"]
+    r["raw"] = _synth_move(r["x1"], r["y1"], s["e"], s.get("f"))
+    r["comments"] = list(s.get("comments") or [])
+    return r
+
+
+def _partial(s: dict, t0: float, t1: float) -> dict:
+    def pt(t: float) -> tuple[float, float]:
+        return s["x0"] + (s["x1"] - s["x0"]) * t, s["y0"] + (s["y1"] - s["y0"]) * t
+
+    x0, y0 = pt(t0)
+    x1, y1 = pt(t1)
+    ee = s["e"] * (t1 - t0)
+    r = dict(s)
+    r.update(x0=x0, y0=y0, x1=x1, y1=y1, e=ee, raw=_synth_move(x1, y1, ee, s.get("f")))
+    r["comments"] = list(s.get("comments") or []) if t0 <= 1e-6 else []
+    return r
+
+
+def _path_closed(segs: list[dict]) -> bool:
+    return math.hypot(segs[-1]["x1"] - segs[0]["x0"], segs[-1]["y1"] - segs[0]["y0"]) <= 0.8
+
+
+def _hit_anchor(segs: list[dict], anchor_x: float) -> tuple[float, int, float] | None:
+    """Belt-side crossing of x=anchor_x. Returns (y, segment index, fraction)."""
+    ymin = min(min(s["y0"], s["y1"]) for s in segs)
+    best = None
+    for i, s in enumerate(segs):
+        x0, x1 = s["x0"], s["x1"]
+        if abs(x1 - x0) < 1e-9:
+            continue
+        t = (anchor_x - x0) / (x1 - x0)
+        if t < -1e-4 or t > 1 + 1e-4:
+            continue
+        t = min(1.0, max(0.0, t))
+        y = s["y0"] + (s["y1"] - s["y0"]) * t
+        # Only the belt contact. Loops up the heel have their own low point
+        # and must not be restarted on the outer seam's X.
+        if y > 2.5 or y > ymin + 0.75:
+            continue
+        if best is None or y < best[0] - 1e-6:
+            best = (y, i, t)
+    return best
+
+
+def _open_chains(segs: list[dict], i: int, t: float) -> list[list[dict]]:
+    """Split an open wall at the belt anchor: back to the original start, then on to the end."""
+    s = segs[i]
+    first: list[dict] = []
+    if t > 1e-4:
+        first.append(_rev_seg(_partial(s, 0.0, t)))
+    for s2 in reversed(segs[:i]):
+        first.append(_rev_seg(s2))
+    second: list[dict] = []
+    if t < 1 - 1e-4:
+        second.append(_partial(s, t, 1.0))
+    second.extend(segs[i + 1 :])
+    return [c for c in (first, second) if c]
+
+
+def _rotate_at(segs: list[dict], i: int, t: float) -> list[dict]:
+    s = segs[i]
+    out: list[dict] = []
+    if t < 1 - 1e-4:
+        out.append(_partial(s, t, 1.0))
+    out.extend(segs[i + 1 :])
+    out.extend(segs[:i])
+    if t > 1e-4:
+        out.append(_partial(s, 0.0, t))
+    return out or segs
+
+
+def _wall_chains(segs: list[dict], kind: str, anchor_x: float | None, anchor: bool) -> tuple[list[list[dict]], float | None]:
+    """Outer walls start at their belt-edge midpoint. Other walls start at that same X.
+
+    An open wall that crosses the anchor in its middle is extruded as two runs,
+    both beginning on the belt. That is the extra seam the G2b toe file inserts.
+    """
+    if not segs:
+        return [segs], anchor_x
+    if not anchor or kind in ("Outer wall", "Overhang wall"):
+        segs = _belt_split(segs)
+        new_anchor = segs[0]["x0"] if kind in ("Outer wall", "Overhang wall") else anchor_x
+        return [segs], new_anchor
+    if anchor_x is None:
+        return [segs], anchor_x
+    hit = _hit_anchor(segs, anchor_x)
+    if hit is None:
+        return [segs], anchor_x
+    _, i, t = hit
+    if _path_closed(segs):
+        return [_rotate_at(segs, i, t)], anchor_x
+    total = sum(math.hypot(s["x1"] - s["x0"], s["y1"] - s["y0"]) for s in segs) or 1.0
+    along = 0.0
+    for j, s in enumerate(segs):
+        length = math.hypot(s["x1"] - s["x0"], s["y1"] - s["y0"])
+        if j < i:
+            along += length
+        else:
+            along += length * t
+            break
+    if along < 1.0 or total - along < 1.0:
+        return [segs], anchor_x
+    return _open_chains(segs, i, t), anchor_x
+
+
+def _emit_approach(out: list[str], x: float, y: float, z: float, dx: float, dy: float, dz: float, retract: bool) -> None:
     out.append(";C seam travel: lift + direct\n")
-    if wall:
+    if retract:
         out.append(f"G1 E-{RETRACT:.1f} F{RETRACT_F:.0f}\n")
     out.append(f"G1 Y{_fmt(y + LIFT, 3)} F{TRAVEL_F:.0f} ;lift\n")
     travel = f"G1 X{_fmt(dx, 3)} Y{_fmt(dy + LIFT, 3)}"
@@ -136,17 +261,24 @@ def _emit_approach(out: list[str], x: float, y: float, z: float, dx: float, dy: 
     travel += f" F{TRAVEL_F:.0f} ;seam travel\n"
     out.append(travel)
     out.append(f"G1 Y{_fmt(dy, 3)} F{TRAVEL_F:.0f} ;lower\n")
-    if wall:
+    if retract:
         out.append(f"G1 E{PRIME:.2f} F{RETRACT_F:.0f}\n")
     out.append(f"G1 F{TRAVEL_F:.0f}\n")
 
 
-def seam(text: str) -> tuple[str, dict]:
+def seam(
+    text: str,
+    *,
+    retract_min_mm: float | None = None,
+    skip_infill_travel: bool = False,
+    g2b_anchor: bool = False,
+) -> tuple[str, dict]:
     lines = text.splitlines(keepends=True)
     out: list[str] = []
     x = y = z = None
     f = None
     typ = ""
+    anchor_x: float | None = None
     i = 0
     n = len(lines)
     counts = {"seam_travel": 0, "retract": 0, "prime": 0, "wipe": 0, "seam_start": 0}
@@ -198,6 +330,7 @@ def seam(text: str) -> tuple[str, dict]:
                     continue
                 break
             if j < n and extrusion(lines[j]) and x is not None:
+                src_type = typ
                 dx, dy, dz = x, y, z
                 feeds: list[str] = []
                 for tl in gap:
@@ -222,8 +355,8 @@ def seam(text: str) -> tuple[str, dict]:
                 while k < n and not travelish(lines[k]) and not lines[k].startswith(";LAYER_CHANGE"):
                     lj = lines[k]
                     if lj.startswith(";TYPE:"):
-                        if segs:
-                            break
+                        # Outer and overhang share one perimeter. A type comment
+                        # is not a new path; splitting there misses the belt edge.
                         dest_type = lj[6:].strip()
                         comments.append(lj if lj.endswith("\n") else lj + "\n")
                         k += 1
@@ -257,47 +390,81 @@ def seam(text: str) -> tuple[str, dict]:
                         k += 1
                         continue
                     break
+                # G2b leaves infill-to-infill travels as plain moves. Seaming
+                # them is what produced 1752 travels / 1134 retracts against
+                # the reference file's 1368 / 682.
+                if skip_infill_travel and src_type in INFILL and dest_type in INFILL:
+                    for ln in lines[i:k]:
+                        out.append(ln if ln.endswith("\n") else ln + "\n")
+                        if ln.startswith(";TYPE:"):
+                            typ = ln[6:].strip()
+                        if _is_g01(ln):
+                            w = _words(ln)
+                            if "X" in w:
+                                x = float(w["X"])
+                            if "Y" in w:
+                                y = float(w["Y"])
+                            if "Z" in w:
+                                z = float(w["Z"])
+                            if "F" in w:
+                                f = float(w["F"])
+                    i = k
+                    continue
                 wall = dest_type in WALLS
                 if wall and segs:
-                    segs = _belt_split(segs)
-                    dx, dy = segs[0]["x0"], segs[0]["y0"]
-                for tl in gap:
-                    if not travelish(tl) and not (_is_g01(tl) and not extrusion(tl)):
-                        out.append(tl)
-                        if tl.startswith(";TYPE:"):
-                            typ = tl[6:].strip()
-                _emit_approach(out, x, y, z if z is not None else 0.0, dx, dy, dz if dz is not None else 0.0, wall)
-                counts["seam_travel"] += 1
-                if wall:
-                    counts["retract"] += 1
-                    counts["prime"] += 1
-                out.extend(feeds)
-                x, y, z = dx, dy, dz
-                if wall and segs:
-                    out.append(";C_SEAM_START\n")
-                    counts["seam_start"] += 1
-                for s in segs:
-                    out.extend(s["comments"])
-                    out.append(s["raw"] if s["raw"].endswith("\n") else s["raw"] + "\n")
-                    x, y = s["x1"], s["y1"]
-                if wall and segs:
-                    if dest_type in ("Outer wall", "Overhang wall"):
-                        last = segs[-1]
-                        span = math.hypot(last["x1"] - last["x0"], last["y1"] - last["y0"])
-                        if span > 1e-6:
-                            ux = (last["x1"] - last["x0"]) / span
-                            uy = (last["y1"] - last["y0"]) / span
-                            feed = float(last["f"]) if last["f"] else (f or 1560.0)
-                            wx = last["x1"] + ux * WIPE_MM
-                            wy = last["y1"] + uy * WIPE_MM
-                            out.append(";WIPE_START\n")
-                            out.append(f"G1 X{_fmt(wx, 3)} Y{_fmt(wy, 3)} F{feed * WIPE_FRAC:.0f} ;glide\n")
-                            out.append(";WIPE_END\n")
-                            counts["wipe"] += 1
-                            x, y = wx, wy
-                    out.append(";C_SEAM_END\n")
+                    chains, anchor_x = _wall_chains(segs, dest_type, anchor_x, g2b_anchor)
                 else:
-                    out.extend(comments)
+                    chains = [segs]
+                for ci, chain in enumerate(chains):
+                    if not chain:
+                        continue
+                    dx, dy = chain[0]["x0"], chain[0]["y0"]
+                    travel_dist = math.hypot(dx - x, dy - y)
+                    # Retract only on wall approaches of at least retraction_minimum_travel (2 mm).
+                    do_retract = wall and (retract_min_mm is None or travel_dist + 1e-6 >= retract_min_mm)
+                    if ci == 0:
+                        for tl in gap:
+                            if not travelish(tl) and not (_is_g01(tl) and not extrusion(tl)):
+                                out.append(tl)
+                                if tl.startswith(";TYPE:"):
+                                    typ = tl[6:].strip()
+                    use_dz = dz if ci == 0 else z
+                    _emit_approach(
+                        out, x, y, z if z is not None else 0.0, dx, dy, use_dz if use_dz is not None else 0.0, do_retract
+                    )
+                    counts["seam_travel"] += 1
+                    if do_retract:
+                        counts["retract"] += 1
+                        counts["prime"] += 1
+                    if ci == 0:
+                        out.extend(feeds)
+                    x, y, z = dx, dy, dz
+                    if wall:
+                        out.append(";C_SEAM_START\n")
+                        counts["seam_start"] += 1
+                    for s in chain:
+                        out.extend(s["comments"])
+                        out.append(s["raw"] if s["raw"].endswith("\n") else s["raw"] + "\n")
+                        x, y = s["x1"], s["y1"]
+                    last_chain = ci == len(chains) - 1
+                    if wall:
+                        if last_chain and dest_type in ("Outer wall", "Overhang wall"):
+                            last = chain[-1]
+                            span = math.hypot(last["x1"] - last["x0"], last["y1"] - last["y0"])
+                            if span > 1e-6:
+                                ux = (last["x1"] - last["x0"]) / span
+                                uy = (last["y1"] - last["y0"]) / span
+                                feed = float(last["f"]) if last["f"] else (f or 1560.0)
+                                wx = last["x1"] + ux * WIPE_MM
+                                wy = last["y1"] + uy * WIPE_MM
+                                out.append(";WIPE_START\n")
+                                out.append(f"G1 X{_fmt(wx, 3)} Y{_fmt(wy, 3)} F{feed * WIPE_FRAC:.0f} ;glide\n")
+                                out.append(";WIPE_END\n")
+                                counts["wipe"] += 1
+                                x, y = wx, wy
+                        out.append(";C_SEAM_END\n")
+                    elif last_chain:
+                        out.extend(comments)
                 z = cz
                 i = k
                 continue
@@ -519,6 +686,13 @@ def main() -> None:
     elif cmd == "coupon":
         Path(sys.argv[3]).write_text(coupon(text, int(sys.argv[4])))
         print("coupon from", sys.argv[4])
+    elif cmd == "match":
+        # G2b toe seam, without the heelmod min-time pass.
+        out, n = efix(text)
+        out, counts = seam(out, retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
+        Path(sys.argv[3]).write_text(out)
+        print("efix", n)
+        print("seam", counts)
     elif cmd == "all":
         out, n = efix(text)
         out, counts = seam(out)
