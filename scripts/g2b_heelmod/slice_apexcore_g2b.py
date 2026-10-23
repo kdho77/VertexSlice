@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""ApexCore file with the G2b CONFIG_BLOCK and ApexCore filament swapped in.
+"""LOCKED ApexCore 95A profile. No changes without Kendon's approval.
 
-No heelmod: no layer-range flow, min_bead, ensure_all, min-time, and no
-global infill_wall_overlap or minimum_sparse_infill_area edits. Layer height
-stays at the G2b value, 0.46 mm. The only ApexCore additions are nozzle
-temperature, part/aux fan, the wall/sparse/gap flow ratios, and the G2b
-pressure-advance line (already 0.05 in the CONFIG_BLOCK).
+Printed file sha256
+1eb294be4315565e868c0960a569f4f4158253f41b69955dc15cd3da77fb826e.
+The numbers live in apexcore_95a_locked.json. prepare() refuses to slice
+if a setting drifts from that file.
+
+G2b CONFIG_BLOCK with the ApexCore filament swapped in. No heelmod: no
+layer-range flow, min_bead, ensure_all, min-time, and no global
+infill_wall_overlap or minimum_sparse_infill_area edits. Layer height stays
+0.46 mm. ApexCore additions are nozzle temperature 225 °C, part fan 50% /
+aux 25%, the locked wall/sparse/gap flow ratios, and pressure advance 0.05.
+Layer-change retract is off and retraction length is 0.
 """
 from __future__ import annotations
 
@@ -47,6 +53,38 @@ GAP_E_PER_MM = 0.16
 # Offset that puts the 0.46 mm toe on the belt the way the G2b file does
 # (outer min Y about 0.02). The heelmod constant -2.136 clips the sole.
 CORE_Y_OFFSET = -1.146
+LOCK_PATH = HERE / "apexcore_95a_locked.json"
+
+
+def _scalar(value) -> str:
+    if isinstance(value, list):
+        return "" if not value else str(value[0])
+    return str(value)
+
+
+def _enforce_locked(machine: dict, process: dict, filament: dict, y_offset: float) -> None:
+    """Refuse the slice if the prepared profile is not the printed ApexCore 95A."""
+    lock = json.loads(LOCK_PATH.read_text())
+    if lock.get("status") != "LOCKED":
+        raise SystemExit("apexcore_95a_locked.json is not marked LOCKED")
+    if abs(y_offset - float(lock["y_mach_offset"])) > 1e-9:
+        raise SystemExit(
+            f"LOCKED ApexCore 95A: y_mach_offset {y_offset} != {lock['y_mach_offset']}. "
+            "No changes without Kendon's approval."
+        )
+    owners = {"machine": machine, "process": process, "filament": filament}
+    for key, spec in lock["settings"].items():
+        dest = owners[spec["profile"]]
+        got = _scalar(dest.get(key))
+        if got != spec["value"]:
+            raise SystemExit(
+                f"LOCKED ApexCore 95A: {spec['profile']}.{key} is {got!r}, "
+                f"printed profile requires {spec['value']!r}. "
+                "No changes without Kendon's approval."
+            )
+    start = machine.get("machine_start_gcode", "")
+    if lock["pressure_advance"] not in start:
+        raise SystemExit("LOCKED ApexCore 95A: pressure advance line missing. No changes without Kendon's approval.")
 
 
 def _g2b_off(profile: dict, key: str) -> None:
@@ -105,7 +143,9 @@ def prepare(work: Path, material: str) -> tuple[dict, dict, dict, float]:
     _g2b_off(filament, "filament_retract_when_changing_layer")
     _g2b_off(filament, "filament_retraction_length")
     _apply_core_flows(process, filament)
-    y_offset = float(os.environ.get("CORE_Y_OFFSET", str(CORE_Y_OFFSET)))
+    # Locked placement. An environment override would reprint a different file.
+    y_offset = CORE_Y_OFFSET
+    _enforce_locked(machine, process, filament, y_offset)
     start = machine.get("machine_start_gcode", "")
     if "SET_PRESSURE_ADVANCE ADVANCE=0.05" not in start:
         raise SystemExit("ApexCore start gcode lost pressure advance")
