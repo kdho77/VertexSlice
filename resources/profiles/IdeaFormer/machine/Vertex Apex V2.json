@@ -1,0 +1,12 @@
+{
+    "type": "machine_model",
+    "name": "Vertex Apex V2",
+    "model_id": "Vertex Apex V2",
+    "nozzle_diameter": "1.0",
+    "machine_tech": "FFF",
+    "family": "Vertex Belt",
+    "bed_model": "",
+    "bed_texture": "",
+    "hotend_model": "",
+    "default_materials": "ApexCore;ApexForge;ApexBounce;ApexLight"
+}

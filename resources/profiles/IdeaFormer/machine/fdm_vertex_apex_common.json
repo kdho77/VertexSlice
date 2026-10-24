@@ -1,0 +1,35 @@
+{
+    "type": "machine",
+    "name": "fdm_vertex_apex_common",
+    "from": "system",
+    "instantiation": "false",
+    "inherits": "fdm_ideaformer_common",
+    "gcode_flavor": "marlin",
+    "heated_bed": "0",
+    "auxiliary_fan": "1",
+    "use_relative_e_distances": "0",
+    "retraction_length": [
+        "1.5"
+    ],
+    "retraction_speed": [
+        "30"
+    ],
+    "deretraction_speed": [
+        "30"
+    ],
+    "z_hop": [
+        "0"
+    ],
+    "wipe": [
+        "0"
+    ],
+    "retraction_minimum_travel": [
+        "2"
+    ],
+    "default_filament_profile": [
+        "ApexCore"
+    ],
+    "machine_start_gcode": "PRINT_START\nM104 S[nozzle_temperature_initial_layer]\nM105\nM109 S[nozzle_temperature_initial_layer]\nM82 ;absolute extrusion mode\n\nG92 E0\nG92 E0\nG1 F1800 E-1.5\nM106 P1 S64\nM106 S127.5\nM204 S3000\n",
+    "machine_end_gcode": "M107\nG92 E0 ; Set Extruder to zero\nG1 E-1 ; Retract 1mm\nG90\nG91\nG92 Z0 ; Set Belt to zero again\nG28 Y ; Home Y\nG28 X ; Home X\nM104 S0 ; Extruder heater off\nM140 S0 ; Heated bed heater off\nG92 Z0\n\nM82 ;absolute extrusion mode\nM104 S0\n;End of Gcode\nPRINT_END\n",
+    "before_layer_change_gcode": ";BEFORE_LAYER_CHANGE\n;[layer_z]\n"
+}

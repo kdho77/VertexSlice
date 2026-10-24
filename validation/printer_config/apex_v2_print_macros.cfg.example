@@ -1,0 +1,10 @@
+# Vertex Apex V2 — Klipper PRINT_START / PRINT_END (match apex_cura_insole_ref.gcode)
+# Apex Orca machine presets emit the lines below via machine_start_gcode / machine_end_gcode.
+
+[gcode_macro PRINT_START]
+gcode:
+    # Macro hook only; slicer emits heat/wait/retract after PRINT_START (see machine preset).
+
+[gcode_macro PRINT_END]
+gcode:
+    # Macro hook only; slicer emits park/cooldown before PRINT_END (see machine preset).
