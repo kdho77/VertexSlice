@@ -204,12 +204,7 @@ void FillGyroid::_fill_surface_single(
             // Solid gyroid still anchors to the perimeter.
             chain_or_connect_infill(std::move(polylines), expolygon, polylines_out, this->spacing, params);
         } else {
-            // Sparse gyroid: keep the clipped segments separate and order them by
-            // nearest neighbour (with reversals). chain_or_connect_infill fuses
-            // nearby ends into long chains, so the only travels left are long.
-            if (polylines.size() > 1)
-                polylines = chain_polylines(std::move(polylines));
-            append(polylines_out, std::move(polylines));
+            append(polylines_out, chain_polylines(std::move(polylines)));
         }
 
 	    // new paths must be rotated back
