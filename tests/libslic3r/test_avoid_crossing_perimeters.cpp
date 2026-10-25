@@ -111,20 +111,29 @@ TEST_CASE("Combing fallback thin strips with two walls", "[AvoidCrossingPerimete
     }
 }
 
-TEST_CASE("Combing fallback collapsed thin strip stays straight", "[AvoidCrossingPerimeters]")
+TEST_CASE("Combing fallback collapsed thin strip follows the centerline", "[AvoidCrossingPerimeters]")
 {
-    // 1.2 mm strip, 1.5x a 0.42 mm outer wall collapses the outline fallback.
+    // 1.2 mm strip. A 1.5x 0.42 mm outline shrink (0.63 mm) collapses, and so would a
+    // straight move along the outer 0.5 mm band. Progressive shrink keeps a channel
+    // inset by 0.5 mm and the travel walks that centerline.
     const ExPolygons slices{rect(0, 0, 30, 1.2)};
     const ExPolygons comb = AvoidCrossingPerimeters::build_comb_region({}, 0., slices, scale_(1.5 * 0.42), false, {}, 0.);
-    REQUIRE(comb.empty());
+    REQUIRE(comb.size() == 1);
 
-    const Polyline original{mm(1, 0.6), mm(29, 0.6)};
+    const Polyline original{mm(1, 0.2), mm(29, 0.2)};
     AvoidCrossingPerimeters avoid;
     const Polyline out = avoid.apply_comb_fallback(true, comb, original, 2, nullptr);
-    REQUIRE(out.points == original.points);
-    REQUIRE(avoid.comb_log().size() == 1);
-    REQUIRE(avoid.comb_log().front().reason == "collapsed");
-    REQUIRE_FALSE(avoid.comb_log().front().routed);
+    REQUIRE(out.points.front() == original.points.front());
+    REQUIRE(out.points.back() == original.points.back());
+    REQUIRE(out.size() > 2);
+    REQUIRE(avoid.comb_log().empty());
+    REQUIRE_FALSE(avoid.island_lift_pending());
+    for (size_t i = 1; i + 1 < out.size(); ++i) {
+        const double y = mm_of(out.points[i].y());
+        REQUIRE(y >= 0.45);
+        REQUIRE(y <= 0.75);
+        REQUIRE(slices.front().contains(out.points[i]));
+    }
 }
 
 TEST_CASE("Combing fallback U-shape routes inside the slice", "[AvoidCrossingPerimeters]")
@@ -230,9 +239,34 @@ TEST_CASE("Combing fallback different islands stay straight and are logged", "[A
     const Polyline   original{mm(5, 5), mm(25, 5)};
     AvoidCrossingPerimeters avoid;
     const Polyline out = avoid.apply_comb_fallback(true, comb, original, 9, nullptr);
+    // XY stays straight. The caller retracts and lifts (z-hop / belt normal) instead of
+    // dragging that straight move through the wall band.
     REQUIRE(out.points == original.points);
+    REQUIRE(avoid.island_lift_pending());
     REQUIRE(avoid.comb_log().size() == 1);
     REQUIRE(avoid.comb_log().front().reason == "island");
-    REQUIRE_FALSE(avoid.comb_log().front().routed);
+    REQUIRE(avoid.comb_log().front().routed);
     REQUIRE(avoid.comb_log().front().layer_id == 9);
+}
+
+TEST_CASE("Combing fallback deep shrink of a thin U stays one island", "[AvoidCrossingPerimeters]")
+{
+    // 6 mm shrink splits or erases the U. The shallower inset must stay a single island
+    // so the gap crossing walks inside instead of becoming an island hop.
+    const ExPolygons comb = AvoidCrossingPerimeters::build_comb_region({u_shape(20)}, scale_(6.), {}, 0., false, {}, 0.);
+    REQUIRE(comb.size() == 1);
+
+    const Polyline original{mm(4, 16), mm(26, 16)};
+    AvoidCrossingPerimeters avoid;
+    const Polyline out = avoid.apply_comb_fallback(true, comb, original, 3, nullptr);
+    REQUIRE_FALSE(avoid.island_lift_pending());
+    REQUIRE(avoid.comb_log().empty());
+    REQUIRE(out.size() > 2);
+    bool went_under_notch = false;
+    for (const Point &pt : out.points) {
+        REQUIRE_FALSE(in_u_gap(pt));
+        if (mm_of(pt.y()) < 8.05)
+            went_under_notch = true;
+    }
+    REQUIRE(went_under_notch);
 }

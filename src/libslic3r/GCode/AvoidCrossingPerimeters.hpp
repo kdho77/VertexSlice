@@ -64,6 +64,9 @@ public:
 
     // Flag off: returns `original` unchanged and writes nothing.
     // Flag on: route inside `comb` when any inside path exists (the 20 mm cap may be exceeded).
+    // A deep shrink that collapses is retried at shallower insets, down to the wall centerline.
+    // Different islands set island_lift_pending() and keep the straight XY move so the caller can
+    // retract and lift (belt-normal / z-hop) instead of crossing the wall on the surface.
     // `layer` may be null; multi-ring routing then uses the ring walk instead of avoid_perimeters().
     Polyline apply_comb_fallback(bool              enabled,
                                  const ExPolygons &comb,
@@ -72,6 +75,14 @@ public:
                                  const Layer      *layer);
 
     const std::vector<CombLogEntry> &comb_log() const { return m_comb_log; }
+    bool island_lift_pending() const { return m_island_lift; }
+    // Returns true once when the last fallback asked for a retract + lift, then clears the flag.
+    bool consume_island_lift()
+    {
+        const bool lift = m_island_lift;
+        m_island_lift   = false;
+        return lift;
+    }
 
     struct Boundary {
         // Collection of boundaries used for detection of crossing perimeters for travels
@@ -117,6 +128,8 @@ private:
     bool                     m_comb_init { false };
     std::vector<CombLogEntry> m_comb_log;
     bool                     m_comb_summary_emitted { false };
+    // Straight XY move between disconnected comb islands. Caller emits retract + lift.
+    bool                     m_island_lift { false };
 
     void ensure_comb(const Layer &layer);
     void emit_comb_log(const CombLogEntry &entry);
