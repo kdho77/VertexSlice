@@ -1393,8 +1393,9 @@ static constexpr double COMB_DETOUR_CAP_MM = 20.0;
 static constexpr double COMB_SNAP_MM       = 6.0;
 
 // Deepest inset that does not collapse and does not split a single island into several.
-// A full 0.5*wall shrink on a thin insole disappears; the next steps are the 0.5 mm
-// band inset, then shallower shrinks, then the unshrunk centerline (shrink 0).
+// A full wall shrink on a thin insole disappears. Jumping from that straight to a 0.5 mm
+// inset leaves the travel on the outer-band boundary, so search for the deepest inset that
+// still holds together. That channel is the wall centerline. Shrink 0 is the unshrunk loop.
 static ExPolygons offset_progressive(const ExPolygons &src, double max_shrink)
 {
     if (src.empty())
@@ -1402,32 +1403,37 @@ static ExPolygons offset_progressive(const ExPolygons &src, double max_shrink)
 
     const ExPolygons center       = union_ex(src);
     const size_t     base_islands = std::max<size_t>(center.size(), 1);
+    if (max_shrink <= 0.)
+        return center;
 
-    std::vector<double> shrinks;
-    shrinks.reserve(6);
-    if (max_shrink > 0.)
-        shrinks.push_back(max_shrink);
-    const double band = double(scale_(0.5));
-    if (max_shrink > band + 1.)
-        shrinks.push_back(band);
-    for (double factor : {0.5, 0.25, 0.12}) {
-        const double s = max_shrink * factor;
-        if (s > 1.)
-            shrinks.push_back(s);
-    }
-    shrinks.push_back(0.);
+    auto at = [&](double shrink) -> ExPolygons {
+        if (shrink <= double(SCALED_EPSILON))
+            return center;
+        return union_ex(offset_ex(src, -float(shrink)));
+    };
+    // A vanishing channel cannot be walked (the boundary offset falls outside it) and
+    // sits on the 0.5 mm band. Keep at least ~0.1 mm of width, which is the centerline.
+    auto holds = [&](const ExPolygons &trial) {
+        if (trial.empty() || trial.size() > base_islands)
+            return false;
+        const ExPolygons core = union_ex(offset_ex(trial, -float(scale_(0.05))));
+        return !core.empty();
+    };
 
-    ExPolygons deepest_split;
-    for (double shrink : shrinks) {
-        ExPolygons trial = shrink <= 0. ? center : union_ex(offset_ex(src, -float(shrink)));
-        if (trial.empty())
-            continue;
-        if (trial.size() <= base_islands)
-            return trial;
-        if (deepest_split.empty())
-            deepest_split = std::move(trial);
+    ExPolygons best = center;
+    double     lo   = 0.;
+    double     hi   = max_shrink;
+    for (int i = 0; i < 16; ++i) {
+        const double mid   = 0.5 * (lo + hi);
+        ExPolygons   trial = at(mid);
+        if (holds(trial)) {
+            best = std::move(trial);
+            lo   = mid;
+        } else {
+            hi = mid;
+        }
     }
-    return deepest_split.empty() ? center : deepest_split;
+    return best;
 }
 
 static void emit_comb_log_line(const std::string &line)

@@ -7217,13 +7217,19 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
 
     // Island hops have no inside path. Retract (when the filament has a retract length) and
     // lift on the belt normal / Z so the straight move does not ride the wall on the surface.
-    // Flag off never sets the request, so this block emits nothing.
+    // ApexLight sets z_hop to 0, which would skip the lift; use the 0.4 mm default for this
+    // travel only and restore it. Flag off never sets the request, so this block emits nothing.
     double comb_hop_gcode = 0.;
     bool   comb_lift_owned = false;
     if (m_avoid_crossing_perimeters.consume_island_lift() && m_writer.filament() != nullptr && m_writer.get_zhop() == 0.) {
         if (m_writer.filament()->retraction_length() > 0.)
             gcode += m_writer.retract();
+        double      &hop       = m_writer.config.z_hop.get_at(size_t(m_writer.filament()->id()));
+        const double saved_hop = hop;
+        if (!(saved_hop > 0.))
+            hop = 0.4;
         gcode += m_writer.eager_lift(LiftType::NormalLift);
+        hop = saved_hop;
         const double lifted = m_writer.get_zhop();
         if (lifted > 0.) {
             comb_lift_owned = true;
