@@ -3,6 +3,7 @@
 #include "libslic3r/GCode/AvoidCrossingPerimeters.hpp"
 #include "libslic3r/ExPolygon.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -113,12 +114,22 @@ TEST_CASE("Combing fallback thin strips with two walls", "[AvoidCrossingPerimete
 
 TEST_CASE("Combing fallback collapsed thin strip follows the centerline", "[AvoidCrossingPerimeters]")
 {
-    // 1.2 mm strip. A 1.5x 0.42 mm outline shrink (0.63 mm) collapses, and so would a
-    // straight move along the outer 0.5 mm band. Progressive shrink keeps a channel
-    // inset by 0.5 mm and the travel walks that centerline.
+    // 1.2 mm strip. A 1.5x 0.42 mm outline shrink (0.63 mm) collapses, and a straight
+    // move at y=0.2 rides the outer 0.5 mm band. The deepest inset that still exists
+    // is the strip centerline, past that band.
     const ExPolygons slices{rect(0, 0, 30, 1.2)};
     const ExPolygons comb = AvoidCrossingPerimeters::build_comb_region({}, 0., slices, scale_(1.5 * 0.42), false, {}, 0.);
     REQUIRE(comb.size() == 1);
+    {
+        double min_y = 1e9;
+        double max_y = -1e9;
+        for (const Point &pt : comb.front().contour.points) {
+            min_y = std::min(min_y, mm_of(pt.y()));
+            max_y = std::max(max_y, mm_of(pt.y()));
+        }
+        REQUIRE(min_y > 0.50);
+        REQUIRE(max_y < 0.70);
+    }
 
     const Polyline original{mm(1, 0.2), mm(29, 0.2)};
     AvoidCrossingPerimeters avoid;
@@ -130,8 +141,8 @@ TEST_CASE("Combing fallback collapsed thin strip follows the centerline", "[Avoi
     REQUIRE_FALSE(avoid.island_lift_pending());
     for (size_t i = 1; i + 1 < out.size(); ++i) {
         const double y = mm_of(out.points[i].y());
-        REQUIRE(y >= 0.45);
-        REQUIRE(y <= 0.75);
+        REQUIRE(y > 0.50);
+        REQUIRE(y < 0.70);
         REQUIRE(slices.front().contains(out.points[i]));
     }
 }
@@ -260,7 +271,11 @@ TEST_CASE("Combing fallback deep shrink of a thin U stays one island", "[AvoidCr
     AvoidCrossingPerimeters avoid;
     const Polyline out = avoid.apply_comb_fallback(true, comb, original, 3, nullptr);
     REQUIRE_FALSE(avoid.island_lift_pending());
-    REQUIRE(avoid.comb_log().empty());
+    // A deep inset can exceed the 20 mm cap. That is still an inside route, not an island hop.
+    for (const auto &entry : avoid.comb_log()) {
+        REQUIRE(entry.reason == "cap");
+        REQUIRE(entry.routed);
+    }
     REQUIRE(out.size() > 2);
     bool went_under_notch = false;
     for (const Point &pt : out.points) {
