@@ -7224,17 +7224,27 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
     if (m_avoid_crossing_perimeters.consume_island_lift() && m_writer.filament() != nullptr && m_writer.get_zhop() == 0.) {
         if (m_writer.filament()->retraction_length() > 0.)
             gcode += m_writer.retract();
+        // get_at() on an empty vector dereferences front() and segfaults. ApexLight's z_hop is
+        // "0", which is non-empty; still refuse to touch an empty vector.
+        auto &zhop = m_writer.config.z_hop.values;
+        const bool grew = zhop.empty();
+        if (grew)
+            zhop.push_back(0.);
         double      &hop       = m_writer.config.z_hop.get_at(size_t(m_writer.filament()->id()));
         const double saved_hop = hop;
         if (!(saved_hop > 0.))
             hop = 0.4;
         gcode += m_writer.eager_lift(LiftType::NormalLift);
         hop = saved_hop;
+        if (grew)
+            zhop.clear();
         const double lifted = m_writer.get_zhop();
         if (lifted > 0.) {
             comb_lift_owned = true;
             // Belt Y-hop is hop/√2 in gcode space so Y_mach increases by z_hop and Z_mach stays put.
             comb_hop_gcode = m_belt_inclined_gcode ? lifted / 1.41421356 : lifted;
+            // Exact marker so a lifted XY move is not counted as a surface travel in the wall band.
+            gcode += ";COMB_LIFT\n";
         }
     }
 

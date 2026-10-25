@@ -1,6 +1,7 @@
 #include <catch2/catch_all.hpp>
 
 #include "libslic3r/GCode/AvoidCrossingPerimeters.hpp"
+#include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/ExPolygon.hpp"
 
 #include <algorithm>
@@ -91,23 +92,25 @@ TEST_CASE("Combing fallback thin strips with two walls", "[AvoidCrossingPerimete
             const ExPolygons comb = comb_for_strip(length, width);
             REQUIRE(comb.size() == 1);
 
-            const ExPolygon slice = rect(0, 0, length, width);
-            // Travel sits in the wall band, inside the slice and outside the shrunk inner wall.
-            const Polyline original{mm(2, 0.25), mm(length - 2, 0.25)};
-            AvoidCrossingPerimeters avoid;
-            const Polyline out = avoid.apply_comb_fallback(true, comb, original, 1, nullptr);
+            const ExPolygons slice{rect(0, 0, length, width)};
+            const ExPolygons safe = union_ex(offset_ex(slice, -float(scale_(0.5))));
+            REQUIRE_FALSE(safe.empty());
 
-            REQUIRE(out.points.front() == original.points.front());
-            REQUIRE(out.points.back() == original.points.back());
-            REQUIRE(out.size() > 2);
-            bool saw_inside = false;
-            for (const Point &pt : out.points) {
-                REQUIRE(slice.contains(pt));
-                if (comb.front().contains(pt))
-                    saw_inside = true;
-            }
-            REQUIRE(saw_inside);
-            REQUIRE(avoid.comb_log().empty());
+            // A travel in the outer 0.5 mm band must be lifted, not drawn on the surface.
+            const Polyline band{mm(2, 0.25), mm(length - 2, 0.25)};
+            AvoidCrossingPerimeters avoid;
+            const Polyline lifted = avoid.apply_comb_fallback(true, comb, band, 1, nullptr, &safe);
+            REQUIRE(lifted.points == band.points);
+            REQUIRE(avoid.island_lift_pending());
+            REQUIRE_FALSE(avoid.comb_log().empty());
+            REQUIRE(avoid.comb_log().front().lifted);
+
+            // A travel that already sits inside the wall is kept on the surface.
+            const Polyline inner{mm(2, width * 0.5), mm(length - 2, width * 0.5)};
+            AvoidCrossingPerimeters avoid_inner;
+            const Polyline kept = avoid_inner.apply_comb_fallback(true, comb, inner, 1, nullptr, &safe);
+            REQUIRE_FALSE(avoid_inner.island_lift_pending());
+            REQUIRE(kept.points == inner.points);
         }
     }
 }
@@ -131,19 +134,27 @@ TEST_CASE("Combing fallback collapsed thin strip follows the centerline", "[Avoi
         REQUIRE(max_y < 0.70);
     }
 
-    const Polyline original{mm(1, 0.2), mm(29, 0.2)};
+    const ExPolygons safe = union_ex(offset_ex(slices, -float(scale_(0.5))));
+    REQUIRE_FALSE(safe.empty());
+
+    // Endpoints in the outer band make the whole polyline illegal as a surface travel.
+    const Polyline band{mm(1, 0.2), mm(29, 0.2)};
     AvoidCrossingPerimeters avoid;
-    const Polyline out = avoid.apply_comb_fallback(true, comb, original, 2, nullptr);
-    REQUIRE(out.points.front() == original.points.front());
-    REQUIRE(out.points.back() == original.points.back());
-    REQUIRE(out.size() > 2);
-    REQUIRE(avoid.comb_log().empty());
-    REQUIRE_FALSE(avoid.island_lift_pending());
-    for (size_t i = 1; i + 1 < out.size(); ++i) {
-        const double y = mm_of(out.points[i].y());
+    const Polyline lifted = avoid.apply_comb_fallback(true, comb, band, 2, nullptr, &safe);
+    REQUIRE(lifted.points == band.points);
+    REQUIRE(avoid.island_lift_pending());
+    REQUIRE(avoid.comb_log().front().lifted);
+
+    // The centerline itself is inside the band-free core and can be traveled.
+    const Polyline core{mm(2, 0.6), mm(28, 0.6)};
+    AvoidCrossingPerimeters avoid_core;
+    const Polyline out = avoid_core.apply_comb_fallback(true, comb, core, 2, nullptr, &safe);
+    REQUIRE_FALSE(avoid_core.island_lift_pending());
+    for (const Point &pt : out.points) {
+        const double y = mm_of(pt.y());
         REQUIRE(y > 0.50);
         REQUIRE(y < 0.70);
-        REQUIRE(slices.front().contains(out.points[i]));
+        REQUIRE(slices.front().contains(pt));
     }
 }
 
@@ -257,19 +268,140 @@ TEST_CASE("Combing fallback different islands stay straight and are logged", "[A
     REQUIRE(avoid.comb_log().size() == 1);
     REQUIRE(avoid.comb_log().front().reason == "island");
     REQUIRE(avoid.comb_log().front().routed);
+    REQUIRE(avoid.comb_log().front().lifted);
     REQUIRE(avoid.comb_log().front().layer_id == 9);
+}
+
+TEST_CASE("Combing fallback empty hole after an island lift does not crash", "[AvoidCrossingPerimeters]")
+{
+    // v3 died on the travel after "COMB_LIFT reason=island layer=214".
+    // projection_onto() of an empty hole calls first_point() and segfaults, and a
+    // line index past the ring used to walk forever.
+    const ExPolygons islands{rect(0, 0, 10, 10), rect(30, 0, 40, 10)};
+    const Polyline   hop{mm(36.313, 5), mm(-3.515, 5)};
+    AvoidCrossingPerimeters avoid;
+    const Polyline lifted = avoid.apply_comb_fallback(true, islands, hop, 214, nullptr, &islands);
+    REQUIRE(avoid.island_lift_pending());
+    REQUIRE(lifted.points == hop.points);
+    REQUIRE(avoid.comb_log().front().reason == "island");
+    REQUIRE(avoid.comb_log().front().layer_id == 214);
+    REQUIRE(avoid.consume_island_lift());
+
+    ExPolygon bad = rect(0, 0, 80, 20);
+    bad.holes.emplace_back();
+    const ExPolygons comb{bad};
+    const ExPolygons safe{rect(0, 0, 80, 20)};
+    // Start outside the island so locate has to project onto the empty hole.
+    const Polyline across{mm(-4, 10), mm(40, 10)};
+    const Polyline out = avoid.apply_comb_fallback(true, comb, across, 214, nullptr, &safe);
+    REQUIRE(out.size() >= 2);
+    if (avoid.island_lift_pending()) {
+        REQUIRE(out.points == across.points);
+        REQUIRE(avoid.comb_log().back().lifted);
+    } else {
+        for (const Point &pt : out.points)
+            REQUIRE(safe.front().contains(pt));
+    }
+
+    // Duplicate vertices: the inward normal is zero and must not be cast from NaN.
+    ExPolygon spike;
+    spike.contour.points = {mm(0, 0), mm(10, 0), mm(10, 0), mm(10, 5), mm(0, 5)};
+    const ExPolygons spike_comb{spike};
+    const Polyline   spike_travel{mm(1, 1), mm(8, 4)};
+    const Polyline   spike_out = avoid.apply_comb_fallback(true, spike_comb, spike_travel, 214, nullptr, &spike_comb);
+    REQUIRE(spike_out.size() >= 2);
+}
+
+TEST_CASE("Combing fallback thin heel lifts band travels and island hops", "[AvoidCrossingPerimeters]")
+{
+    // Synthetic heel: a 1.2 mm sole edge plus a disconnected upper. The sole's
+    // centerline survives; travels in the outer band and hops between islands lift.
+    const ExPolygons part{rect(0, 0, 40, 1.2), rect(0, 8, 14, 18)};
+    const ExPolygons safe = union_ex(offset_ex(part, -float(scale_(0.5))));
+    const ExPolygons comb = AvoidCrossingPerimeters::build_comb_region({}, 0., part, scale_(1.5 * 0.42), false, {}, 0.);
+    REQUIRE(comb.size() >= 2);
+    REQUIRE_FALSE(safe.empty());
+
+    {
+        const Polyline band{mm(2, 0.2), mm(36, 0.2)};
+        AvoidCrossingPerimeters avoid;
+        const Polyline out = avoid.apply_comb_fallback(true, comb, band, 130, nullptr, &safe);
+        REQUIRE(avoid.island_lift_pending());
+        REQUIRE(out.points == band.points);
+        REQUIRE(avoid.comb_log().front().lifted);
+        REQUIRE(avoid.comb_log().front().layer_id == 130);
+    }
+
+    {
+        // Same shape as the crashing v3 hop: one point on each island.
+        const Polyline hop{mm(36.313, 0.6), mm(6.0, 12.0)};
+        AvoidCrossingPerimeters avoid;
+        const Polyline out = avoid.apply_comb_fallback(true, comb, hop, 214, nullptr, &safe);
+        REQUIRE(avoid.island_lift_pending());
+        REQUIRE(out.points == hop.points);
+        REQUIRE(avoid.comb_log().front().reason == "island");
+        REQUIRE(avoid.comb_log().front().lifted);
+        REQUIRE(avoid.comb_log().front().layer_id == 214);
+    }
+
+    {
+        const Polyline inner{mm(2, 12), mm(10, 12)};
+        AvoidCrossingPerimeters avoid;
+        const Polyline out = avoid.apply_comb_fallback(true, comb, inner, 215, nullptr, &safe);
+        REQUIRE_FALSE(avoid.island_lift_pending());
+        const Polylines outside = diff_pl(Polylines{out}, safe);
+        double out_len = 0.;
+        for (const Polyline &piece : outside)
+            out_len += piece.length();
+        REQUIRE(out_len <= scale_(0.05));
+    }
+}
+
+TEST_CASE("Combing fallback a detour that leaves the part is lifted and reported", "[AvoidCrossingPerimeters]")
+{
+    const ExPolygon  part = u_shape(50);
+    const ExPolygons safe = union_ex(offset_ex(ExPolygons{part}, -float(scale_(0.5))));
+    // The comb fills the notch, so a boundary walk can cut the gap or leave the part.
+    const ExPolygons comb{rect(0, 0, 30, 50)};
+    const Polyline   original{mm(4, 40), mm(26, 40)};
+    AvoidCrossingPerimeters avoid;
+    const Polyline out = avoid.apply_comb_fallback(true, comb, original, 130, nullptr, &safe);
+
+    if (avoid.island_lift_pending()) {
+        REQUIRE(out.points == original.points);
+        REQUIRE_FALSE(avoid.comb_log().empty());
+        const auto &entry = avoid.comb_log().front();
+        REQUIRE(entry.lifted);
+        REQUIRE(entry.layer_id == 130);
+        const bool reported = entry.reason == "cap" || entry.reason == "outside" || entry.reason == "collapsed";
+        REQUIRE(reported);
+        if (entry.reason == "cap")
+            REQUIRE(entry.detour_mm > 20.0);
+    } else {
+        for (const Point &pt : out.points) {
+            REQUIRE_FALSE(in_u_gap(pt));
+            REQUIRE(part.contains(pt));
+        }
+        const Polylines outside = diff_pl(Polylines{out}, safe);
+        double out_len = 0.;
+        for (const Polyline &piece : outside)
+            out_len += piece.length();
+        REQUIRE(out_len <= scale_(0.05));
+    }
 }
 
 TEST_CASE("Combing fallback deep shrink of a thin U stays one island", "[AvoidCrossingPerimeters]")
 {
     // 6 mm shrink splits or erases the U. The shallower inset must stay a single island
     // so the gap crossing walks inside instead of becoming an island hop.
-    const ExPolygons comb = AvoidCrossingPerimeters::build_comb_region({u_shape(20)}, scale_(6.), {}, 0., false, {}, 0.);
+    const ExPolygon  u    = u_shape(20);
+    const ExPolygons comb = AvoidCrossingPerimeters::build_comb_region({u}, scale_(6.), {}, 0., false, {}, 0.);
     REQUIRE(comb.size() == 1);
+    const ExPolygons safe = union_ex(offset_ex(ExPolygons{u}, -float(scale_(0.5))));
 
     const Polyline original{mm(4, 16), mm(26, 16)};
     AvoidCrossingPerimeters avoid;
-    const Polyline out = avoid.apply_comb_fallback(true, comb, original, 3, nullptr);
+    const Polyline out = avoid.apply_comb_fallback(true, comb, original, 3, nullptr, &safe);
     REQUIRE_FALSE(avoid.island_lift_pending());
     // A deep inset can exceed the 20 mm cap. That is still an inside route, not an island hop.
     for (const auto &entry : avoid.comb_log()) {
