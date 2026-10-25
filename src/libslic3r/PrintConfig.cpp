@@ -628,6 +628,16 @@ PrintConfigDef::PrintConfigDef()
     assign_printer_technology_to_unknown(this->options, ptFFF);
     this->init_sla_params();
     assign_printer_technology_to_unknown(this->options, ptSLA);
+
+    // Appended last so existing serialization ordinals stay stable.
+    ConfigOptionDef *def = this->add("avoid_crossing_wall_fallback", coBool);
+    def->label = L("Avoid crossing walls - inside fallback");
+    def->category = L("Quality");
+    def->tooltip = L("After avoid-crossing-walls routing, keep every travel inside the inner wall. "
+                     "If no inside path exists the original travel is kept and logged.");
+    def->mode = comAdvanced;
+    def->printer_technology = ptFFF;
+    def->set_default_value(new ConfigOptionBool(false));
 }
 
 void PrintConfigDef::init_common_params()
