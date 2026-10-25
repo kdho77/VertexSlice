@@ -291,15 +291,242 @@ def _crosses(segs, sx, ymin):
 
 def collapse_seam_travels(text, TF, seam_map=None):
     """Replace every seam travel by: [retract] lift, direct move, lower, [unretract]."""
+    import sys
+
+    HEEL_E = 1.5
+    HEEL_EF = 1800.0
+    HEEL_OUTER_NEAR = 0.7
+    HEEL_MAX_ROUTE = 60.0
+    HEEL_DEF_INNER_W = 0.45
+    _seam = seam_map or {}
+
+    def _dist_pt_seg(px, py, ax, ay, bx, by):
+        abx, aby = bx - ax, by - ay
+        ab2 = abx * abx + aby * aby
+        if ab2 < 1e-18:
+            return math.hypot(px - ax, py - ay)
+        t = max(0.0, min(1.0, ((px - ax) * abx + (py - ay) * aby) / ab2))
+        qx, qy = ax + t * abx, ay + t * aby
+        return math.hypot(px - qx, py - qy)
+
+    def _dist_seg_seg(ax, ay, bx, by, cx, cy, dx, dy):
+        best = 1e18
+        for t in range(11):
+            u = t / 10.0
+            px, py = ax + u * (bx - ax), ay + u * (by - ay)
+            best = min(best, _dist_pt_seg(px, py, cx, cy, dx, dy))
+        for t in range(11):
+            u = t / 10.0
+            px, py = cx + u * (dx - cx), cy + u * (dy - cy)
+            best = min(best, _dist_pt_seg(px, py, ax, ay, bx, by))
+        return best
+
+    def _chain_segments(segs):
+        if not segs:
+            return []
+        unused = list(range(len(segs)))
+        a0, b0, _ = segs[0]
+        pts = [a0, b0]
+        unused.remove(0)
+        tail, head = b0, a0
+        while unused:
+            found = False
+            for j in list(unused):
+                sa, sb, _ = segs[j]
+                if math.hypot(sa[0] - tail[0], sa[1] - tail[1]) < 0.05:
+                    pts.append(sb); tail = sb; unused.remove(j); found = True; break
+                if math.hypot(sb[0] - tail[0], sb[1] - tail[1]) < 0.05:
+                    pts.append(sa); tail = sa; unused.remove(j); found = True; break
+                if math.hypot(sa[0] - head[0], sa[1] - head[1]) < 0.05:
+                    pts.insert(0, sb); head = sb; unused.remove(j); found = True; break
+                if math.hypot(sb[0] - head[0], sb[1] - head[1]) < 0.05:
+                    pts.insert(0, sa); head = sa; unused.remove(j); found = True; break
+            if not found:
+                for j in unused:
+                    sa, sb, _ = segs[j]
+                    pts.append(sb)
+                    tail = sb
+                break
+        return pts
+
+    def _offset_inner_poly(pts, half_w):
+        if len(pts) < 2:
+            return pts
+        cx = sum(p[0] for p in pts) / len(pts)
+        cy = sum(p[1] for p in pts) / len(pts)
+        out_pts = []
+        for px, py in pts:
+            dx, dy = cx - px, cy - py
+            L = math.hypot(dx, dy)
+            if L < 1e-9:
+                out_pts.append((px, py))
+            else:
+                out_pts.append((px + dx / L * half_w, py + dy / L * half_w))
+        return out_pts
+
+    def _on_material(px, py, mat_segs, tol=0.02):
+        for ax, ay, bx, by, w in mat_segs:
+            if _dist_pt_seg(px, py, ax, ay, bx, by) <= w * 0.5 + tol:
+                return True
+        return False
+
+    def _segment_leaves(x0, y0, x1, y1, mat_segs):
+        L = math.hypot(x1 - x0, y1 - y0)
+        steps = max(2, int(L / 0.25) + 1)
+        for i in range(steps + 1):
+            t = i / steps
+            px, py = x0 + t * (x1 - x0), y0 + t * (y1 - y0)
+            if not _on_material(px, py, mat_segs):
+                return True
+        return False
+
+    def _point_near_outer(px, py, outer_segs, tol):
+        for ax, ay, bx, by, _ in outer_segs:
+            if _dist_pt_seg(px, py, ax, ay, bx, by) <= tol:
+                return True
+        return False
+
+    def _qualify_heelroute(lyr, x0, y0, x1, y1, lctx):
+        if not lctx:
+            return False
+        mat = lctx.get("mat_segs") or []
+        outer = lctx.get("outer_segs") or []
+        if not mat or not outer:
+            return False
+        if _segment_leaves(x0, y0, x1, y1, mat):
+            return True
+        L = math.hypot(x1 - x0, y1 - y0)
+        steps = max(2, int(L / 0.25) + 1)
+        for i in range(steps + 1):
+            t = i / steps
+            px, py = x0 + t * (x1 - x0), y0 + t * (y1 - y0)
+            if not _on_material(px, py, mat) and _point_near_outer(px, py, outer, HEEL_OUTER_NEAR):
+                return True
+        return False
+
+    def _nearest_poly_index(poly, px, py):
+        best_i, best_d = 0, 1e18
+        for i, (qx, qy) in enumerate(poly):
+            d = math.hypot(px - qx, py - qy)
+            if d < best_d:
+                best_d, best_i = d, i
+        return best_i
+
+    def _poly_arc_len(poly, i, j, closed):
+        n = len(poly)
+        if n < 2:
+            return 0.0
+        if not closed:
+            if i <= j:
+                pts = poly[i : j + 1]
+            else:
+                pts = list(reversed(poly[j : i + 1]))
+            return sum(math.hypot(pts[k + 1][0] - pts[k][0], pts[k + 1][1] - pts[k][1]) for k in range(len(pts) - 1))
+        fwd = 0.0
+        k = i
+        while k != j:
+            k2 = (k + 1) % n
+            fwd += math.hypot(poly[k2][0] - poly[k][0], poly[k2][1] - poly[k][1])
+            k = k2
+        return fwd
+
+    def _walk_poly(poly, i, j, closed):
+        n = len(poly)
+        if n < 2:
+            return []
+        if not closed:
+            if i <= j:
+                return poly[i + 1 : j + 1]
+            return list(reversed(poly[j : i]))
+        fwd = []
+        k = i
+        fwd_len = 0.0
+        while k != j:
+            k2 = (k + 1) % n
+            fwd.append(poly[k2])
+            fwd_len += math.hypot(poly[k2][0] - poly[k][0], poly[k2][1] - poly[k][1])
+            k = k2
+        rev = []
+        k = i
+        rev_len = 0.0
+        while k != j:
+            k2 = (k - 1) % n
+            rev.append(poly[k2])
+            rev_len += math.hypot(poly[k2][0] - poly[k][0], poly[k2][1] - poly[k][1])
+            k = k2
+        if fwd_len <= rev_len:
+            return fwd
+        return rev
+
+    def _route_waypoints(x0, y0, tx, ty, lctx):
+        poly = lctx.get("inner_route_poly") or []
+        if len(poly) < 2:
+            return None, "no_inner_wall_polyline"
+        closed = lctx.get("inner_closed", False)
+        i = _nearest_poly_index(poly, x0, y0)
+        j = _nearest_poly_index(poly, tx, ty)
+        walk = _walk_poly(poly, i, j, closed)
+        pts = list(walk) + [(tx, ty)]
+        chain = [(x0, y0)] + pts
+        length = sum(
+            math.hypot(chain[k + 1][0] - chain[k][0], chain[k + 1][1] - chain[k][1])
+            for k in range(len(chain) - 1)
+        )
+        if length > HEEL_MAX_ROUTE:
+            return None, "route_too_long"
+        return pts, None
+
+    def _build_layer_ctx(all_lines):
+        layer = -1
+        role = ""
+        w = HEEL_DEF_INNER_W
+        ctx = {}
+        x = y = 0.0
+        for l in all_lines:
+            if l.startswith(";LAYER_CHANGE"):
+                layer += 1
+            elif l.startswith(";TYPE:"):
+                role = l[6:].strip()
+            elif l.startswith(";WIDTH:"):
+                try:
+                    w = float(l.split(":", 1)[1].strip())
+                except ValueError:
+                    pass
+            if _is_move(l):
+                nx, ny = _w(l, "X"), _w(l, "Y")
+                nx = x if nx is None else nx
+                ny = y if ny is None else ny
+                if _is_ext(l) and role in ("Outer wall", "Overhang wall", "Inner wall"):
+                    seg = (x, y, nx, ny, w)
+                    c = ctx.setdefault(layer, {"outer_segs": [], "inner_segs": [], "mat_segs": [], "inner_width": w})
+                    c["mat_segs"].append(seg)
+                    if role in ("Outer wall", "Overhang wall"):
+                        c["outer_segs"].append(seg)
+                    else:
+                        c["inner_segs"].append(((x, y), (nx, ny), w))
+                        c["inner_width"] = w
+                x, y = nx, ny
+        for lyr, c in ctx.items():
+            inner_raw = [(a, b, w) for a, b, w in c["inner_segs"]]
+            pts = _chain_segments(inner_raw)
+            half = 0.5 * c.get("inner_width", HEEL_DEF_INNER_W)
+            c["inner_route_poly"] = _offset_inner_poly(pts, half)
+            if len(pts) >= 3 and math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) < 0.1:
+                c["inner_closed"] = True
+            else:
+                c["inner_closed"] = False
+        return ctx
+
     lines = text.splitlines(keepends=True)
+    layer_ctx = _build_layer_ctx(lines)
     out = []
     x = y = 0.0; z = None; f = None
     first_lc = next((k for k, l in enumerate(lines) if l.startswith(";LAYER_CHANGE")), len(lines))
     region = []      # (line_index_in_lines, line)
     seam_from = False
-    stats = {"seam_travels": 0, "retracts": 0, "nonbelt_plain": 0}
+    stats = {"seam_travels": 0, "retracts": 0, "nonbelt_plain": 0, "heelroute_routed": 0, "heelroute_fallback": 0}
     layer = -1; pos_layer = -1
-    ymin_of = lambda k: (seam_map or {}).get(k, (0, 0.0))[1]
+    ymin_of = lambda k: _seam.get(k, (0, 0.0))[1]
 
     def track(l):
         nonlocal x, y, z, f
@@ -307,6 +534,21 @@ def collapse_seam_travels(text, TF, seam_map=None):
             nx, ny, nz, nf = _w(l, "X"), _w(l, "Y"), _w(l, "Z"), _w(l, "F")
             x = nx if nx is not None else x; y = ny if ny is not None else y
             z = nz if nz is not None else z; f = nf if nf is not None else f
+
+    def _emit_heel_retract_prime(blk, extra_comments=()):
+        head = [";PP_HEELROUTE_START\n", f"G1 E-{HEEL_E:g} F{HEEL_EF:g}\n"]
+        head.extend(extra_comments)
+        return head + blk + [f"G1 E{HEEL_E:g} F{HEEL_EF:g}\n", ";PP_HEELROUTE_END\n"]
+
+    def _emit_direct_seam_body(x0, y0, tx, ty, tz, tf, zmove):
+        blk = [";C seam travel: lift + direct\n"]
+        blk.append(f"G1 Y{y0 + LIFT_MM:.3f} F{TF:g} ;lift\n")
+        zs = f" Z{tz:.3f}" if zmove else ""
+        blk.append(f"G1 X{tx:.3f} Y{ty + LIFT_MM:.3f}{zs} F{TF:g} ;seam travel\n")
+        blk.append(f"G1 Y{ty:.3f} F{TF:g} ;lower\n")
+        if tf is not None:
+            blk.append(f"G1 F{tf:g}\n")
+        return blk
 
     def flush(seam):
         nonlocal region
@@ -331,30 +573,56 @@ def collapse_seam_travels(text, TF, seam_map=None):
                 out.append(l); track(l)
             region = []; return
         zmove = any(_w(region[k][1], "Z") is not None for k in trav)
+        x0, y0 = x, y
+        lyr = pos_layer if pos_layer >= 0 else layer
+        lctx = layer_ctx.get(lyr)
+        qualify = _qualify_heelroute(lyr, x0, y0, tx, ty, lctx)
         for k, (idx, l) in enumerate(region):
             if k in trav and k != last:
                 continue
             if k == last:
-                d = math.hypot(tx - x, ty - y)
+                d = math.hypot(tx - x0, ty - y0)
                 if d < 1e-3:
                     if tf is not None:
                         out.append(f"G1 F{tf:g}\n"); track(f"G1 F{tf:g}\n")
                     continue
-                # D: only prime (unretract) where the travel lands on the belt side
-                retract = d >= RETRACT_MIN_TRAVEL and ty <= ymin_of(layer) + BELT_SIDE_BAND
-                blk = [";C seam travel: lift + direct\n"]
-                if retract:
-                    blk.append(f"G1 E-{RETRACT_MM:g} F{RETRACT_F:g}\n"); stats["retracts"] += 1
-                blk.append(f"G1 Y{y + LIFT_MM:.3f} F{TF:g} ;lift\n")
-                zs = f" Z{tz:.3f}" if zmove else ""
-                blk.append(f"G1 X{tx:.3f} Y{ty + LIFT_MM:.3f}{zs} F{TF:g} ;seam travel\n")
-                blk.append(f"G1 Y{ty:.3f} F{TF:g} ;lower\n")
-                if retract:
-                    blk.append(f"G1 E{RETRACT_MM + RESTART_EXTRA:g} F{RETRACT_F:g}\n")
-                if tf is not None:
-                    blk.append(f"G1 F{tf:g}\n")
-                for b_ in blk:
-                    out.append(b_); track(b_)
+                if qualify:
+                    waypts, fail = _route_waypoints(x0, y0, tx, ty, lctx)
+                    if waypts is not None:
+                        blk = [f"G1 Y{y0 + LIFT_MM:.3f} F{TF:g} ;lift\n"]
+                        for wx, wy in waypts[:-1]:
+                            blk.append(f"G1 X{wx:.3f} Y{wy + LIFT_MM:.3f} F{TF:g} ;heel route\n")
+                        wz = waypts[-1]
+                        zs = f" Z{tz:.3f}" if zmove else ""
+                        blk.append(f"G1 X{wz[0]:.3f} Y{wz[1] + LIFT_MM:.3f}{zs} F{TF:g} ;heel route seam\n")
+                        blk.append(f"G1 Y{ty:.3f} F{TF:g} ;lower\n")
+                        if tf is not None:
+                            blk.append(f"G1 F{tf:g}\n")
+                        for b_ in _emit_heel_retract_prime(blk):
+                            out.append(b_); track(b_)
+                        stats["heelroute_routed"] += 1
+                    else:
+                        blk = _emit_direct_seam_body(x0, y0, tx, ty, tz, tf, zmove)
+                        fb = [f";PP_HEELROUTE_FALLBACK reason={fail}\n"]
+                        for b_ in _emit_heel_retract_prime(blk, extra_comments=fb):
+                            out.append(b_); track(b_)
+                        stats["heelroute_fallback"] += 1
+                        print(f"pp_d heelroute fallback layer={lyr} reason={fail}", file=sys.stderr)
+                else:
+                    retract = d >= RETRACT_MIN_TRAVEL and ty <= ymin_of(layer) + BELT_SIDE_BAND
+                    blk = [";C seam travel: lift + direct\n"]
+                    if retract:
+                        blk.append(f"G1 E-{RETRACT_MM:g} F{RETRACT_F:g}\n"); stats["retracts"] += 1
+                    blk.append(f"G1 Y{y0 + LIFT_MM:.3f} F{TF:g} ;lift\n")
+                    zs = f" Z{tz:.3f}" if zmove else ""
+                    blk.append(f"G1 X{tx:.3f} Y{ty + LIFT_MM:.3f}{zs} F{TF:g} ;seam travel\n")
+                    blk.append(f"G1 Y{ty:.3f} F{TF:g} ;lower\n")
+                    if retract:
+                        blk.append(f"G1 E{RETRACT_MM + RESTART_EXTRA:g} F{RETRACT_F:g}\n")
+                    if tf is not None:
+                        blk.append(f"G1 F{tf:g}\n")
+                    for b_ in blk:
+                        out.append(b_); track(b_)
                 continue
             out.append(l); track(l)
         region = []
@@ -371,6 +639,11 @@ def collapse_seam_travels(text, TF, seam_map=None):
             out.append(l); track(l); pos_layer = layer; continue
         region.append((idx, l))
     flush(False)
+    if stats["heelroute_routed"] or stats["heelroute_fallback"]:
+        print(
+            f"pp_d heelroute summary: routed={stats['heelroute_routed']} fallback={stats['heelroute_fallback']}",
+            file=sys.stderr,
+        )
     return "".join(out), stats
 
 
@@ -389,3 +662,86 @@ def postprocess_C(text, PP):
     import sys
     print("pp_c stats", s1, s2, file=sys.stderr)
     return text
+
+
+def _extrusion_lines(text):
+    return [l for l in text.splitlines() if _is_ext(l)]
+
+
+def _test_heelroute():
+    TF = 12720.0
+    seam = {0: (110.0, 0.0)}
+    outer_inner = """;LAYER_CHANGE
+G1 X100 Y0 F6000
+;TYPE:Outer wall
+;WIDTH:0.8
+G1 X100 Y0 E0.01
+G1 X120 Y0 E0.01
+G1 X120 Y20 E0.01
+G1 X100 Y20 E0.01
+G1 X100 Y0 E0.01
+;TYPE:Inner wall
+;WIDTH:0.45
+G1 X110 Y1 E0.01
+G1 X110 Y3 E0.01
+G1 X112 Y3 E0.01
+;C_SEAM_END
+G1 X111 Y0.4 F12000
+;TYPE:Inner wall
+G1 X102 Y2 E0.02
+"""
+    out, st = collapse_seam_travels(outer_inner, TF, seam)
+    assert st["heelroute_routed"] == 1, st
+    assert ";PP_HEELROUTE_START" in out and ";PP_HEELROUTE_END" in out
+    assert "G1 E-1.5 F1800" in out and "G1 E1.5 F1800" in out
+    for l in out.splitlines():
+        if ";heel route" in l:
+            assert " E" not in l.split(";")[0]
+    assert _extrusion_lines(outer_inner) == _extrusion_lines(out)
+
+    along_wall = """;LAYER_CHANGE
+G1 X100 Y0 F6000
+;TYPE:Outer wall
+;WIDTH:0.8
+G1 X100 Y0 E0.01
+G1 X120 Y0 E0.01
+G1 X120 Y2 E0.01
+G1 X100 Y2 E0.01
+G1 X100 Y0 E0.01
+;TYPE:Inner wall
+;WIDTH:0.45
+G1 X101 Y0.5 E0.01
+G1 X119 Y0.5 E0.01
+;C_SEAM_END
+G1 X119 Y0.5 F12000
+G1 X115 Y0.5 F12000
+;TYPE:Inner wall
+G1 X101 Y1 E0.02
+"""
+    out2, st2 = collapse_seam_travels(along_wall, TF, seam)
+    assert st2.get("heelroute_routed", 0) == 0 and st2.get("heelroute_fallback", 0) == 0
+    assert ";PP_HEELROUTE" not in out2
+    assert ";C seam travel: lift + direct" in out2
+
+    no_inner = """;LAYER_CHANGE
+G1 X100 Y0 F6000
+;TYPE:Outer wall
+;WIDTH:0.8
+G1 X100 Y0 E0.01
+G1 X120 Y0 E0.01
+G1 X120 Y20 E0.01
+G1 X118 Y18 E0.01
+;C_SEAM_END
+G1 X110 Y0.4 F12000
+;TYPE:Outer wall
+G1 X100 Y0 E0.02
+"""
+    out3, st3 = collapse_seam_travels(no_inner, TF, seam)
+    assert st3["heelroute_fallback"] == 1
+    assert "PP_HEELROUTE_FALLBACK reason=no_inner_wall_polyline" in out3
+
+    print("heelroute tests ok", st, st2, st3)
+
+
+if __name__ == "__main__":
+    _test_heelroute()
