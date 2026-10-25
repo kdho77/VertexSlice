@@ -473,13 +473,17 @@ TEST_CASE("Combing fallback rejects even short excursions outside the safe regio
         REQUIRE(avoid.island_lift_pending());
         REQUIRE(out.points == original.points);
     }
-    SECTION("travel on the safe boundary remains on the surface")
+    SECTION("travel on the safe boundary is lifted")
     {
+        // The 0.5 mm band is closed on the outside. A travel that only touches that
+        // boundary is not strictly inside it, so the straight move is kept and lifted.
         const ExPolygons safe{rect(0.5, 0.5, 19.5, 9.5)};
         const Polyline original{mm(2, 0.5), mm(18, 0.5)};
         AvoidCrossingPerimeters avoid;
         const Polyline out = avoid.apply_comb_fallback(true, comb, original, 130, nullptr, &safe);
-        REQUIRE_FALSE(avoid.island_lift_pending());
+        REQUIRE(avoid.island_lift_pending());
         REQUIRE(out.points == original.points);
+        REQUIRE_FALSE(avoid.comb_log().empty());
+        REQUIRE(avoid.comb_log().back().lifted);
     }
 }

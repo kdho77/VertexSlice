@@ -468,6 +468,12 @@ static std::vector<TravelPoint> simplify_travel(const AvoidCrossingPerimeters::B
                     continue;
                 }
 
+                // Release EdgeGrid indexes cells with no bounds check. A point outside the
+                // bbox (comb endpoints, or a vertex nudged by the inward offset) corrupts
+                // the heap. Keep the vertex instead of querying past the grid.
+                if (!boundary.grid.bbox().contains(current_point) || !boundary.grid.bbox().contains(travel[point_idx_2].point))
+                    break;
+
                 visitor.pt_next = &travel[point_idx_2].point;
                 boundary.grid.visit_cells_intersecting_line(*visitor.pt_current, *visitor.pt_next, visitor);
                 // Check if deleting point causes crossing a boundary
@@ -870,6 +876,11 @@ static void resample_expolygons(ExPolygons &ex_polygons, double dist_from_vertex
 
 static void precompute_polygon_distances(const Polygon &polygon, std::vector<float> &polygon_distances_out)
 {
+    // size()-1 on an empty ring underflows and writes off the end of the vector.
+    if (polygon.empty()) {
+        polygon_distances_out.clear();
+        return;
+    }
     polygon_distances_out.assign(polygon.size() + 1, 0.f);
     for (size_t point_idx = 1; point_idx < polygon.size(); ++point_idx)
         polygon_distances_out[point_idx] = polygon_distances_out[point_idx - 1] + float((polygon[point_idx] - polygon[point_idx - 1]).cast<double>().norm());
@@ -1936,6 +1947,15 @@ static Polyline route_inside_expolygon(const ExPolygon &ex, const Point &start, 
         return Polyline{start, end};
 
     AvoidCrossingPerimeters::Boundary boundary = boundary_from_expolygon(ex, start, end);
+    // Contours keep raw pointers into the polygon that fed the grid. Returning
+    // Boundary by value can copy those pointers onto a freed temporary. Rebuild
+    // them against this object before any query.
+    if (!boundary.boundaries.empty()) {
+        const BoundingBox bbox = boundary.grid.bbox();
+        const coord_t resolution = boundary.grid.resolution() > 0 ? boundary.grid.resolution() : coord_t(scale_(1.));
+        boundary.grid.set_bbox(bbox);
+        boundary.grid.create(boundary.boundaries, resolution);
+    }
     std::vector<Intersection> hits = intersections_with_boundary(boundary, start, end);
 
     auto accept = [&](Polyline pl) {
@@ -2194,10 +2214,12 @@ void AvoidCrossingPerimeters::init_layer(const Layer &layer)
 {
     m_internal.clear();
     m_external.clear();
+    // Grid contours alias polygon points. Drop the grids before freeing those points.
+    m_grid_comb = EdgeGrid::Grid();
+    m_comb_boundary = Boundary();
     m_comb.clear();
     m_safe.clear();
     m_comb_bboxes.clear();
-    m_comb_boundary.clear();
     m_comb_init   = false;
     m_island_lift = false;
 

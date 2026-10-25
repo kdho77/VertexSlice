@@ -7222,22 +7222,29 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
     double comb_hop_gcode = 0.;
     bool   comb_lift_owned = false;
     if (m_avoid_crossing_perimeters.consume_island_lift() && m_writer.filament() != nullptr && m_writer.get_zhop() == 0.) {
+        // Retract only when the filament has a length. ApexLight is 0; a forced retract
+        // would change the recipe. Kendon still requires a retract whenever a lift happens
+        // and the configured length is non-zero.
         if (m_writer.filament()->retraction_length() > 0.)
             gcode += m_writer.retract();
-        // get_at() on an empty vector dereferences front() and segfaults. ApexLight's z_hop is
-        // "0", which is non-empty; still refuse to touch an empty vector.
+        // Index the vector directly. get_at() on an empty vector returns front() and is
+        // undefined, and a reference into values does not survive a later reallocation.
+        // Do not clear() the vector afterwards: the next travel's need_wipe() calls
+        // get_at() and would read the freed buffer.
         auto &zhop = m_writer.config.z_hop.values;
-        const bool grew = zhop.empty();
-        if (grew)
-            zhop.push_back(0.);
-        double      &hop       = m_writer.config.z_hop.get_at(size_t(m_writer.filament()->id()));
-        const double saved_hop = hop;
+        const size_t hop_idx = size_t(m_writer.filament()->id());
+        const size_t old_size = zhop.size();
+        if (zhop.size() <= hop_idx)
+            zhop.resize(hop_idx + 1, 0.);
+        const double saved_hop = zhop[hop_idx];
         if (!(saved_hop > 0.))
-            hop = 0.4;
+            zhop[hop_idx] = 0.4;
         gcode += m_writer.eager_lift(LiftType::NormalLift);
-        hop = saved_hop;
-        if (grew)
-            zhop.clear();
+        zhop[hop_idx] = saved_hop;
+        // Drop a temporary tail used only so this filament id had a slot. Keep a
+        // vector that started empty: clearing it makes the next get_at() undefined.
+        if (old_size > 0 && zhop.size() != old_size)
+            zhop.resize(old_size);
         const double lifted = m_writer.get_zhop();
         if (lifted > 0.) {
             comb_lift_owned = true;
