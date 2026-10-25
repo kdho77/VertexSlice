@@ -1891,7 +1891,7 @@ static Point offset_into_material(const Polygon &poly, size_t left_idx, size_t r
     return middle + (n * double(SCALED_EPSILON)).cast<coord_t>();
 }
 
-static AvoidCrossingPerimeters::Boundary boundary_from_expolygon(const ExPolygon &ex)
+static AvoidCrossingPerimeters::Boundary boundary_from_expolygon(const ExPolygon &ex, const Point &start, const Point &end)
 {
     Polygons rings;
     rings.reserve(ex.holes.size() + 1);
@@ -1911,8 +1911,12 @@ static AvoidCrossingPerimeters::Boundary boundary_from_expolygon(const ExPolygon
         rings.push_back(std::move(hole));
     }
     AvoidCrossingPerimeters::Boundary boundary;
-    if (!rings.empty())
-        init_boundary(&boundary, std::move(rings));
+    if (!rings.empty()) {
+        // The travel endpoints can lie outside the comb. simplify_travel() queries
+        // the grid with the original endpoints, and EdgeGrid requires both to be
+        // inside its bbox (unchecked cell indexing in release builds).
+        init_boundary(&boundary, std::move(rings), {start, end});
+    }
     return boundary;
 }
 
@@ -1931,7 +1935,7 @@ static Polyline route_inside_expolygon(const ExPolygon &ex, const Point &start, 
     if (ex.contains(Line(start, end)))
         return Polyline{start, end};
 
-    AvoidCrossingPerimeters::Boundary boundary = boundary_from_expolygon(ex);
+    AvoidCrossingPerimeters::Boundary boundary = boundary_from_expolygon(ex, start, end);
     std::vector<Intersection> hits = intersections_with_boundary(boundary, start, end);
 
     auto accept = [&](Polyline pl) {
@@ -1980,11 +1984,14 @@ static bool travel_inside_safe(const ExPolygons &safe, const Polyline &pl)
 {
     if (safe.empty() || pl.size() < 2)
         return false;
+    for (const Point &point : pl.points)
+        if (!Geometry::contains(safe, point))
+            return false;
     const Polylines outside = diff_pl(Polylines{pl}, safe);
-    double out_len = 0.;
     for (const Polyline &piece : outside)
-        out_len += piece.length();
-    return out_len <= scale_(0.05);
+        if (piece.length() > 0.)
+            return false;
+    return true;
 }
 
 Polyline AvoidCrossingPerimeters::apply_comb_fallback(bool              enabled,
@@ -2155,7 +2162,8 @@ Polyline AvoidCrossingPerimeters::travel_to(const GCode &gcodegen, const Point &
     if (!use_external && !is_support_layer && gcodegen.config().avoid_crossing_wall_fallback.value) {
         ensure_comb(*gcodegen.layer());
         const bool already_inside = !m_comb.empty() && result_pl.size() >= 2 &&
-                                    any_expolygon_contains(m_comb, m_comb_bboxes, m_grid_comb, result_pl);
+                                    any_expolygon_contains(m_comb, m_comb_bboxes, m_grid_comb, result_pl) &&
+                                    travel_inside_safe(m_safe, result_pl);
         if (!already_inside) {
             const Polyline before = result_pl;
             Polyline routed = apply_comb_fallback(true, m_comb, result_pl, int(gcodegen.layer()->id()), gcodegen.layer(), &m_safe);

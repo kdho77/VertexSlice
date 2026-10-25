@@ -417,3 +417,69 @@ TEST_CASE("Combing fallback deep shrink of a thin U stays one island", "[AvoidCr
     }
     REQUIRE(went_under_notch);
 }
+
+TEST_CASE("Combing fallback boundary walk includes endpoints outside the comb grid", "[AvoidCrossingPerimeters]")
+{
+    // Both points are within the 6 mm snap limit but outside the comb bbox.
+    // The boundary walker must query the original endpoints without indexing
+    // outside EdgeGrid. The old code asserts in Debug and reads out of bounds
+    // in Release when simplify_travel tests these connectors.
+    const ExPolygons comb{rect(0, 0, 80, 20)};
+    const ExPolygons safe{rect(-5, -1, 85, 21)};
+    const Polyline original{mm(-4, 10), mm(84, 10)};
+    AvoidCrossingPerimeters avoid;
+    const Polyline out = avoid.apply_comb_fallback(true, comb, original, 214, nullptr, &safe);
+    REQUIRE_FALSE(avoid.island_lift_pending());
+    REQUIRE(out.points.front() == original.points.front());
+    REQUIRE(out.points.back() == original.points.back());
+    REQUIRE(diff_pl(Polylines{out}, safe).empty());
+}
+
+TEST_CASE("Combing fallback reported v3 endpoints outside the comb lift safely", "[AvoidCrossingPerimeters]")
+{
+    // Synthetic boundary, using the reported layer/move. This is a regression
+    // for the grid precondition, not a substitute for slicing the actual v3.
+    const ExPolygons comb{rect(-40, 1, 35, 10)};
+    const ExPolygons safe{rect(-39.5, 1.5, 34.5, 9.5)};
+    const Polyline original{mm(36.313, 2.721), mm(-43.515, 0.500)};
+    AvoidCrossingPerimeters avoid;
+    const Polyline out = avoid.apply_comb_fallback(true, comb, original, 214, nullptr, &safe);
+    REQUIRE(avoid.island_lift_pending());
+    REQUIRE(out.points == original.points);
+}
+
+TEST_CASE("Combing fallback rejects even short excursions outside the safe region", "[AvoidCrossingPerimeters]")
+{
+    const ExPolygons comb{rect(0, 0, 20, 10)};
+    SECTION("endpoint lies 0.02 mm into the wall band")
+    {
+        const ExPolygons safe{rect(0.5, 0.5, 19.5, 9.5)};
+        const Polyline original{mm(0.48, 5), mm(18, 5)};
+        AvoidCrossingPerimeters avoid;
+        const Polyline out = avoid.apply_comb_fallback(true, comb, original, 130, nullptr, &safe);
+        REQUIRE(avoid.island_lift_pending());
+        REQUIRE(out.points == original.points);
+    }
+    SECTION("segment leaves safe region although every vertex is inside")
+    {
+        ExPolygon safe_ring = rect(0.5, 0.5, 19.5, 9.5);
+        Polygon hole = rect(9.99, 4, 10.01, 6).contour;
+        hole.reverse();
+        safe_ring.holes.push_back(std::move(hole));
+        const ExPolygons safe{safe_ring};
+        const Polyline original{mm(2, 5), mm(18, 5)};
+        AvoidCrossingPerimeters avoid;
+        const Polyline out = avoid.apply_comb_fallback(true, comb, original, 130, nullptr, &safe);
+        REQUIRE(avoid.island_lift_pending());
+        REQUIRE(out.points == original.points);
+    }
+    SECTION("travel on the safe boundary remains on the surface")
+    {
+        const ExPolygons safe{rect(0.5, 0.5, 19.5, 9.5)};
+        const Polyline original{mm(2, 0.5), mm(18, 0.5)};
+        AvoidCrossingPerimeters avoid;
+        const Polyline out = avoid.apply_comb_fallback(true, comb, original, 130, nullptr, &safe);
+        REQUIRE_FALSE(avoid.island_lift_pending());
+        REQUIRE(out.points == original.points);
+    }
+}
