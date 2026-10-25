@@ -41,6 +41,18 @@ def _rotate_z(x: float, y: float, degrees: int) -> tuple[float, float]:
     return x * c - y * s, x * s + y * c
 
 
+def _signed_volume(tris: list[tuple[tuple[float, float, float], ...]]) -> float:
+    vol = 0.0
+    for tri in tris:
+        (x0, y0, z0), (x1, y1, z1), (x2, y2, z2) = tri
+        vol += (
+            x0 * (y1 * z2 - y2 * z1)
+            + x1 * (y2 * z0 - y0 * z2)
+            + x2 * (y0 * z1 - y1 * z0)
+        )
+    return vol / 6.0
+
+
 def prepare_belt_stl(
     src: Path,
     rotate_z_deg: int,
@@ -70,6 +82,20 @@ def prepare_belt_stl(
             ys.append(yr)
             zs.append(z)
         rotated.append(tuple(new_tri))
+
+    # Orca belt trafo reflects model X (det −1); mirror here so the physical part is not left/right flipped.
+    mirrored: list[tuple[tuple[float, float, float], ...]] = []
+    xs = []
+    ys = []
+    zs = []
+    for tri in rotated:
+        new_tri = tuple((-x, y, z) for x, y, z in reversed(tri))
+        mirrored.append(new_tri)
+        for x, y, z in new_tri:
+            xs.append(x)
+            ys.append(y)
+            zs.append(z)
+    rotated = mirrored
 
     min_x, min_y, min_z = min(xs), min(ys), min(zs)
     max_x, max_y, max_z = max(xs), max(ys), max(zs)
@@ -101,6 +127,7 @@ def prepare_belt_stl(
     meta = {
         "preprocessed_stl": str(out),
         "rotation_z_deg": int(rotate_z_deg),
+        "mirror_x": True,
         "oriented_x_across_belt_mm": round(x_extent, 3),
         "oriented_y_along_belt_mm": round(y_extent, 3),
         "oriented_z_mm": round(max(zs2) - min(zs2), 3),
