@@ -11,6 +11,12 @@
 
 #include <numeric>
 #include <unordered_set>
+#include <cstdlib>
+#include <fstream>
+#include <iomanip>
+#include <limits>
+#include <mutex>
+#include <sstream>
 #include <boost/range/adaptor/reversed.hpp>
 
 namespace Slic3r {
@@ -544,6 +550,22 @@ static float get_external_perimeter_width(const Layer &layer)
     else
         perimeter_width = get_default_perimeter_spacing(*layer.object());
     return perimeter_width;
+}
+
+static float get_internal_perimeter_width(const Layer &layer)
+{
+    size_t regions_count   = 0;
+    float  perimeter_width = 0.f;
+    for (const LayerRegion *layer_region : layer.regions())
+        if (layer_region != nullptr && !layer_region->slices.empty()) {
+            perimeter_width += float(layer_region->flow(frPerimeter).scaled_width());
+            ++regions_count;
+        }
+
+    assert(perimeter_width >= 0.f);
+    if (regions_count != 0)
+        return perimeter_width / float(regions_count);
+    return get_external_perimeter_width(layer);
 }
 
 static size_t avoid_perimeters_inner(
@@ -1133,6 +1155,143 @@ static ExPolygons get_boundary(const Layer &layer, float perimeter_spacing)
     return boundary;
 }
 
+struct ClosedWallLoop {
+    Polygon poly;
+    int     inset_idx = -1;
+    bool    hole      = false;
+};
+
+static void collect_closed_wall_loops(const ExtrusionEntity *entity, std::vector<ClosedWallLoop> &out, bool &saw_open)
+{
+    if (entity == nullptr)
+        return;
+    if (entity->is_collection()) {
+        const auto *collection = static_cast<const ExtrusionEntityCollection *>(entity);
+        for (const ExtrusionEntity *child : collection->entities)
+            collect_closed_wall_loops(child, out, saw_open);
+        return;
+    }
+
+    auto accept_closed = [&](Polygon poly, bool hole_role) {
+        if (poly.size() < 3)
+            return;
+        ClosedWallLoop loop;
+        loop.poly      = std::move(poly);
+        loop.inset_idx = entity->inset_idx;
+        loop.hole      = hole_role || loop.poly.is_clockwise();
+        if (loop.hole) {
+            if (loop.poly.is_counter_clockwise())
+                loop.poly.reverse();
+        } else if (!loop.poly.is_counter_clockwise()) {
+            loop.poly.reverse();
+        }
+        out.emplace_back(std::move(loop));
+    };
+
+    if (entity->is_loop()) {
+        const auto *loop = static_cast<const ExtrusionLoop *>(entity);
+        accept_closed(loop->polygon(), (loop->loop_role() & elrHole) != 0);
+        return;
+    }
+
+    Polyline pl = entity->as_polyline();
+    if (pl.size() >= 4 && pl.first_point().distance_to(pl.last_point()) <= scale_(0.05)) {
+        if (pl.first_point() != pl.last_point())
+            pl.points.back() = pl.points.front();
+        pl.points.pop_back();
+        accept_closed(Polygon(std::move(pl.points)), false);
+    } else if (pl.size() >= 2) {
+        saw_open = true;
+    }
+}
+
+// Geometric innermost wall: leaf contours, and hole loops that no other hole contains
+// (the hole wall next to the infill). inset_idx is consulted only as a tie break when
+// several loops share the same nesting and a non-negative inset is present.
+static ExPolygons innermost_wall_expolygons(const std::vector<ClosedWallLoop> &loops)
+{
+    std::vector<size_t> contours;
+    std::vector<size_t> holes;
+    contours.reserve(loops.size());
+    holes.reserve(loops.size());
+    for (size_t i = 0; i < loops.size(); ++i)
+        (loops[i].hole ? holes : contours).push_back(i);
+
+    auto contains_poly = [](const Polygon &outer, const Polygon &inner) {
+        if (inner.size() < 3)
+            return false;
+        return outer.contains(inner.points.front()) && outer.contains(inner.points[inner.size() / 2]);
+    };
+
+    std::vector<char> keep_contour(contours.size(), 1);
+    for (size_t i = 0; i < contours.size(); ++i)
+        for (size_t j = 0; j < contours.size(); ++j)
+            if (i != j && contains_poly(loops[contours[i]].poly, loops[contours[j]].poly))
+                keep_contour[i] = 0;
+
+    std::vector<char> keep_hole(holes.size(), 1);
+    for (size_t i = 0; i < holes.size(); ++i)
+        for (size_t j = 0; j < holes.size(); ++j)
+            if (i != j && contains_poly(loops[holes[j]].poly, loops[holes[i]].poly))
+                keep_hole[i] = 0;
+
+    // Leaf contours are the innermost wall of each island (highest inset for concentric
+    // walls). Hole loops that contain another hole are the wall next to the infill.
+    ExPolygons out;
+    for (size_t i = 0; i < contours.size(); ++i) {
+        if (!keep_contour[i])
+            continue;
+        const ClosedWallLoop &loop = loops[contours[i]];
+        ExPolygon ex;
+        ex.contour = loop.poly;
+        for (size_t h = 0; h < holes.size(); ++h) {
+            if (!keep_hole[h])
+                continue;
+            const ClosedWallLoop &hole = loops[holes[h]];
+            if (ex.contour.contains(hole.poly.points.front()))
+                ex.holes.emplace_back(hole.poly);
+        }
+        out.emplace_back(std::move(ex));
+    }
+    return out.empty() ? out : union_ex(out);
+}
+
+// Innermost perimeter loops, shrunk by half an inner-wall width. Open Arachne paths and
+// missing perimeters fall back to the slice outline shrunk by 1.5x the outer wall width.
+// Top surfaces are cut out the same way as get_boundary().
+static ExPolygons get_comb_boundary(const Layer &layer)
+{
+    std::vector<ClosedWallLoop> loops;
+    bool saw_open = false;
+    for (const LayerRegion *layer_region : layer.regions())
+        if (layer_region != nullptr)
+            collect_closed_wall_loops(&layer_region->perimeters, loops, saw_open);
+
+    const ExPolygons innermost = innermost_wall_expolygons(loops);
+    const float      inner_w   = get_internal_perimeter_width(layer);
+    const float      ext_w     = get_external_perimeter_width(layer);
+    const float      spacing   = get_perimeter_spacing(layer);
+
+    ExPolygons tops;
+    for (const LayerRegion *layer_region : layer.regions())
+        if (layer_region != nullptr)
+            for (const Surface &surface : layer_region->fill_surfaces.surfaces)
+                if (surface.is_top())
+                    tops.emplace_back(surface.expolygon);
+    if (!tops.empty())
+        tops = union_ex(tops);
+
+    const bool use_outline = innermost.empty() || saw_open;
+    return AvoidCrossingPerimeters::build_comb_region(
+        innermost,
+        0.5 * double(inner_w),
+        use_outline ? layer.lslices : ExPolygons{},
+        1.5 * double(ext_w),
+        saw_open && !innermost.empty(),
+        tops,
+        1.2 * double(spacing) / 2.);
+}
+
 // called by AvoidCrossingPerimeters::travel_to()
 static Polygons get_boundary_external(const Layer &layer)
 {
@@ -1229,6 +1388,495 @@ static void init_boundary(AvoidCrossingPerimeters::Boundary *boundary, Polygons 
     init_boundary_distances(boundary);
 }
 
+static constexpr double COMB_DETOUR_CAP_MM = 20.0;
+static constexpr double COMB_SNAP_MM       = 2.0;
+
+static void emit_comb_log_line(const std::string &line)
+{
+    std::fwrite(line.data(), 1, line.size(), stderr);
+    std::fwrite("\n", 1, 1, stderr);
+    std::fflush(stderr);
+    const char *path = std::getenv("ORCA_COMB_LOG");
+    if (path == nullptr || path[0] == '\0')
+        return;
+    static std::mutex file_mutex;
+    std::lock_guard<std::mutex> lock(file_mutex);
+    std::ofstream out(path, std::ios::app);
+    if (out)
+        out << line << '\n';
+}
+
+ExPolygons AvoidCrossingPerimeters::build_comb_region(const ExPolygons &innermost_loops,
+                                                      double            inner_shrink_scaled,
+                                                      const ExPolygons &open_fallback_lslices,
+                                                      double            outline_shrink_scaled,
+                                                      bool              fill_open_islands,
+                                                      const ExPolygons &top_surfaces,
+                                                      double            top_cut_shrink_scaled)
+{
+    ExPolygons comb;
+    if (!innermost_loops.empty() && inner_shrink_scaled > 0.)
+        comb = union_ex(offset_ex(innermost_loops, -float(inner_shrink_scaled)));
+    else if (!innermost_loops.empty())
+        comb = union_ex(innermost_loops);
+
+    if (comb.empty()) {
+        if (!open_fallback_lslices.empty() && outline_shrink_scaled > 0.)
+            comb = offset_ex(open_fallback_lslices, -float(outline_shrink_scaled));
+    } else if (fill_open_islands && !open_fallback_lslices.empty() && outline_shrink_scaled > 0.) {
+        // Closed loops cover their own islands. Open Arachne paths elsewhere use the outline fallback.
+        const ExPolygons near = offset_ex(innermost_loops, float(scale_(1.)));
+        const ExPolygons far  = diff_ex(open_fallback_lslices, near);
+        if (!far.empty()) {
+            append(comb, offset_ex(far, -float(outline_shrink_scaled)));
+            comb = union_ex(comb);
+        }
+    }
+
+    if (!comb.empty() && !top_surfaces.empty()) {
+        const ExPolygons tops = union_ex(top_surfaces);
+        const ExPolygons cut  = top_cut_shrink_scaled > 0. ? offset_ex(tops, -float(top_cut_shrink_scaled)) : tops;
+        comb = diff_ex(comb, cut);
+    }
+    return comb;
+}
+
+void AvoidCrossingPerimeters::emit_comb_log(const CombLogEntry &entry)
+{
+    m_comb_log.push_back(entry);
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(3);
+    if (entry.routed && entry.reason == "cap") {
+        ss << "COMB_CAP reason=cap layer=" << entry.layer_id
+           << " from=(" << entry.from_x << "," << entry.from_y << ")"
+           << " to=(" << entry.to_x << "," << entry.to_y << ")"
+           << " detour_mm=" << entry.detour_mm;
+    } else {
+        ss << "COMB_UNROUTED reason=" << entry.reason
+           << " layer=" << entry.layer_id
+           << " from=(" << entry.from_x << "," << entry.from_y << ")"
+           << " to=(" << entry.to_x << "," << entry.to_y << ")";
+    }
+    emit_comb_log_line(ss.str());
+}
+
+AvoidCrossingPerimeters::~AvoidCrossingPerimeters()
+{
+    if (m_comb_summary_emitted || m_comb_log.empty())
+        return;
+    m_comb_summary_emitted = true;
+    size_t unrouted = 0;
+    size_t caps     = 0;
+    for (const CombLogEntry &entry : m_comb_log) {
+        if (entry.reason == "cap" && entry.routed)
+            ++caps;
+        else
+            ++unrouted;
+    }
+    std::ostringstream ss;
+    ss << "COMB_UNROUTED_SUMMARY unrouted=" << unrouted << " cap_exceeded=" << caps;
+    emit_comb_log_line(ss.str());
+}
+
+void AvoidCrossingPerimeters::ensure_comb(const Layer &layer)
+{
+    if (m_comb_init)
+        return;
+    m_comb_init = true;
+    m_comb = get_comb_boundary(layer);
+    m_comb_bboxes.clear();
+    m_comb_bboxes.reserve(m_comb.size());
+    for (const ExPolygon &ex : m_comb)
+        m_comb_bboxes.emplace_back(get_extents(ex));
+    m_comb_boundary.clear();
+    if (m_comb.empty())
+        return;
+    init_boundary(&m_comb_boundary, to_polygons(m_comb));
+    BoundingBox bbox(get_extents(m_comb));
+    bbox.offset(scale_(1.));
+    m_grid_comb.set_bbox(bbox);
+    m_grid_comb.create(m_comb, coord_t(scale_(1.)));
+}
+
+static void dedup_polyline(Polyline &pl)
+{
+    if (pl.size() < 2)
+        return;
+    Points kept;
+    kept.reserve(pl.size());
+    kept.push_back(pl.points.front());
+    for (size_t i = 1; i < pl.size(); ++i)
+        if (pl.points[i] != kept.back())
+            kept.push_back(pl.points[i]);
+    if (kept.size() >= 2)
+        pl.points.swap(kept);
+}
+
+static bool internal_polyline_inside(const ExPolygon &ex, const Polyline &pl)
+{
+    if (pl.size() < 2)
+        return false;
+    size_t first = 0;
+    size_t last  = pl.size() - 1;
+    if (!ex.contains(pl.points.front()) && pl.size() >= 3)
+        first = 1;
+    if (!ex.contains(pl.points.back()) && last > first)
+        --last;
+    if (last <= first)
+        return ex.contains(pl.points[first]);
+    Polyline sub;
+    sub.points.reserve(last - first + 1);
+    for (size_t i = first; i <= last; ++i)
+        sub.points.push_back(pl.points[i]);
+    if (ex.contains(sub))
+        return true;
+    const Polylines outside = diff_pl(sub, ex);
+    double out_len = 0.;
+    for (const Polyline &piece : outside)
+        out_len += piece.length();
+    return out_len < scale_(0.05);
+}
+
+struct RingProjection {
+    size_t ring  = 0;
+    size_t seg   = 0;
+    Point  point;
+    double dist2 = std::numeric_limits<double>::max();
+    bool   ok    = false;
+};
+
+static RingProjection project_onto_boundary(const AvoidCrossingPerimeters::Boundary &boundary, const Point &pt)
+{
+    RingProjection best;
+    for (size_t ri = 0; ri < boundary.boundaries.size(); ++ri) {
+        const Polygon &poly = boundary.boundaries[ri];
+        if (poly.size() < 2)
+            continue;
+        for (size_t si = 0; si < poly.size(); ++si) {
+            Point closest;
+            const double d2 = Line(poly.points[si], poly.points[(si + 1) % poly.size()]).distance_to_squared(pt, &closest);
+            if (d2 < best.dist2) {
+                best.ring  = ri;
+                best.seg   = si;
+                best.point = closest;
+                best.dist2 = d2;
+                best.ok    = true;
+            }
+        }
+    }
+    return best;
+}
+
+static int locate_comb_island(const ExPolygons &comb, const std::vector<BoundingBox> &bboxes, const Point &pt, Point &snapped, bool &inside)
+{
+    inside  = false;
+    snapped = pt;
+    for (size_t i = 0; i < comb.size(); ++i) {
+        if ((bboxes.empty() || bboxes[i].contains(pt)) && comb[i].contains(pt)) {
+            inside = true;
+            return int(i);
+        }
+    }
+    const double snap_limit2 = double(scale_(COMB_SNAP_MM)) * double(scale_(COMB_SNAP_MM));
+    int    best_i = -1;
+    double best_d = snap_limit2;
+    Point  best_pt;
+    for (size_t i = 0; i < comb.size(); ++i) {
+        const ExPolygon &ex = comb[i];
+        Point p = pt.projection_onto(ex.contour);
+        double d = (p - pt).cast<double>().squaredNorm();
+        for (const Polygon &hole : ex.holes) {
+            const Point ph = pt.projection_onto(hole);
+            const double dh = (ph - pt).cast<double>().squaredNorm();
+            if (dh < d) {
+                d = dh;
+                p = ph;
+            }
+        }
+        if (d <= best_d) {
+            best_d  = d;
+            best_i  = int(i);
+            best_pt = p;
+        }
+    }
+    if (best_i < 0)
+        return -1;
+    snapped = best_pt;
+    return best_i;
+}
+
+// Walk already-found boundary hits, taking the shorter direction on each ring, then simplify.
+// Contours are CCW and holes are CW, so the existing left-normal offset moves into the material.
+static Polyline walk_boundary_hits(const AvoidCrossingPerimeters::Boundary &boundary,
+                                   std::vector<Intersection>                intersections,
+                                   const Point                             &start,
+                                   const Point                             &end)
+{
+    Polyline empty;
+    if (intersections.size() < 2 || boundary.boundaries.empty())
+        return empty;
+
+    const Vec2d dir = (end - start).cast<double>();
+    std::sort(intersections.begin(), intersections.end(), [dir](const Intersection &l, const Intersection &r) {
+        return (r.point - l.point).template cast<double>().dot(dir) > 0.;
+    });
+    {
+        std::vector<Intersection> unique;
+        unique.reserve(intersections.size());
+        for (const Intersection &hit : intersections) {
+            if (!unique.empty() && unique.back().border_idx == hit.border_idx && unique.back().point.distance_to(hit.point) <= scale_(0.01))
+                continue;
+            unique.push_back(hit);
+        }
+        intersections.swap(unique);
+    }
+    if (intersections.size() < 2)
+        return empty;
+
+    const Polygons &boundaries = boundary.boundaries;
+    std::vector<TravelPoint> result;
+    result.push_back({start, -1});
+    size_t paired = 0;
+    for (auto it_first = intersections.begin(); it_first != intersections.end(); ++it_first) {
+        const Intersection &intersection_first = *it_first;
+        auto it_last_item = std::make_reverse_iterator(it_first) - 1;
+        auto it_second_r  = std::find_if(intersections.rbegin(), it_last_item, [&intersection_first](const Intersection &intersection) {
+            return intersection_first.border_idx == intersection.border_idx;
+        });
+        if (it_second_r == it_last_item)
+            continue;
+
+        const Polygon &poly = boundaries[intersection_first.border_idx];
+        if (poly.size() < 2)
+            continue;
+        size_t left_idx  = intersection_first.line_idx;
+        size_t right_idx = intersection_first.line_idx + 1 == poly.points.size() ? 0 : intersection_first.line_idx + 1;
+        result.push_back({get_middle_point_offset(poly, left_idx, right_idx, intersection_first.point, coord_t(SCALED_EPSILON)),
+                          int(intersection_first.border_idx), intersection_first.do_not_remove});
+
+        auto it_second = it_second_r.base() - 1;
+        const Intersection &intersection_second = *it_second;
+        const float contour_length = boundary.boundaries_params[intersection_first.border_idx].empty()
+                                         ? 0.f
+                                         : boundary.boundaries_params[intersection_first.border_idx].back();
+        const Direction shortest = get_shortest_direction(boundary, intersection_first, intersection_second, contour_length);
+        if (shortest == Direction::Forward) {
+            for (int line_idx = int(intersection_first.line_idx); line_idx != int(intersection_second.line_idx);
+                 line_idx     = line_idx + 1 < int(poly.size()) ? line_idx + 1 : 0)
+                result.push_back({get_polygon_vertex_offset(poly,
+                                                            (line_idx + 1 == int(poly.points.size())) ? 0 : (line_idx + 1),
+                                                            coord_t(SCALED_EPSILON)),
+                                  int(intersection_first.border_idx)});
+        } else {
+            for (int line_idx = int(intersection_first.line_idx); line_idx != int(intersection_second.line_idx);
+                 line_idx     = line_idx - 1 >= 0 ? line_idx - 1 : int(poly.size()) - 1)
+                result.push_back({get_polygon_vertex_offset(poly, size_t(line_idx), coord_t(SCALED_EPSILON)),
+                                  int(intersection_first.border_idx)});
+        }
+        left_idx  = intersection_second.line_idx;
+        right_idx = (intersection_second.line_idx >= poly.points.size() - 1) ? 0 : (intersection_second.line_idx + 1);
+        result.push_back({get_middle_point_offset(poly, left_idx, right_idx, intersection_second.point, coord_t(SCALED_EPSILON)),
+                          int(intersection_second.border_idx), intersection_second.do_not_remove});
+        it_first = it_second;
+        ++paired;
+    }
+    result.push_back({end, -1});
+    if (paired == 0)
+        return empty;
+
+    std::vector<TravelPoint> simplified = simplify_travel(boundary, result);
+    Polyline out = to_polyline(simplified.empty() ? result : simplified);
+    dedup_polyline(out);
+    if (!out.empty()) {
+        out.points.front() = start;
+        out.points.back()  = end;
+    }
+    return out;
+}
+
+static std::vector<Intersection> intersections_with_boundary(const AvoidCrossingPerimeters::Boundary &boundary,
+                                                            const Point                             &start,
+                                                            const Point                             &end)
+{
+    std::vector<Intersection> intersections;
+    const Line travel(start, end);
+    for (size_t ri = 0; ri < boundary.boundaries.size(); ++ri) {
+        const Polygon &poly = boundary.boundaries[ri];
+        if (poly.size() < 2 || ri >= boundary.boundaries_params.size())
+            continue;
+        for (size_t li = 0; li < poly.size(); ++li) {
+            Point ip;
+            const Line edge(poly.points[li], poly.points[(li + 1) % poly.size()]);
+            if (!travel.intersection(edge, &ip))
+                continue;
+            Intersection hit;
+            hit.border_idx    = ri;
+            hit.line_idx      = li;
+            hit.point         = ip;
+            hit.distance      = boundary.boundaries_params[ri][li] + float((ip - poly.points[li]).cast<double>().norm());
+            hit.do_not_remove = false;
+            intersections.push_back(hit);
+        }
+    }
+    return intersections;
+}
+
+static Intersection intersection_from_projection(const AvoidCrossingPerimeters::Boundary &boundary, const RingProjection &proj)
+{
+    Intersection hit;
+    const Polygon &poly = boundary.boundaries[proj.ring];
+    hit.border_idx    = proj.ring;
+    hit.line_idx      = proj.seg;
+    hit.point         = proj.point;
+    hit.distance      = boundary.boundaries_params[proj.ring][proj.seg] + float((proj.point - poly.points[proj.seg]).cast<double>().norm());
+    hit.do_not_remove = true;
+    return hit;
+}
+
+static AvoidCrossingPerimeters::Boundary boundary_from_expolygon(const ExPolygon &ex)
+{
+    Polygons rings;
+    rings.reserve(ex.holes.size() + 1);
+    Polygon contour = ex.contour;
+    if (!contour.is_counter_clockwise())
+        contour.reverse();
+    rings.push_back(std::move(contour));
+    for (Polygon hole : ex.holes) {
+        // CW holes: the left normal used by get_polygon_vertex_offset points into the material.
+        if (hole.is_counter_clockwise())
+            hole.reverse();
+        rings.push_back(std::move(hole));
+    }
+    AvoidCrossingPerimeters::Boundary boundary;
+    init_boundary(&boundary, std::move(rings));
+    return boundary;
+}
+
+static size_t distinct_rings(const std::vector<Intersection> &hits)
+{
+    std::unordered_set<size_t> rings;
+    for (const Intersection &hit : hits)
+        rings.insert(hit.border_idx);
+    return rings.size();
+}
+
+// Route start→end so the travel stays in `ex`. Endpoints in the wall band are joined by the
+// shortest connector; the rest of the path follows the ring, shorter direction first.
+static Polyline route_inside_expolygon(const ExPolygon &ex, const Point &start, const Point &end, const Layer *layer)
+{
+    if (ex.contains(Line(start, end)))
+        return Polyline{start, end};
+
+    AvoidCrossingPerimeters::Boundary boundary = boundary_from_expolygon(ex);
+    std::vector<Intersection> hits = intersections_with_boundary(boundary, start, end);
+
+    auto accept = [&](Polyline pl) {
+        dedup_polyline(pl);
+        if (pl.size() >= 2 && internal_polyline_inside(ex, pl))
+            return pl;
+        return Polyline{};
+    };
+
+    if (hits.size() >= 2) {
+        if (layer != nullptr && distinct_rings(hits) > 1 && !boundary.boundaries.empty()) {
+            Polyline avoided;
+            avoid_perimeters(boundary, start, end, *layer, avoided);
+            if (avoided.size() >= 2) {
+                avoided.points.front() = start;
+                avoided.points.back()  = end;
+                Polyline ok = accept(std::move(avoided));
+                if (!ok.empty())
+                    return ok;
+            }
+        }
+        Polyline walked = accept(walk_boundary_hits(boundary, hits, start, end));
+        if (!walked.empty())
+            return walked;
+    }
+
+    const RingProjection ps = project_onto_boundary(boundary, start);
+    const RingProjection pe = project_onto_boundary(boundary, end);
+    if (ps.ok && pe.ok && ps.ring == pe.ring && ps.point.distance_to(pe.point) > scale_(0.01)) {
+        std::vector<Intersection> injected{intersection_from_projection(boundary, ps), intersection_from_projection(boundary, pe)};
+        Polyline walked = accept(walk_boundary_hits(boundary, std::move(injected), start, end));
+        if (!walked.empty())
+            return walked;
+        Polyline along{start, ps.point, pe.point, end};
+        dedup_polyline(along);
+        Polyline ok = accept(std::move(along));
+        if (!ok.empty())
+            return ok;
+    }
+    return Polyline{};
+}
+
+Polyline AvoidCrossingPerimeters::apply_comb_fallback(bool              enabled,
+                                                      const ExPolygons &comb,
+                                                      const Polyline   &original,
+                                                      int               layer_id,
+                                                      const Layer      *layer)
+{
+    if (!enabled || original.size() < 2)
+        return original;
+
+    const Point start = original.points.front();
+    const Point end   = original.points.back();
+    auto log_entry = [&](const std::string &reason, bool routed, double detour_mm) {
+        CombLogEntry entry;
+        entry.reason    = reason;
+        entry.layer_id  = layer_id;
+        entry.from_x    = unscale_(start.x());
+        entry.from_y    = unscale_(start.y());
+        entry.to_x      = unscale_(end.x());
+        entry.to_y      = unscale_(end.y());
+        entry.detour_mm = detour_mm;
+        entry.routed    = routed;
+        this->emit_comb_log(entry);
+    };
+
+    if (comb.empty()) {
+        log_entry("collapsed", false, 0.);
+        return original;
+    }
+
+    std::vector<BoundingBox> bboxes;
+    bboxes.reserve(comb.size());
+    for (const ExPolygon &ex : comb)
+        bboxes.emplace_back(get_extents(ex));
+
+    Point snap_start, snap_end;
+    bool  in_start = false, in_end = false;
+    const int island_start = locate_comb_island(comb, bboxes, start, snap_start, in_start);
+    const int island_end   = locate_comb_island(comb, bboxes, end, snap_end, in_end);
+    (void) snap_start;
+    (void) snap_end;
+    (void) in_start;
+    (void) in_end;
+    if (island_start < 0 || island_end < 0) {
+        log_entry("collapsed", false, 0.);
+        return original;
+    }
+    if (island_start != island_end) {
+        log_entry("island", false, 0.);
+        return original;
+    }
+
+    const ExPolygon &ex = comb[size_t(island_start)];
+    if (internal_polyline_inside(ex, original) && ex.contains(original.points.front()) && ex.contains(original.points.back()))
+        return original;
+
+    Polyline routed = route_inside_expolygon(ex, start, end, layer);
+    if (routed.size() < 2) {
+        log_entry("collapsed", false, 0.);
+        return original;
+    }
+
+    const double detour_mm = unscale_(routed.length() - Line(start, end).length());
+    if (detour_mm > COMB_DETOUR_CAP_MM)
+        log_entry("cap", true, detour_mm);
+    return routed;
+}
+
 // Plan travel, which avoids perimeter crossings by following the boundaries of the layer.
 Polyline AvoidCrossingPerimeters::travel_to(const GCode &gcodegen, const Point &point, bool *could_be_wipe_disabled)
 {
@@ -1302,10 +1950,28 @@ Polyline AvoidCrossingPerimeters::travel_to(const GCode &gcodegen, const Point &
         }
     }
 
+    // Per-travel combing fallback. Runs only after the existing route and detour check.
+    // Flag off leaves result_pl untouched, so the G-code stays byte-identical.
+    bool fallback_rerouted = false;
+    if (!use_external && !is_support_layer && gcodegen.config().avoid_crossing_wall_fallback.value) {
+        ensure_comb(*gcodegen.layer());
+        const bool already_inside = !m_comb.empty() && result_pl.size() >= 2 &&
+                                    any_expolygon_contains(m_comb, m_comb_bboxes, m_grid_comb, result_pl);
+        if (!already_inside) {
+            const Polyline before = result_pl;
+            Polyline routed = apply_comb_fallback(true, m_comb, result_pl, int(gcodegen.layer()->id()), gcodegen.layer());
+            if (routed.size() >= 2 && routed.points != before.points) {
+                result_pl = std::move(routed);
+                fallback_rerouted = true;
+                max_detour_length_exceeded = false;
+            }
+        }
+    }
+
     if (use_external) {
         result_pl.translate(-scaled_origin);
         *could_be_wipe_disabled = false;
-    } else if (max_detour_length_exceeded) {
+    } else if (max_detour_length_exceeded && !fallback_rerouted) {
         *could_be_wipe_disabled = false;
     } else
         *could_be_wipe_disabled = !need_wipe(gcodegen, m_lslices_offset, m_lslices_offset_bboxes, m_grid_lslice, travel, result_pl, travel_intersection_count);
@@ -1319,6 +1985,10 @@ void AvoidCrossingPerimeters::init_layer(const Layer &layer)
 {
     m_internal.clear();
     m_external.clear();
+    m_comb.clear();
+    m_comb_bboxes.clear();
+    m_comb_boundary.clear();
+    m_comb_init = false;
 
     m_lslices_offset.clear();
     m_lslices_offset_bboxes.clear();
