@@ -1389,7 +1389,46 @@ static void init_boundary(AvoidCrossingPerimeters::Boundary *boundary, Polygons 
 }
 
 static constexpr double COMB_DETOUR_CAP_MM = 20.0;
-static constexpr double COMB_SNAP_MM       = 2.0;
+// Outer-wall points sit outside a shrunk comb. 6 mm still will not bridge a real gap between islands.
+static constexpr double COMB_SNAP_MM       = 6.0;
+
+// Deepest inset that does not collapse and does not split a single island into several.
+// A full 0.5*wall shrink on a thin insole disappears; the next steps are the 0.5 mm
+// band inset, then shallower shrinks, then the unshrunk centerline (shrink 0).
+static ExPolygons offset_progressive(const ExPolygons &src, double max_shrink)
+{
+    if (src.empty())
+        return {};
+
+    const ExPolygons center       = union_ex(src);
+    const size_t     base_islands = std::max<size_t>(center.size(), 1);
+
+    std::vector<double> shrinks;
+    shrinks.reserve(6);
+    if (max_shrink > 0.)
+        shrinks.push_back(max_shrink);
+    const double band = double(scale_(0.5));
+    if (max_shrink > band + 1.)
+        shrinks.push_back(band);
+    for (double factor : {0.5, 0.25, 0.12}) {
+        const double s = max_shrink * factor;
+        if (s > 1.)
+            shrinks.push_back(s);
+    }
+    shrinks.push_back(0.);
+
+    ExPolygons deepest_split;
+    for (double shrink : shrinks) {
+        ExPolygons trial = shrink <= 0. ? center : union_ex(offset_ex(src, -float(shrink)));
+        if (trial.empty())
+            continue;
+        if (trial.size() <= base_islands)
+            return trial;
+        if (deepest_split.empty())
+            deepest_split = std::move(trial);
+    }
+    return deepest_split.empty() ? center : deepest_split;
+}
 
 static void emit_comb_log_line(const std::string &line)
 {
@@ -1415,20 +1454,18 @@ ExPolygons AvoidCrossingPerimeters::build_comb_region(const ExPolygons &innermos
                                                       double            top_cut_shrink_scaled)
 {
     ExPolygons comb;
-    if (!innermost_loops.empty() && inner_shrink_scaled > 0.)
-        comb = union_ex(offset_ex(innermost_loops, -float(inner_shrink_scaled)));
-    else if (!innermost_loops.empty())
-        comb = union_ex(innermost_loops);
+    if (!innermost_loops.empty())
+        comb = offset_progressive(innermost_loops, inner_shrink_scaled);
 
     if (comb.empty()) {
-        if (!open_fallback_lslices.empty() && outline_shrink_scaled > 0.)
-            comb = offset_ex(open_fallback_lslices, -float(outline_shrink_scaled));
+        if (!open_fallback_lslices.empty())
+            comb = offset_progressive(open_fallback_lslices, outline_shrink_scaled);
     } else if (fill_open_islands && !open_fallback_lslices.empty() && outline_shrink_scaled > 0.) {
         // Closed loops cover their own islands. Open Arachne paths elsewhere use the outline fallback.
         const ExPolygons near = offset_ex(innermost_loops, float(scale_(1.)));
         const ExPolygons far  = diff_ex(open_fallback_lslices, near);
         if (!far.empty()) {
-            append(comb, offset_ex(far, -float(outline_shrink_scaled)));
+            append(comb, offset_progressive(far, outline_shrink_scaled));
             comb = union_ex(comb);
         }
     }
@@ -1436,7 +1473,10 @@ ExPolygons AvoidCrossingPerimeters::build_comb_region(const ExPolygons &innermos
     if (!comb.empty() && !top_surfaces.empty()) {
         const ExPolygons tops = union_ex(top_surfaces);
         const ExPolygons cut  = top_cut_shrink_scaled > 0. ? offset_ex(tops, -float(top_cut_shrink_scaled)) : tops;
-        comb = diff_ex(comb, cut);
+        const ExPolygons punched = diff_ex(comb, cut);
+        // A top cut that erases a thin insole would force a straight move through the wall.
+        if (!punched.empty())
+            comb = punched;
     }
     return comb;
 }
@@ -1451,6 +1491,10 @@ void AvoidCrossingPerimeters::emit_comb_log(const CombLogEntry &entry)
            << " from=(" << entry.from_x << "," << entry.from_y << ")"
            << " to=(" << entry.to_x << "," << entry.to_y << ")"
            << " detour_mm=" << entry.detour_mm;
+    } else if (entry.routed && entry.reason == "island") {
+        ss << "COMB_LIFT reason=island layer=" << entry.layer_id
+           << " from=(" << entry.from_x << "," << entry.from_y << ")"
+           << " to=(" << entry.to_x << "," << entry.to_y << ")";
     } else {
         ss << "COMB_UNROUTED reason=" << entry.reason
            << " layer=" << entry.layer_id
@@ -1467,14 +1511,17 @@ AvoidCrossingPerimeters::~AvoidCrossingPerimeters()
     m_comb_summary_emitted = true;
     size_t unrouted = 0;
     size_t caps     = 0;
+    size_t lifts    = 0;
     for (const CombLogEntry &entry : m_comb_log) {
         if (entry.reason == "cap" && entry.routed)
             ++caps;
+        else if (entry.reason == "island" && entry.routed)
+            ++lifts;
         else
             ++unrouted;
     }
     std::ostringstream ss;
-    ss << "COMB_UNROUTED_SUMMARY unrouted=" << unrouted << " cap_exceeded=" << caps;
+    ss << "COMB_UNROUTED_SUMMARY unrouted=" << unrouted << " cap_exceeded=" << caps << " lift=" << lifts;
     emit_comb_log_line(ss.str());
 }
 
@@ -1819,6 +1866,8 @@ Polyline AvoidCrossingPerimeters::apply_comb_fallback(bool              enabled,
     if (!enabled || original.size() < 2)
         return original;
 
+    m_island_lift = false;
+
     const Point start = original.points.front();
     const Point end   = original.points.back();
     auto log_entry = [&](const std::string &reason, bool routed, double detour_mm) {
@@ -1857,7 +1906,10 @@ Polyline AvoidCrossingPerimeters::apply_comb_fallback(bool              enabled,
         return original;
     }
     if (island_start != island_end) {
-        log_entry("island", false, 0.);
+        // No inside path joins the islands. Keep the XY move and ask the caller to retract and lift
+        // (z-hop, or a belt-normal lift) so the nozzle does not cross the wall on the surface.
+        m_island_lift = true;
+        log_entry("island", true, 0.);
         return original;
     }
 
@@ -1882,6 +1934,7 @@ Polyline AvoidCrossingPerimeters::travel_to(const GCode &gcodegen, const Point &
 {
     // If use_external, then perform the path planning in the world coordinate system (correcting for the gcodegen offset).
     // Otherwise perform the path planning in the coordinate system of the active object.
+    m_island_lift = false;
     bool        use_external  = m_use_external_mp || m_use_external_mp_once;
     Point       scaled_origin = use_external ? Point::new_scale(gcodegen.origin()(0), gcodegen.origin()(1)) : Point(0, 0);
     const Point start         = gcodegen.last_pos() + scaled_origin;
@@ -1988,7 +2041,8 @@ void AvoidCrossingPerimeters::init_layer(const Layer &layer)
     m_comb.clear();
     m_comb_bboxes.clear();
     m_comb_boundary.clear();
-    m_comb_init = false;
+    m_comb_init   = false;
+    m_island_lift = false;
 
     m_lslices_offset.clear();
     m_lslices_offset_bboxes.clear();

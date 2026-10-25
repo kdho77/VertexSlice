@@ -7215,6 +7215,23 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
     // if needed, write the gcode_label_objects_end then gcode_label_objects_start
     m_writer.add_object_change_labels(gcode);
 
+    // Island hops have no inside path. Retract (when the filament has a retract length) and
+    // lift on the belt normal / Z so the straight move does not ride the wall on the surface.
+    // Flag off never sets the request, so this block emits nothing.
+    double comb_hop_gcode = 0.;
+    bool   comb_lift_owned = false;
+    if (m_avoid_crossing_perimeters.consume_island_lift() && m_writer.filament() != nullptr && m_writer.get_zhop() == 0.) {
+        if (m_writer.filament()->retraction_length() > 0.)
+            gcode += m_writer.retract();
+        gcode += m_writer.eager_lift(LiftType::NormalLift);
+        const double lifted = m_writer.get_zhop();
+        if (lifted > 0.) {
+            comb_lift_owned = true;
+            // Belt Y-hop is hop/√2 in gcode space so Y_mach increases by z_hop and Z_mach stays put.
+            comb_hop_gcode = m_belt_inclined_gcode ? lifted / 1.41421356 : lifted;
+        }
+    }
+
     // use G1 because we rely on paths being straight (G0 may make round paths)
     if (travel.size() >= 2) {
         // ORCA_BELT: Belt travel strategy.
@@ -7227,6 +7244,10 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
                 const auto& dest2d = this->point_to_gcode(travel.points[i]);
                 double inclined_z = compute_belt_inclined_z(dest2d, m_nominal_z);
                 Vec3d dest3d(dest2d(0), dest2d(1), inclined_z);
+                if (comb_hop_gcode != 0.) {
+                    dest3d(1) += comb_hop_gcode;
+                    dest3d(2) += comb_hop_gcode;
+                }
                 if (m_need_change_layer_lift_z) {
                     // First travel of layer: combined XYZ sets belt position
                     gcode += m_writer.travel_to_xyz(dest3d, comment);
@@ -7248,6 +7269,8 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
                 // No extra movements emitted by avoid_crossing_perimeters, simply move to the end point with z change
                 const auto& dest2d = this->point_to_gcode(travel.points.back());
                 double base_z = z == DBL_MAX ? m_nominal_z : z;
+                if (comb_hop_gcode != 0.)
+                    base_z += comb_hop_gcode;
                 Vec3d dest3d(dest2d(0), dest2d(1), base_z);
                 gcode += m_writer.travel_to_xyz(dest3d, comment, m_need_change_layer_lift_z);
                 m_need_change_layer_lift_z = false;
@@ -7259,14 +7282,14 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
                         // Lift to normal z at beginning
                         Vec3d dest3d(this->point_to_gcode(travel.points[i])(0),
                                      this->point_to_gcode(travel.points[i])(1),
-                                     m_nominal_z);
+                                     m_nominal_z + comb_hop_gcode);
                         gcode += m_writer.travel_to_xyz(dest3d, comment, m_need_change_layer_lift_z);
                         m_need_change_layer_lift_z = false;
                     } else if (z != DBL_MAX && i == travel.size() - 1) {
                         // Apply z_ratio for the very last point
                         Vec3d dest3d(this->point_to_gcode(travel.points[i])(0),
                                      this->point_to_gcode(travel.points[i])(1),
-                                     z);
+                                     z + comb_hop_gcode);
                         gcode += m_writer.travel_to_xyz(dest3d, comment);
                     } else {
                         // For all points in between, no z change
@@ -7275,6 +7298,8 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
                 }
             }
         }
+        if (comb_lift_owned)
+            gcode += m_writer.unlift();
         this->set_last_pos(travel.points.back());
     }
 
