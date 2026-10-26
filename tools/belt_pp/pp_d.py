@@ -407,6 +407,50 @@ def _hg_rep_inside(pts):
     return (cx, cy)
 
 
+def _hg_shell_thick(outer, geom):
+    """True when some interior point is at least 0.5 mm from the wall.
+
+    A concave shell's longest-edge representative can sit 0.01 mm inside
+    that edge. The shell is thin only when every probe stays shallow.
+    """
+    index = geom["index"]
+    need = _HEEL_MIN_WIDTH * 0.5
+
+    def clears(px, py):
+        if not _hg_strict_inside(px, py, geom):
+            return False
+        return _hg_dist_point_index(px, py, index) + 1e-3 >= need
+
+    n = len(outer)
+    if n < 3:
+        return False
+    cx = sum(p[0] for p in outer) / n
+    cy = sum(p[1] for p in outer) / n
+    if clears(cx, cy):
+        return True
+    best_i, best_l = 0, -1.0
+    for i in range(n):
+        ax, ay = outer[i]
+        bx, by = outer[(i + 1) % n]
+        el = math.hypot(bx - ax, by - ay)
+        if el > best_l:
+            best_l, best_i = el, i
+    ax, ay = outer[best_i]
+    bx, by = outer[(best_i + 1) % n]
+    el = math.hypot(bx - ax, by - ay) or 1.0
+    mx, my = 0.5 * (ax + bx), 0.5 * (ay + by)
+    if _hg_area(outer) >= 0.0:
+        nx, ny = -(by - ay) / el, (bx - ax) / el
+    else:
+        nx, ny = (by - ay) / el, -(bx - ax) / el
+    if not _hg_strict_inside(mx + nx * 0.2, my + ny * 0.2, geom):
+        nx, ny = -nx, -ny
+    for eps in (0.2, 0.5, 1.0, 2.0, 4.0, 8.0):
+        if clears(mx + nx * eps, my + ny * eps):
+            return True
+    return False
+
+
 def _hg_shells_from_loops(loops):
     """Closed outer-wall loops. Even nesting depth is material, odd depth is a hole."""
     raw = []
@@ -1038,19 +1082,26 @@ def _hg_span_ok(x0, y0, x1, y1, geom, role):
                 return False
             if _hg_dist_point_index(x0, y0, geom["index"]) + 1e-3 < _HEEL_ACCEPT_INSET:
                 return False
-            return _hg_dist_point_index(x0, y0 + LIFT_MM, geom["index"]) + 1e-3 >= _HEEL_ACCEPT_INSET + _HEEL_EMIT_PAD
+            lifted = _hg_dist_point_index(x0, y0 + LIFT_MM, geom["index"])
+            if lifted + 1e-3 >= _HEEL_ACCEPT_INSET + _HEEL_EMIT_PAD:
+                return True
+            # A channel under ~1.4 mm cannot keep 0.5 mm after the 0.4 mm lift.
+            return not _hg_deeper_clears(x0, y0, geom)
         if not _hg_strict_inside(x0, y0, geom) or not _hg_strict_inside(x1, y1, geom):
             return False
         # Half of _HEEL_MIN_WIDTH. A thinner sliver has no such inset.
         if _hg_segment_closer_than(x0, y0, x1, y1, geom["index"], _HEEL_MIN_WIDTH * 0.5 - 1e-3):
             return False
         # The leg is emitted 0.4 mm higher in Y. That shift can land it on the
-        # outer wall even when the unlifted point was 0.5 mm inside.
+        # outer wall even when the unlifted point was 0.5 mm inside. A channel
+        # that cannot hold a deeper inset keeps the 0.5 mm offset.
         if _hg_segment_closer_than(
             x0, y0 + LIFT_MM, x1, y1 + LIFT_MM, geom["index"],
             _HEEL_ACCEPT_INSET + _HEEL_EMIT_PAD - 1e-3,
         ):
-            return False
+            mx, my = 0.5 * (x0 + x1), 0.5 * (y0 + y1)
+            if _hg_deeper_clears(mx, my, geom) or _hg_deeper_clears(x0, y0, geom):
+                return False
         return True
     return _hg_end_span_ok(x0, y0, x1, y1, geom, role)
 
@@ -1119,9 +1170,10 @@ def _hg_nonfinal_problem(x0, y0, x1, y1, geom, allow_departure):
             return None
         if not _hg_strict_inside(x0, y0, geom):
             return "outside"
-        if lifted_d(x0, y0) + 1e-3 < _HEEL_ACCEPT_INSET + _HEEL_EMIT_PAD:
+        ud0 = _hg_dist_point_index(x0, y0, index)
+        if ud0 + 1e-3 < _HEEL_ACCEPT_INSET:
             return "wall_ride"
-        if _hg_dist_point_index(x0, y0, index) + 1e-3 < _HEEL_ACCEPT_INSET:
+        if lifted_d(x0, y0) + 1e-3 < _HEEL_ACCEPT_INSET + _HEEL_EMIT_PAD and _hg_deeper_clears(x0, y0, geom):
             return "wall_ride"
         return None
     lifted_close = _hg_segment_closer_than(x0, y0 + LIFT_MM, x1, y1 + LIFT_MM, index, lift_limit)
@@ -1129,23 +1181,32 @@ def _hg_nonfinal_problem(x0, y0, x1, y1, geom, allow_departure):
     cut = 0.0
     if allow_departure and (lifted_close or unlifted_close):
         n = max(4, int(math.ceil(L / 0.25)))
-        prev_d = lifted_d(x0, y0)
+        prev_u = _hg_dist_point_index(x0, y0, index)
         cut = None
         for i in range(1, n + 1):
             t = i / float(n)
             px, py = at(t)
             d = lifted_d(px, py)
             ud = _hg_dist_point_index(px, py, index)
+            # The emitted leg is lifted. More than 0.01 mm outside that
+            # outline is the box failure, including on the opening hop.
+            if (not _hg_strict_inside(px, py + LIFT_MM, geom)) and t * L > _HEEL_OUT_LEN:
+                return "outside"
             outside = (not _hg_strict_inside(px, py, geom)) and ud > _HEEL_BOUND_EPS
             if outside:
                 return "outside"
-            if prev_d + 1e-3 < _HEEL_ACCEPT_INSET and d < prev_d - 0.05:
+            # Back toward the wall we left is a ride. Lifted clearance can
+            # fall in a narrow channel once the far wall is the closer one.
+            if prev_u + 1e-3 < _HEEL_ACCEPT_INSET and ud < prev_u - 0.05:
                 return "wall_ride"
-            prev_d = d
-            if d >= lift_limit and ud + 1e-3 >= _HEEL_ACCEPT_INSET:
+            prev_u = ud
+            # Wide material still has to reach 0.5 mm after the lift. A
+            # channel that cannot hold that step stops at the 0.5 mm offset.
+            stuck = ud + 1e-3 >= _HEEL_ACCEPT_INSET and not _hg_deeper_clears(px, py, geom)
+            if ud + 1e-3 >= _HEEL_ACCEPT_INSET and (d >= lift_limit or stuck):
                 cut = t
                 break
-        # Deep enough to clear the wall after the lift, not a long skim.
+        # Deep enough for this channel, and not a long skim along the wall.
         if cut is None or cut * L > 3.0:
             return "wall_ride"
     qx, qy = at(cut)
@@ -1260,6 +1321,215 @@ def _hg_miter_point(vx, vy, n0, n1, dist):
     if mlen > dist * 8.0:
         mlen = dist * 8.0
     return (vx + bx * mlen, vy + by * mlen)
+
+
+def _hg_ray_width(px, py, nx, ny, geom, reach):
+    """Distance along (nx, ny) to the next wall. ``reach`` when the ray stays inside."""
+    x1 = px + nx * reach
+    y1 = py + ny * reach
+    ts = _hg_cross_ts(px, py, x1, y1, geom["index"], end_eps=1e-4)
+    hits = [t * reach for t in ts if t * reach > 0.05]
+    if not hits:
+        return reach
+    return min(hits)
+
+
+def _hg_deeper_clears(px, py, geom):
+    """True when a step further inside still keeps 0.5 mm after the lift.
+
+    A channel narrower than that has no deeper inset. The 0.5 mm offset is
+    the path, and the leg is kept.
+    """
+    index = geom["index"]
+    lifted = _hg_dist_point_index(px, py + LIFT_MM, index)
+    if lifted + 1e-3 >= _HEEL_ACCEPT_INSET:
+        return True
+    _bd, qx, qy = _hg_nearest_boundary(px, py + LIFT_MM, index)
+    vx, vy = px - qx, (py + LIFT_MM) - qy
+    span = math.hypot(vx, vy)
+    if span < 1e-6:
+        return False
+    need = (_HEEL_ACCEPT_INSET - lifted) + 0.05
+    sx = px + vx / span * need
+    sy = py + vy / span * need
+    if not _hg_strict_inside(sx, sy, geom):
+        return False
+    if _hg_dist_point_index(sx, sy, index) + 1e-3 < _HEEL_ACCEPT_INSET:
+        return False
+    if _hg_dist_point_index(sx, sy + LIFT_MM, index) + 1e-3 < _HEEL_ACCEPT_INSET:
+        return False
+    return True
+
+
+def _hg_prime_anchor(px, py, geom):
+    """A point at least 0.5 mm inside, for a prime that would otherwise sit on the wall.
+
+    None when the start is already clear. The caller adds the short leg.
+    """
+    index = geom["index"]
+
+    def lifted(qx, qy):
+        return _hg_dist_point_index(qx, qy + LIFT_MM, index)
+
+    def plain(qx, qy):
+        return _hg_dist_point_index(qx, qy, index)
+
+    if lifted(px, py) + 1e-3 >= _HEEL_ACCEPT_INSET and plain(px, py) + 1e-3 >= _HEEL_ACCEPT_INSET:
+        return None
+    _bd, qx, qy = _hg_nearest_boundary(px, py + LIFT_MM, index)
+    vx, vy = px - qx, (py + LIFT_MM) - qy
+    span = math.hypot(vx, vy)
+    dirs = []
+    if span > 1e-6:
+        dirs.append((vx / span, vy / span))
+    dirs.append((0.0, 1.0))
+    dirs.append((0.0, -1.0))
+    for sh in geom["shells"]:
+        rx, ry = _hg_rep_inside(sh["outer"])
+        dx, dy = rx - px, ry - py
+        mag = math.hypot(dx, dy)
+        if mag > 1e-6:
+            dirs.append((dx / mag, dy / mag))
+            break
+    best = None
+    for dx, dy in dirs:
+        for step in (0.2, 0.35, 0.5, 0.8, 1.2, 1.8, 2.6):
+            sx, sy = px + dx * step, py + dy * step
+            if not _hg_strict_inside(sx, sy, geom):
+                break
+            if lifted(sx, sy) + 1e-3 < _HEEL_ACCEPT_INSET or plain(sx, sy) + 1e-3 < _HEEL_ACCEPT_INSET:
+                continue
+            if best is None or step < best[0]:
+                best = (step, sx, sy)
+            break
+    if best is None:
+        return None
+    return (best[1], best[2])
+
+
+def _hg_subdivide_closed(pts, step=2.0):
+    """Split long edges so a pinch does not throw away the whole segment."""
+    if len(pts) < 3 or step <= 0.0:
+        return list(pts)
+    out = []
+    n = len(pts)
+    for i in range(n):
+        ax, ay = pts[i]
+        bx, by = pts[(i + 1) % n]
+        out.append((ax, ay))
+        el = math.hypot(bx - ax, by - ay)
+        pieces = int(el // step)
+        for s in range(1, pieces + 1):
+            dist = s * step
+            if dist >= el - 0.05:
+                break
+            t = dist / el
+            out.append((ax + (bx - ax) * t, ay + (by - ay) * t))
+    return out
+
+
+def _hg_edge_inset(ax, ay, bx, by, nx, ny, desired, geom):
+    """Inset for one wall edge. None when the material is under 1.0 mm.
+
+    The parallel inset is used where it fits. A narrower channel, still at
+    least 1.0 mm, is clamped to the 0.5 mm offset so the far wall is not hit.
+    """
+    if abs(nx) < 1e-12 and abs(ny) < 1e-12:
+        return None, (nx, ny)
+    reach = desired + _HEEL_ACCEPT_INSET + 0.25
+    mx, my = 0.5 * (ax + bx), 0.5 * (ay + by)
+    if not _hg_strict_inside(mx + nx * 0.2, my + ny * 0.2, geom):
+        nx, ny = -nx, -ny
+    width = _hg_ray_width(mx, my, nx, ny, geom, reach)
+    room = width - _HEEL_ACCEPT_INSET
+    if room < _HEEL_ACCEPT_INSET - 1e-3:
+        return None, (nx, ny)
+    if room + 1e-9 >= desired:
+        return desired, (nx, ny)
+    # 0.5 mm off this wall, and not past the far wall.
+    inset = min(room, _HEEL_ACCEPT_INSET + _HEEL_EMIT_PAD)
+    return inset, (nx, ny)
+
+
+def _hg_offset_corner(vx, vy, n0, d0, n1, d1, dir0, dir1):
+    """Intersection of the two offset edges. A long spike falls back to the miter."""
+    p0x, p0y = vx + n0[0] * d0, vy + n0[1] * d0
+    p1x, p1y = vx + n1[0] * d1, vy + n1[1] * d1
+    den = dir0[0] * dir1[1] - dir0[1] * dir1[0]
+    if abs(den) < 1e-12:
+        return _hg_miter_point(vx, vy, n0, n1, min(d0, d1))
+    s = ((p1x - p0x) * dir1[1] - (p1y - p0y) * dir1[0]) / den
+    ix, iy = p0x + s * dir0[0], p0y + s * dir0[1]
+    if math.hypot(ix - vx, iy - vy) > 8.0 * max(d0, d1):
+        return _hg_miter_point(vx, vy, n0, n1, min(d0, d1))
+    return (ix, iy)
+
+
+def _hg_clearance_offset(pts, desired, geom, left):
+    """Closed walk at the deep inset, clamped to 0.5 mm where the wall is narrow.
+
+    Edges narrower than 1.0 mm are skipped. A shell that can hold the full
+    inset everywhere is left to the parallel offset, so this does not add a
+    second copy of a wide ring.
+    """
+    if len(pts) < 3 or desired <= 1e-6:
+        return []
+    pts = _hg_subdivide_closed(pts, 2.0)
+    norms = _hg_edge_normals(pts, True, left)
+    n = len(pts)
+    edge_d = []
+    edge_n = []
+    limited = False
+    for i in range(n):
+        ax, ay = pts[i]
+        bx, by = pts[(i + 1) % n]
+        inset, normal = _hg_edge_inset(ax, ay, bx, by, norms[i][0], norms[i][1], desired, geom)
+        edge_d.append(inset)
+        edge_n.append(normal)
+        if inset is not None and inset < desired - 1e-3:
+            limited = True
+    if not limited:
+        return []
+    out = []
+    good = []
+    for i in range(n):
+        prev = (i - 1) % n
+        d0, d1 = edge_d[prev], edge_d[i]
+        if d0 is None or d1 is None:
+            good.append(False)
+            out.append(pts[i])
+            continue
+        dir0 = (pts[i][0] - pts[prev][0], pts[i][1] - pts[prev][1])
+        nxt = (i + 1) % n
+        dir1 = (pts[nxt][0] - pts[i][0], pts[nxt][1] - pts[i][1])
+        out.append(_hg_offset_corner(pts[i][0], pts[i][1], edge_n[prev], d0, edge_n[i], d1, dir0, dir1))
+        good.append(True)
+    if not any(good):
+        return []
+    if all(good):
+        return [(out, True)]
+    chains = []
+
+    def emit(run):
+        run = _hg_dedup(run)
+        if len(run) >= 2:
+            chains.append((run, False))
+
+    start = good.index(False)
+    run = []
+    for k in range(n):
+        i = (start + 1 + k) % n
+        nxt = (i + 1) % n
+        if good[i] and good[nxt]:
+            if not run:
+                run = [out[i]]
+            run.append(out[nxt])
+        elif run:
+            emit(run)
+            run = []
+    if run:
+        emit(run)
+    return chains
 
 
 def _hg_offset_closed(pts, dist, left):
@@ -1381,37 +1651,45 @@ def _hg_pull_shallow(pts, geom, clearance, closed):
 
 
 def _hg_shell_walk_rings(shell, dist, geom, shell_i):
+    """Deep inset where the wall is wide, and the 0.5 mm offset where it is narrow.
+
+    The parallel inset is what a wide section can hold after the lift. A
+    section between 1.0 mm and that depth uses the clearance-limited offset
+    instead. Narrower than 1.0 mm, that edge is skipped.
+    """
     rings = []
-    outer = shell["outer"]
-    if len(outer) >= 3 and dist > 1e-6:
-        off = _hg_offset_closed(outer, dist, left=(_hg_area(outer) >= 0.0))
-        # Pull far enough that the 0.4 mm lift still leaves 0.5 mm of clearance.
+
+    def add_offset(poly, left):
+        if len(poly) < 3 or dist <= 1e-6:
+            return
+        off = _hg_offset_closed(poly, dist, left=left)
         off = _hg_pull_shallow(off, geom, _HEEL_ACCEPT_INSET + LIFT_MM + _HEEL_EMIT_PAD, True)
-        for poly, closed in _hg_deep_chains(off, geom, True):
-            rings.append((poly, closed, shell_i))
+        parts = _hg_deep_chains(off, geom, True)
+        for part, part_closed in parts:
+            rings.append((part, part_closed, shell_i))
+        # A closed deep ring already covers this shell. The clamped offset is
+        # only for the edges that inset could not keep.
+        if len(parts) == 1 and parts[0][1] and len(parts[0][0]) + 2 >= len(poly):
+            return
+        for part, part_closed in _hg_clearance_offset(poly, dist, geom, left):
+            for piece, piece_closed in _hg_deep_chains(part, geom, part_closed):
+                rings.append((piece, piece_closed, shell_i))
+
+    add_offset(shell["outer"], _hg_area(shell["outer"]) >= 0.0)
     for hole in shell["holes"]:
-        if len(hole) < 3:
-            continue
         # Expand the hole into the material (opposite of shrinking the hole polygon).
-        off = _hg_offset_closed(hole, dist, left=(_hg_area(hole) < 0.0))
-        off = _hg_pull_shallow(off, geom, _HEEL_ACCEPT_INSET + LIFT_MM + _HEEL_EMIT_PAD, True)
-        for poly, closed in _hg_deep_chains(off, geom, True):
-            rings.append((poly, closed, shell_i))
+        add_offset(hole, _hg_area(hole) < 0.0)
     return rings
 
 
 def _hg_make_walk_rings(shells, geom, walk_d):
-    """Inset about one inner line width. Fall back toward 0.5 mm only if that inset vanishes."""
+    """Inset about half an inner bead, clamped to 0.5 mm on narrow edges."""
     if not shells:
-        return [], []
+        return []
     primary = []
     for i, sh in enumerate(shells):
         primary.extend(_hg_shell_walk_rings(sh, walk_d, geom, i))
-    tight = []
-    if walk_d > _HEEL_ACCEPT_INSET + 1e-6:
-        for i, sh in enumerate(shells):
-            tight.extend(_hg_shell_walk_rings(sh, _HEEL_ACCEPT_INSET, geom, i))
-    return primary, tight
+    return primary
 
 
 def _hg_mode_width(widths, default):
@@ -1706,8 +1984,12 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
         cands.sort(key=lambda item: item[0])
         return cands[-1][1]
 
-    def _inset_chains(pts, half, closed, outer_poly, outer_segs):
-        """Drop offset edges that collapsed or fell inside the outer 0.5 mm."""
+    def _inset_chains(pts, half, closed, outer_poly, outer_segs, geom=None):
+        """Drop offset edges that collapsed or fell inside the outer 0.5 mm.
+
+        An edge already 0.5 mm inside is kept when the channel cannot hold a
+        deeper inset. Under 1.0 mm of material the edge is still skipped.
+        """
         off = _inset_loop(pts, half, closed, outer_poly, outer_segs)
         off = _dedup(off)
         n = len(off)
@@ -1725,8 +2007,18 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             bx, by = off[(i + 1) % n]
             el = math.hypot(bx - ax, by - ay)
             mid_x, mid_y = 0.5 * (ax + bx), 0.5 * (ay + by)
-            # Skip an edge the lift would park within 0.5 mm of the outer wall.
-            ok = el >= 1e-4 and _clr(mid_x, mid_y + LIFT_MM) + 1e-3 >= _HEEL_ACCEPT_INSET + _HEEL_EMIT_PAD
+            plain = _clr(mid_x, mid_y)
+            lifted_c = _clr(mid_x, mid_y + LIFT_MM)
+            lift_ok = lifted_c + 1e-3 >= _HEEL_ACCEPT_INSET + _HEEL_EMIT_PAD
+            plain_ok = plain + 1e-3 >= _HEEL_ACCEPT_INSET
+            # Wide material still has to clear the wall after the lift. A
+            # channel that cannot take a deeper step keeps the 0.5 mm offset.
+            narrow_ok = (
+                plain_ok
+                and geom is not None
+                and not _hg_deeper_clears(mid_x, mid_y, geom)
+            )
+            ok = el >= 1e-4 and plain_ok and (lift_ok or narrow_ok)
             if ok and aligned:
                 sx, sy = pts[i]
                 tx, ty = pts[(i + 1) % len(pts)]
@@ -1932,28 +2224,31 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             old = _attach_point(tx, ty, poly, closed, geom, "exit")
         if old is not None:
             exits.append(old)
+        # The belt-side crossings. A wavy ring can cross the seam X many
+        # times; the nearest ones are the short drop, and the rest are the
+        # long way around.
+        exits.sort(key=lambda de: de[0])
+        if len(exits) > 4:
+            exits = exits[:4]
         _d0, si, ts, qsx, qsy = ds
         qs = (qsx, qsy)
-        # Prefer a route under the cap. Among those, keep the shortest.
-        # A longer route is returned only when nothing fits, and the caller
-        # rejects it instead of emitting the straight crossing.
-        best = None
-        best_over = False
+        # Shortest chain first. The first one that stays inside is the route.
+        # Later chains are longer, so they cannot win.
+        scored = []
         for de in exits:
             _d1, ei, te, qex, qey = de
             qe = (qex, qey)
             for path in _paths_between(poly, closed, si, ts, ei, te, qe):
                 pts = _assemble(x0, y0, tx, ty, qs, path)
-                reason = _hg_route_problem(x0, y0, pts, geom)
-                if reason:
-                    why.append(reason)
-                    continue
-                dist = _chain_len(x0, y0, pts)
-                over = dist > heel_max_route
-                if best is None or (best_over and not over) or (over == best_over and dist < best[0]):
-                    best = (dist, pts)
-                    best_over = over
-        return best
+                scored.append((_chain_len(x0, y0, pts), pts))
+        scored.sort(key=lambda item: item[0])
+        for dist, pts in scored:
+            reason = _hg_route_problem(x0, y0, pts, geom)
+            if reason:
+                why.append(reason)
+                continue
+            return (dist, pts)
+        return None
 
     def _route_waypoints(x0, y0, tx, ty, lctx):
         geom = None if not lctx else lctx.get("geom")
@@ -2010,10 +2305,11 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
                     return hit[1], None, hit[0]
 
         if not lctx.get("walk_ready"):
-            # Inset past the lift so the emitted leg stays 0.5 mm off the wall.
-            # The 0.5 mm ring rides the wall once it is lifted, so it is not used.
-            walk_d = max(lctx.get("inner_width") or HEEL_DEF_INNER_W, _HEEL_ACCEPT_INSET) + LIFT_MM + _HEEL_EMIT_PAD
-            primary, _tight = _hg_make_walk_rings(shells, geom, walk_d)
+            # 0.5 mm after the lift. Half an inner bead is the other candidate;
+            # a full 1 mm bead inset leaves the belt lip and the route is lost.
+            half_w = 0.5 * (lctx.get("inner_width") or HEEL_DEF_INNER_W)
+            walk_d = max(half_w, _HEEL_ACCEPT_INSET) + LIFT_MM + _HEEL_EMIT_PAD
+            primary = _hg_make_walk_rings(shells, geom, walk_d)
             lctx["walk_rings"] = primary
             lctx["walk_ready"] = True
 
@@ -2041,8 +2337,7 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             return best[1][1], None, best[1][0]
         thin = True
         for i in common:
-            rx, ry = _hg_rep_inside(shells[i]["outer"])
-            if _hg_dist_point_index(rx, ry, geom["index"]) + 1e-3 >= _HEEL_MIN_WIDTH * 0.5:
+            if _hg_shell_thick(shells[i]["outer"], geom):
                 thin = False
                 break
         if thin:
@@ -2096,19 +2391,19 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
                     if area > best_area:
                         best_area = area
                         outer_poly = pts
+            shells = _hg_shells_from_loops(outer_loops)
+            index = _hg_build_edge_index(shells)
+            geom = {"shells": shells, "index": index}
             inset_loops = []
             for pts, closed, ww in _chain_polylines(c["inner_segs"], HEEL_JOIN_TOL):
                 half = 0.5 * (ww if ww > 1e-6 else c.get("inner_width", HEEL_DEF_INNER_W))
-                for op, op_closed in _inset_chains(pts, half, closed, outer_poly, c["outer_segs"]):
+                for op, op_closed in _inset_chains(pts, half, closed, outer_poly, c["outer_segs"], geom):
                     op = _dedup(op)
                     if len(op) >= 2:
                         inset_loops.append((op, bool(op_closed and len(op) >= 3)))
             c["inner_loops"] = inset_loops
             widths = [seg[2] for seg in c["inner_segs"]]
             c["inner_width"] = _hg_mode_width(widths, HEEL_DEF_INNER_W)
-            shells = _hg_shells_from_loops(outer_loops)
-            index = _hg_build_edge_index(shells)
-            geom = {"shells": shells, "index": index}
             c["shells"] = shells
             c["geom"] = geom
             c["bbox"] = index["bbox"]
@@ -2243,6 +2538,18 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
                 saw_shell = True
                 if fail is None or rank.get(reason, 0) >= rank.get(fail, 0):
                     fail = reason
+        # A one-point hop has no route leg, so the prime would land on the
+        # lifted start. Step inside first when that start is still on the wall.
+        if waypts is not None and len(waypts) == 1:
+            gctx = layer_ctx.get(route_lyr)
+            geom = gctx.get("geom") if gctx else None
+            if geom is not None:
+                anchor = _hg_prime_anchor(x0, y0, geom)
+                if anchor is not None:
+                    trial = [anchor, waypts[0]]
+                    if _hg_route_problem(x0, y0, trial, geom) is None:
+                        waypts = trial
+                        rlen = _chain_len(x0, y0, trial)
         if waypts is not None and rlen > heel_max_route:
             fail = "over_cap"
             waypts = None
@@ -3184,6 +3491,44 @@ G1 X1 Y-1 E0.02
     assert _wall_dist(px, py, (clear_outer,)) + 1e-3 >= 0.5, (px, py)
     assert _wall_dist(px, py + LIFT_MM, (clear_outer,)) + 1e-3 >= 0.5, (px, py)
     assert _extrusion_lines(clear_g) == _extrusion_lines(out_cl)
+
+    # A 1.2 mm channel still has a 0.5 mm offset. Route through it.
+    narrow = [(0, 0), (20, 0), (20, 1.2), (0, 1.2)]
+    narrow_g = _closed_walls(narrow, [], (16.0, 0.05), anchor=(2, -2))
+    err_nw = io.StringIO()
+    with contextlib.redirect_stderr(err_nw):
+        out_nw, st_nw = collapse_seam_travels(narrow_g, TF, {0: (10.0, 0.0)})
+    assert st_nw["heelroute_routed"] == 1 and st_nw["heelroute_rejected"] == 0, (st_nw, err_nw.getvalue())
+    nwpts = _heel_pts(out_nw)
+    assert len(nwpts) >= 2, nwpts
+    prev = (0.0, 0.0)
+    for i, p in enumerate(nwpts[:-1]):
+        samples = _seg_samples(prev, p, 0.25)
+        if i == 0:
+            samples = [s for s in samples if _wall_dist(s[0], s[1], (narrow,)) + 1e-3 >= 0.5]
+            assert samples, p
+        for sx, sy in samples:
+            assert _wall_dist(sx, sy, (narrow,)) + 1e-3 >= 0.5, (sx, sy, p)
+        prev = p
+    assert _extrusion_lines(narrow_g) == _extrusion_lines(out_nw)
+
+    # One-point hop: no inset legs, so the prime would sit on the lifted start.
+    # That start is 0.6 mm under the top wall (0.2 mm after the lift). The
+    # block gains a short inward leg, and the prime is at least 0.5 mm inside.
+    prime_outer = [(0.0, 0.0), (20.0, 0.0), (20.0, 10.0), (0.0, 10.0)]
+    prime_inner = [(5.0, 9.4), (6.0, 9.4), (6.0, 8.8), (5.0, 8.8)]
+    prime_g = _closed_walls(prime_outer, [prime_inner], (6.2, 9.4), anchor=(4.0, 8.0))
+    out_pr, st_pr = collapse_seam_travels(prime_g, TF, {0: (10.0, 8.0)})
+    assert st_pr["heelroute_routed"] == 1 and st_pr["heelroute_rejected"] == 0, st_pr
+    pr_lines = out_pr.splitlines()
+    pr_seam = max(i for i, ln in enumerate(pr_lines) if ln.endswith(";heel route seam"))
+    pr_prime = max(i for i, ln in enumerate(pr_lines) if ln.startswith("G1 E1.5 F1800") and i < pr_seam)
+    pr_move = next(ln for ln in reversed(pr_lines[:pr_prime]) if ln.startswith("G1 ") and ";heel route" in ln)
+    assert pr_move.endswith(";heel route") and not pr_move.endswith(";heel route seam")
+    ppx, ppy = _w(pr_move, "X"), _w(pr_move, "Y")
+    assert _wall_dist(ppx, ppy, (prime_outer,)) + 1e-3 >= 0.5, (ppx, ppy)
+    assert "E" not in pr_lines[pr_seam].split(";")[0]
+    assert _extrusion_lines(prime_g) == _extrusion_lines(out_pr)
 
     # A deep comb travel is not a heel crossing and stays byte-identical.
     # A comb travel along the outer wall is routed. The travel after the
