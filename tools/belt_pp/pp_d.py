@@ -1757,6 +1757,340 @@ def _hg_point_deep(px, py, geom):
     return True
 
 
+_HG_HOP_MAX = 1.2
+_HG_NECK_STEP = 0.15
+# A neck-route endpoint has to sit in the unlifted 0.5 mm region, not on the belt wall.
+_HG_NECK_SNAP = 0.45
+
+
+def _hg_hop_clearance_rises(x0, y0, x1, y1, geom, d0=None):
+    """Unlifted hop: stays inside, and clearance does not fall along the segment."""
+    index = geom["index"]
+    if d0 is None:
+        d0 = _hg_dist_point_index(x0, y0, index)
+    length = math.hypot(x1 - x0, y1 - y0)
+    if length < 1e-6 or length > _HG_HOP_MAX + 1e-6:
+        return False
+    if _hg_map3_outside_len(x0, y0, x1, y1, geom) > _HEEL_OUT_LEN:
+        return False
+    n = max(2, int(math.ceil(length / 0.05)))
+    prev = d0
+    for i in range(1, n + 1):
+        t = i / float(n)
+        px = x0 + (x1 - x0) * t
+        py = y0 + (y1 - y0) * t
+        if not _hg_strict_inside(px, py, geom):
+            return False
+        ud = _hg_dist_point_index(px, py, index)
+        if ud + 1e-3 < prev - 0.02:
+            return False
+        prev = ud
+    return True
+
+
+def _hg_prelift_hop(x0, y0, geom, max_len=_HG_HOP_MAX):
+    """Short unlifted move to the nearest point that is 0.5 mm inside with lift room.
+
+    Used when a lift in place would put the nozzle outside or inside the outer
+    0.5 mm. Clearance only increases. None when the start is already safe or
+    no such hop exists within ``max_len``.
+    """
+    if not geom or not geom.get("shells") or not geom.get("index"):
+        return None
+    if _hg_point_deep(x0, y0, geom):
+        return None
+    index = geom["index"]
+    d0 = _hg_dist_point_index(x0, y0, index)
+    step = 0.05
+    n = int(round(max_len / step))
+    best = None
+    for ix in range(-n, n + 1):
+        for iy in range(-n, n + 1):
+            dist = math.hypot(ix * step, iy * step)
+            if dist < step * 0.5 or dist > max_len + 1e-9:
+                continue
+            sx = x0 + ix * step
+            sy = y0 + iy * step
+            if not _hg_point_deep(sx, sy, geom):
+                continue
+            ud = _hg_dist_point_index(sx, sy, index)
+            ld = _hg_dist_point_index(sx, sy + LIFT_MM, index)
+            margin = ud if ud < ld else ld
+            # Shortest hop. A few hundredths of a millimetre may trade for
+            # clearance, but a longer point must not replace a shorter one.
+            if best is not None and (
+                dist > best[0] + 0.01
+                or (dist >= best[0] - 1e-9 and margin <= best[3])
+            ):
+                continue
+            if not _hg_hop_clearance_rises(x0, y0, sx, sy, geom, d0):
+                continue
+            best = (dist, sx, sy, margin)
+    if best is None:
+        return None
+    return (best[1], best[2])
+
+
+def _hg_nolift_leg_ok(x0, y0, x1, y1, geom):
+    """Middle leg of an unlifted route: inside, and at least 0.5 mm clear."""
+    if _hg_map3_outside_len(x0, y0, x1, y1, geom) > _HEEL_OUT_LEN:
+        return False
+    index = geom["index"]
+    if not _hg_strict_inside(x1, y1, geom):
+        return False
+    if _hg_dist_point_index(x1, y1, index) + 1e-3 < _HEEL_ACCEPT_INSET:
+        return False
+    if _hg_segment_closer_than(x0, y0, x1, y1, index, _HEEL_ACCEPT_INSET - 1e-3):
+        return False
+    return True
+
+
+def _hg_nolift_ok(x0, y0, pts, geom):
+    """Unlifted route. Non-seam legs stay 0.5 mm inside. The seam leg may approach."""
+    if not pts:
+        return False
+    prev = (x0, y0)
+    last = len(pts) - 1
+    index = geom["index"]
+    for i, p in enumerate(pts):
+        if i == last:
+            if not _hg_exit_leg_ok(prev[0], prev[1], p[0], p[1], geom):
+                return False
+        elif i == 0 and _hg_dist_point_index(prev[0], prev[1], index) + 1e-3 < _HEEL_ACCEPT_INSET:
+            if not _hg_hop_clearance_rises(prev[0], prev[1], p[0], p[1], geom):
+                return False
+            if _hg_dist_point_index(p[0], p[1], index) + 1e-3 < _HEEL_ACCEPT_INSET:
+                return False
+        elif not _hg_nolift_leg_ok(prev[0], prev[1], p[0], p[1], geom):
+            return False
+        prev = p
+    if _hg_route_reverses(x0, y0, pts):
+        return False
+    return True
+
+
+def _hg_simplify_nolift(x0, y0, pts, geom):
+    """Drop grid points whose shortcut stays 0.5 mm inside.
+
+    ``pts`` does not include the start. The result is the same kind of list.
+    """
+    if len(pts) <= 1:
+        return pts
+    chain = [(x0, y0)] + list(pts)
+    index = geom["index"]
+    last = len(chain) - 1
+    i = 0
+    chosen = []
+    while i < last:
+        best = i + 1
+        ax, ay = chain[i]
+        shallow = _hg_dist_point_index(ax, ay, index) + 1e-3 < _HEEL_ACCEPT_INSET
+        for j in range(last, i, -1):
+            bx, by = chain[j]
+            if j == last:
+                if _hg_dist_point_index(ax, ay, index) + 1e-3 < _HEEL_ACCEPT_INSET:
+                    continue
+                ok = _hg_exit_leg_ok(ax, ay, bx, by, geom)
+            elif shallow:
+                ok = (
+                    _hg_hop_clearance_rises(ax, ay, bx, by, geom)
+                    and _hg_dist_point_index(bx, by, index) + 1e-3 >= _HEEL_ACCEPT_INSET
+                )
+            else:
+                ok = _hg_nolift_leg_ok(ax, ay, bx, by, geom)
+            if ok:
+                best = j
+                break
+        chosen.append(chain[best])
+        i = best
+    return chosen
+
+
+def _hg_neck_lazy(geom):
+    """On-demand 0.5 mm cells. Only the cells a search visits are classified."""
+    cached = geom.get("_neck_lazy")
+    if cached is not None:
+        return cached
+    shells = geom.get("shells") or []
+    if not shells:
+        geom["_neck_lazy"] = None
+        return None
+    minx = min(sh["bbox"][0] for sh in shells)
+    miny = min(sh["bbox"][1] for sh in shells)
+    maxx = max(sh["bbox"][2] for sh in shells)
+    maxy = max(sh["bbox"][3] for sh in shells)
+    step = _HG_NECK_STEP
+    index = geom["index"]
+    limit = _HEEL_ACCEPT_INSET - 1e-3
+    known = {}
+
+    def classify(i, j):
+        hit = known.get((i, j))
+        if hit is not None:
+            return hit
+        px = minx + i * step
+        py = miny + j * step
+        kind = 0
+        if minx - step <= px <= maxx + step and miny - step <= py <= maxy + step:
+            if _hg_strict_inside(px, py, geom) and _hg_dist_point_index(px, py, index) >= limit:
+                kind = 1
+                if _hg_strict_inside(px, py + LIFT_MM, geom) and _hg_dist_point_index(
+                    px, py + LIFT_MM, index
+                ) >= limit:
+                    kind = 2
+        known[(i, j)] = kind
+        return kind
+
+    cached = {
+        "step": step,
+        "origin": (minx, miny),
+        "classify": classify,
+        "span": (minx, miny, maxx, maxy),
+    }
+    geom["_neck_lazy"] = cached
+    return cached
+
+
+def _hg_neck_snap_lazy(px, py, lazy, kind, max_dist):
+    """Nearest cell of at least ``kind`` (1 unlifted, 2 lifted)."""
+    step = lazy["step"]
+    ox, oy = lazy["origin"]
+    ci = int(round((px - ox) / step))
+    cj = int(round((py - oy) / step))
+    rad = int(math.ceil(max_dist / step)) + 1
+    best = None
+    classify = lazy["classify"]
+    for r in range(rad + 1):
+        for di in range(-r, r + 1):
+            dj_lim = r if r else 0
+            for dj in range(-dj_lim, dj_lim + 1):
+                if r and max(abs(di), abs(dj)) != r:
+                    continue
+                if classify(ci + di, cj + dj) < kind:
+                    continue
+                qx = ox + (ci + di) * step
+                qy = oy + (cj + dj) * step
+                dist = math.hypot(qx - px, qy - py)
+                if dist <= max_dist and (best is None or dist < best[0]):
+                    best = (dist, (ci + di, cj + dj))
+        if best is not None and best[0] <= step:
+            return best
+    return best
+
+
+def _hg_neck_bfs(start, goal, lazy, kind, connect_only):
+    """4-connected search over cells of at least ``kind``.
+
+    ``connect_only`` stops at the goal and does not build the path. Returns
+    the path of centers, or True/False when ``connect_only`` is set.
+    """
+    classify = lazy["classify"]
+    if classify(start[0], start[1]) < kind or classify(goal[0], goal[1]) < kind:
+        return False if connect_only else None
+    if start == goal:
+        if connect_only:
+            return True
+        ox, oy = lazy["origin"]
+        step = lazy["step"]
+        return [(ox + start[0] * step, oy + start[1] * step)]
+    parent = {start: None}
+    q = [start]
+    head = 0
+    found = False
+    while head < len(q):
+        i, j = q[head]
+        head += 1
+        if (i, j) == goal:
+            found = True
+            break
+        for ni, nj in ((i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1)):
+            if (ni, nj) in parent:
+                continue
+            if classify(ni, nj) < kind:
+                continue
+            parent[(ni, nj)] = (i, j)
+            q.append((ni, nj))
+    if connect_only:
+        return found
+    if not found:
+        return None
+    ox, oy = lazy["origin"]
+    step = lazy["step"]
+    rev = []
+    cur = goal
+    while cur is not None:
+        rev.append((ox + cur[0] * step, oy + cur[1] * step))
+        cur = parent[cur]
+    rev.reverse()
+    return rev
+
+
+def _hg_nolift_neck_route(x0, y0, tx, ty, geom, cap):
+    """Unlifted route across a neck that splits the lifted 0.5 mm region.
+
+    None unless the lifted region does not connect the ends and an unlifted
+    path at least 0.5 mm inside does. The whole route stays at layer height.
+    """
+    if not geom or not geom.get("shells") or cap is None:
+        return None
+    if not _hg_common_shells(x0, y0, tx, ty, geom["shells"]):
+        return None
+    lazy = _hg_neck_lazy(geom)
+    if lazy is None:
+        return None
+    us = _hg_neck_snap_lazy(x0, y0, lazy, 1, _HG_NECK_SNAP)
+    ue = _hg_neck_snap_lazy(tx, ty, lazy, 1, _HG_NECK_SNAP)
+    if us is None or ue is None:
+        return None
+    ls = _hg_neck_snap_lazy(x0, y0, lazy, 2, 1.0)
+    le = _hg_neck_snap_lazy(tx, ty, lazy, 2, 1.0)
+    # Both ends sit in the lifted region, and that region does not connect them.
+    if ls is None or le is None or ls[0] > 0.8 or le[0] > 0.8:
+        return None
+    if _hg_neck_bfs(ls[1], le[1], lazy, 2, True):
+        return None
+    dense = _hg_neck_bfs(us[1], ue[1], lazy, 1, False)
+    if not dense:
+        return None
+    if math.hypot(dense[-1][0] - tx, dense[-1][1] - ty) > 1e-4:
+        dense.append((tx, ty))
+    else:
+        dense[-1] = (tx, ty)
+    # Drop a first cell that repeats the start.
+    if math.hypot(dense[0][0] - x0, dense[0][1] - y0) <= 1e-4:
+        dense = dense[1:]
+    if not dense:
+        return None
+    full = dense
+    # A 0.15 mm grid is hundreds of points. Keep a point about every 0.8 mm
+    # so the shortcut search stays on the corners that matter.
+    if len(dense) > 4:
+        sparse = [dense[0]]
+        acc = 0.0
+        prev = dense[0]
+        for p in dense[1:-1]:
+            acc += math.hypot(p[0] - prev[0], p[1] - prev[1])
+            prev = p
+            if acc >= 0.8:
+                sparse.append(p)
+                acc = 0.0
+        sparse.append(dense[-1])
+        dense = sparse
+    pts = _hg_simplify_nolift(x0, y0, dense, geom)
+    if not pts or not _hg_nolift_ok(x0, y0, pts, geom):
+        pts = full
+        if not _hg_nolift_ok(x0, y0, pts, geom):
+            return None
+    length = 0.0
+    px, py = x0, y0
+    for qx, qy in pts:
+        length += math.hypot(qx - px, qy - py)
+        px, py = qx, qy
+    if length > cap + 1e-6:
+        return None
+    return pts, length
+
+
 def _hg_lift_departs(x0, y0, geom):
     """True when a pure +Y lift leaves the outline or lands on another wall.
 
@@ -1996,6 +2330,11 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
     ``heel_max_route`` (default 60 mm) is rejected and logged, not used.
     Layers 355–447 use a 200 mm cap instead; a long heel route still
     retracts before the walk and primes on the last interior point.
+    A start that is inside the wall but has no room for the 0.4 mm lift
+    hops inward, unlifted, until it is 0.5 mm inside with lift room, then
+    lifts and routes. A heel travel whose lifted 0.5 mm region is split by
+    a neck, and which still has an unlifted path 0.5 mm inside, is routed
+    entirely unlifted and tagged ``;PP_HEELROUTE_NOLIFT``.
     Every emitted leg is tested at the lifted height: more than 0.01 mm
     outside a 0.001 mm outline buffer rejects the travel. The seam tip has
     no further exemption. A route through a region thinner than 1 mm, a
@@ -2753,15 +3092,37 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             blk.append(f"G1 F{tf:g}\n")
         return blk
 
-    def _emit_routed_block(x0, y0, waypts, ty, tz, tf, zmove, combine_lift=False):
+    def _emit_routed_block(x0, y0, waypts, ty, tz, tf, zmove, combine_lift=False, prelift=None, nolift=False):
         """Retract, walk, prime on the last interior point, then the seam leg with no E.
 
         ``combine_lift`` skips the pure +Y lift. The first travel rises while
         it moves to the first inside point, so a lift that would leave the
-        outline is not emitted. The retract and the prime stay.
+        outline is not emitted. ``prelift`` is an unlifted inward hop made
+        before that lift. ``nolift`` keeps the whole route at layer height.
+        The retract and the prime stay.
         """
+        if nolift:
+            blk = [
+                ";PP_HEELROUTE_START\n",
+                ";PP_HEELROUTE_NOLIFT\n",
+                f"G1 E-{HEEL_E:g} F{HEEL_EF:g}\n",
+            ]
+            for wx, wy in waypts[:-1]:
+                blk.append(f"G1 X{wx:.3f} Y{wy:.3f} F{TF:g} ;heel route\n")
+            blk.append(f"G1 E{HEEL_E:g} F{HEEL_EF:g}\n")
+            wz = waypts[-1]
+            zs = f" Z{tz:.3f}" if zmove else ""
+            blk.append(f"G1 X{wz[0]:.3f} Y{wz[1]:.3f}{zs} F{TF:g} ;heel route seam\n")
+            if tf is not None:
+                blk.append(f"G1 F{tf:g}\n")
+            blk.append(";PP_HEELROUTE_END\n")
+            return blk
         blk = [";PP_HEELROUTE_START\n", f"G1 E-{HEEL_E:g} F{HEEL_EF:g}\n"]
-        if not combine_lift:
+        if prelift is not None:
+            hx, hy = prelift
+            blk.append(f"G1 X{hx:.3f} Y{hy:.3f} F{TF:g} ;heel prelift\n")
+            blk.append(f"G1 Y{hy + LIFT_MM:.3f} F{TF:g} ;lift\n")
+        elif not combine_lift:
             blk.append(f"G1 Y{y0 + LIFT_MM:.3f} F{TF:g} ;lift\n")
         for wx, wy in waypts[:-1]:
             blk.append(f"G1 X{wx:.3f} Y{wy + LIFT_MM:.3f} F{TF:g} ;heel route\n")
@@ -2916,7 +3277,7 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             geoms = _layer_geoms(route_lyr)
             if not geoms:
                 return
-            prime_at = waypts[-2] if len(waypts) >= 2 else (x0, y0)
+            prime_at = waypts[-2] if len(waypts) >= 2 else (ox, oy)
             # The route may have been searched on the previous layer, whose
             # outline is missing the wall the prime is actually under.
             for geom in _layer_geoms(layer):
@@ -2936,37 +3297,146 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             for geom in geoms:
                 anchor = _hg_prime_anchor(prime_at[0], prime_at[1], geom)
                 if anchor is None and len(waypts) == 1:
-                    anchor = _hg_prime_anchor(x0, y0, geom)
+                    anchor = _hg_prime_anchor(ox, oy, geom)
                 if anchor is None or not _ok(anchor[0], anchor[1]):
                     continue
                 if len(waypts) == 1:
                     cand_pts = [anchor, waypts[0]]
                 else:
                     cand_pts = waypts[:-1] + [anchor, waypts[-1]]
-                if any(_hg_route_problem(x0, y0, cand_pts, g) for g in geoms):
+                if any(_hg_route_problem(ox, oy, cand_pts, g) for g in geoms):
                     continue
                 trial = cand_pts
                 break
             if trial is not None:
                 waypts = trial
-                rlen = _chain_len(x0, y0, trial)
+                rlen = _chain_len(ox, oy, trial)
+                if prelift is not None:
+                    rlen += math.hypot(ox - x0, oy - y0)
             else:
                 fail = "wall_ride"
                 waypts = None
 
+        def _search_from(sx, sy):
+            """Same layer order as the first search, starting at (sx, sy)."""
+            reason_out = None
+            saw = False
+            for cand in order:
+                wpts, reason, rdist = _route_waypoints(sx, sy, tx, ty, layer_ctx.get(cand))
+                if wpts is not None and cand != layer:
+                    octx = layer_ctx.get(layer)
+                    if octx and octx.get("shells"):
+                        problem = _hg_route_problem(sx, sy, wpts, octx["geom"])
+                        if problem:
+                            wpts = None
+                            reason = problem
+                if wpts is not None:
+                    return wpts, None, rdist, cand
+                if reason == "no_closed_outer_loop":
+                    if not saw and reason_out is None:
+                        reason_out = reason
+                else:
+                    saw = True
+                    if reason_out is None or rank.get(reason, 0) >= rank.get(reason_out, 0):
+                        reason_out = reason
+            return None, reason_out, 0.0, lyr
+
+        def _attempt_prelift():
+            """Retract is already first. Hop inward unlifted, then lift and route."""
+            nonlocal waypts, fail, rlen, route_lyr, prelift, ox, oy
+            geoms = _layer_geoms(layer if layer >= 0 else lyr, lyr)
+            if not geoms or all(_hg_point_deep(x0, y0, g) for g in geoms):
+                return False
+            hop = None
+            for g in geoms:
+                cand = _hg_prelift_hop(x0, y0, g)
+                if cand is None:
+                    continue
+                if all(
+                    _hg_point_deep(cand[0], cand[1], gg)
+                    and _hg_hop_clearance_rises(x0, y0, cand[0], cand[1], gg)
+                    for gg in geoms
+                ):
+                    hop = cand
+                    break
+            if hop is None:
+                return False
+            wpts, _reason, rdist, cand_lyr = _search_from(hop[0], hop[1])
+            if wpts is None:
+                return False
+            waypts = wpts
+            fail = None
+            route_lyr = cand_lyr
+            prelift = hop
+            ox, oy = hop
+            rlen = rdist + math.hypot(hop[0] - x0, hop[1] - y0)
+            _repair_prime()
+            return waypts is not None
+
+        ox, oy = x0, y0
+        prelift = None
+        nolift = False
         _try_wall()
         _repair_prime()
         if waypts is None:
             _try_wall()
             _repair_prime()
 
+        # The lift has no room at the start. Heel only: the same shallow
+        # start outside the band stays a reject.
+        if (
+            waypts is None
+            and fail == "no_valid_route"
+            and _HEEL_BAND_LO <= report_layer <= _HEEL_BAND_HI
+        ):
+            _attempt_prelift()
+
+        # Heel neck: the lifted 0.5 mm region is split, the unlifted one is not.
+        # Clearance is against the layer being printed. The previous layer's
+        # outline is a different wall and is not a second veto.
+        if (
+            waypts is None
+            and _HEEL_BAND_LO <= report_layer <= _HEEL_BAND_HI
+            and fail in ("outside_approach", "no_valid_route")
+        ):
+            geoms = _layer_geoms(report_layer, lyr, layer)
+            cap = _hg_route_cap(report_layer, heel_max_route)
+            printed = None
+            pctx = layer_ctx.get(report_layer)
+            if pctx and pctx.get("geom") and pctx["geom"].get("shells"):
+                printed = pctx["geom"]
+            for g in geoms:
+                got = _hg_nolift_neck_route(x0, y0, tx, ty, g, cap)
+                if got is None:
+                    continue
+                wpts, rdist = got
+                if printed is not None and printed is not g and not _hg_nolift_ok(x0, y0, wpts, printed):
+                    continue
+                waypts, fail, rlen, nolift = wpts, None, rdist, True
+                break
+
+        # L40/L41: the routed opening still lifts from a point with no lift room.
+        if (
+            waypts is not None
+            and not nolift
+            and prelift is None
+            and report_layer in (40, 41)
+        ):
+            geoms = _layer_geoms(report_layer, route_lyr, lyr)
+            if geoms and not all(_hg_point_deep(x0, y0, g) for g in geoms):
+                saved = (waypts, fail, rlen, route_lyr, ox, oy, prelift)
+                if not _attempt_prelift():
+                    waypts, fail, rlen, route_lyr, ox, oy, prelift = saved
+
         route_cap = _hg_route_cap(report_layer, heel_max_route)
         if waypts is not None and rlen > route_cap:
             fail = "over_cap"
             waypts = None
+            prelift = None
+            nolift = False
 
         combine = False
-        if waypts is not None:
+        if waypts is not None and prelift is None and not nolift:
             geoms = _layer_geoms(route_lyr, layer, lyr)
             fix_lift = any(
                 c in _HEEL_LIFT_FIX_LAYERS for c in (report_layer, layer, lyr, route_lyr))
@@ -2994,7 +3464,8 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
         if waypts is not None:
             stats["heelroute_routed"] += 1
             return "routed", _emit_routed_block(
-                x0, y0, waypts, ty, tz, tf, zmove, combine_lift=combine)
+                x0, y0, waypts, ty, tz, tf, zmove,
+                combine_lift=combine, prelift=prelift, nolift=nolift)
         if fail == "no_closed_outer_loop":
             stats["heelroute_fallback"] += 1
             blk = _emit_direct_seam_body(x0, y0, tx, ty, tz, tf, zmove)
@@ -4151,6 +4622,99 @@ G1 X1 Y-1 E0.02
     assert ";PP_HEELROUTE_REJECT" in out_flag
     assert "G1 E-1.5 F1800" in out_flag and "G1 E1.5 F1800" in out_flag
     assert _extrusion_lines(flag_g) == _extrusion_lines(out_flag)
+
+    # A start 0.18 mm under the top wall has no room for the 0.4 mm lift.
+    # Retract, hop inward unlifted until 0.5 mm inside with lift room, then lift.
+    shallow = (
+        ";LAYER_CHANGE\n"
+        "G1 X0 Y0 F6000\n"
+        ";TYPE:Outer wall\n"
+        ";WIDTH:0.8\n"
+        "G1 X40 Y0 E0.01\n"
+        "G1 X40 Y20 E0.01\n"
+        "G1 X0 Y20 E0.01\n"
+        "G1 X0 Y0 E0.01\n"
+        "G1 X20.000 Y19.820 F6000\n"
+        ";C_SEAM_END\n"
+        "G1 X8.000 Y0.200 F12000\n"
+        ";TYPE:Gap infill\n"
+        "G1 X1 Y-1 E0.02\n"
+    )
+    shallow_outer = [(0, 0), (40, 0), (40, 20), (0, 20)]
+    # Same shape on layer 0 stays a reject. The hop is for the heel band.
+    err_sh0 = io.StringIO()
+    with contextlib.redirect_stderr(err_sh0):
+        out_sh0, st_sh0 = collapse_seam_travels(shallow, TF, {0: (20.0, 0.0)})
+    assert st_sh0["heelroute_routed"] == 0 and st_sh0["heelroute_rejected"] == 1, st_sh0
+    assert ";heel prelift" not in out_sh0
+    shallow_heel = "".join(";LAYER_CHANGE\n" for _ in range(355)) + shallow
+    err_sh = io.StringIO()
+    with contextlib.redirect_stderr(err_sh):
+        out_sh, st_sh = collapse_seam_travels(shallow_heel, TF, {355: (20.0, 0.0)})
+    assert st_sh["heelroute_routed"] == 1 and st_sh["heelroute_rejected"] == 0, (st_sh, err_sh.getvalue())
+    assert "FLAG" not in err_sh.getvalue()
+    assert ";PP_HEELROUTE_NOLIFT" not in out_sh
+    assert "G1 E-1.5 F1800" in out_sh and "G1 E1.5 F1800" in out_sh
+    sh_lines = out_sh.splitlines()
+    pre_i = next(i for i, ln in enumerate(sh_lines) if ln.endswith(";heel prelift"))
+    lift_i = next(i for i, ln in enumerate(sh_lines) if ln.endswith(";lift"))
+    assert pre_i < lift_i
+    hx, hy = _w(sh_lines[pre_i], "X"), _w(sh_lines[pre_i], "Y")
+    hop_len = math.hypot(hx - 20.0, hy - 19.820)
+    assert hop_len <= 1.2 + 1e-6, (hx, hy, hop_len)
+    assert hy < 19.820
+    assert abs(_w(sh_lines[lift_i], "Y") - (hy + LIFT_MM)) < 1e-6
+    assert _wall_dist(hx, hy, (shallow_outer,)) + 1e-3 >= 0.5, (hx, hy)
+    assert _wall_dist(hx, hy + LIFT_MM, (shallow_outer,)) + 1e-3 >= 0.5, (hx, hy)
+    d_prev = _wall_dist(20.0, 19.820, (shallow_outer,))
+    for sx, sy in _seg_samples((20.0, 19.820), (hx, hy), 0.05)[1:]:
+        dist = _wall_dist(sx, sy, (shallow_outer,))
+        assert dist + 1e-3 >= d_prev - 0.02, (sx, sy, dist, d_prev)
+        d_prev = dist
+    assert _extrusion_lines(shallow_heel) == _extrusion_lines(out_sh)
+
+    # The lifted 0.5 mm region is split by a 1.25 mm neck. An unlifted path
+    # at least 0.5 mm inside still connects, so the whole route stays down.
+    dumbbell = [(0, 0), (38, 0), (38, 16), (22, 16), (22, 1.25), (16, 1.25), (16, 16), (0, 16)]
+    neck_body = (
+        "G1 X0 Y0 F6000\n"
+        ";TYPE:Outer wall\n"
+        ";WIDTH:0.8\n"
+        "G1 X38 Y0 E0.01\n"
+        "G1 X38 Y16 E0.01\n"
+        "G1 X22 Y16 E0.01\n"
+        "G1 X22 Y1.250 E0.01\n"
+        "G1 X16 Y1.250 E0.01\n"
+        "G1 X16 Y16 E0.01\n"
+        "G1 X0 Y16 E0.01\n"
+        "G1 X0 Y0 E0.01\n"
+        "G1 X8 Y8 F6000\n"
+        ";C_SEAM_END\n"
+        "G1 X30.000 Y0.300 F12000\n"
+        ";TYPE:Gap infill\n"
+        "G1 X1 Y-1 E0.02\n"
+    )
+    neck_g = "".join(";LAYER_CHANGE\n" for _ in range(356)) + neck_body
+    err_nk = io.StringIO()
+    with contextlib.redirect_stderr(err_nk):
+        out_nk, st_nk = collapse_seam_travels(neck_g, TF, {355: (19.0, 0.0)})
+    assert st_nk["heelroute_routed"] == 1 and st_nk["heelroute_rejected"] == 0, (st_nk, err_nk.getvalue())
+    assert ";PP_HEELROUTE_NOLIFT" in out_nk
+    assert "FLAG" not in err_nk.getvalue()
+    assert not any(ln.endswith(";lift") or ln.endswith(";lower") for ln in out_nk.splitlines())
+    assert "G1 E-1.5 F1800" in out_nk and "G1 E1.5 F1800" in out_nk
+    nk_routes = [ln for ln in out_nk.splitlines() if ln.endswith(";heel route")]
+    assert nk_routes
+    prev = (8.0, 8.0)
+    for ln in nk_routes:
+        px, py = _w(ln, "X"), _w(ln, "Y")
+        for sx, sy in _seg_samples(prev, (px, py), 0.25):
+            assert _wall_dist(sx, sy, (dumbbell,)) + 1e-3 >= 0.5, (sx, sy, prev, (px, py))
+        prev = (px, py)
+    seam_ln = next(ln for ln in out_nk.splitlines() if ln.endswith(";heel route seam"))
+    assert abs(_w(seam_ln, "X") - 30.0) < 1e-6 and abs(_w(seam_ln, "Y") - 0.300) < 1e-6
+    assert _wall_dist(prev[0], prev[1], (dumbbell,)) + 1e-3 >= 0.5, prev
+    assert _extrusion_lines(neck_g) == _extrusion_lines(out_nk)
 
     print(
         "heelroute tests ok",
