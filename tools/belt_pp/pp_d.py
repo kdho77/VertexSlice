@@ -292,21 +292,24 @@ def _crosses(segs, sx, ymin):
 def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=150.0):
     """Replace every seam travel by lift + move + lower.
 
-    Qualifying heel crossings (the straight segment leaves extruded material, or
-    passes off-material within 0.7 mm of an outer wall) are rerouted along an
-    inward inset of the inner-wall loop nearest the travel. ``heel_max_route``
-    (default 150 mm) is the preferred maximum length: a longer route that stays
-    on material is still used. The original straight move is emitted only when
-    no valid inset route exists, and that fallback is logged.
+    A belt-side seam travel is a heel crossing when the straight segment leaves
+    the layer's outer-wall polygon or comes within 0.7 mm of its boundary.
+    Qualifying travels are rerouted along an inward inset of the inner-wall loop
+    nearest the travel when every leg lies inside that polygon inset by 0.7 mm.
+    Otherwise the route follows the inset polygon's boundary (shorter direction).
+    ``heel_max_route`` (default 150 mm) is the preferred maximum length; a longer
+    route is still used. The original straight move is emitted only when the
+    layer has no closed outer loop, and that fallback is logged.
     """
     import sys
+    from shapely.geometry import LineString, Point, Polygon
+    from shapely.ops import unary_union
 
     HEEL_E = 1.5
     HEEL_EF = 1800.0
     HEEL_OUTER_NEAR = 0.7
     HEEL_DEF_INNER_W = 0.45
     HEEL_JOIN_TOL = 0.05
-    HEEL_ON_TOL = 0.02
     _seam = seam_map or {}
     if heel_max_route is None:
         heel_max_route = 150.0
@@ -351,50 +354,6 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=150.0):
                     inside = not inside
             j = i
         return inside
-
-    def _build_seg_index(segs, reach_of, cell=2.0):
-        grid = {}
-        boxes = []
-        if not segs:
-            return {"grid": grid, "boxes": boxes, "bbox": None, "cell": cell, "segs": segs}
-        minx = miny = 1e18
-        maxx = maxy = -1e18
-        for i, seg in enumerate(segs):
-            ax, ay, bx, by = seg[0], seg[1], seg[2], seg[3]
-            reach = reach_of(seg)
-            x0, x1 = min(ax, bx) - reach, max(ax, bx) + reach
-            y0, y1 = min(ay, by) - reach, max(ay, by) + reach
-            boxes.append((x0, y0, x1, y1, reach))
-            ix0 = int(math.floor(x0 / cell))
-            ix1 = int(math.floor(x1 / cell))
-            iy0 = int(math.floor(y0 / cell))
-            iy1 = int(math.floor(y1 / cell))
-            for ix in range(ix0, ix1 + 1):
-                for iy in range(iy0, iy1 + 1):
-                    grid.setdefault((ix, iy), []).append(i)
-            minx = min(minx, x0)
-            miny = min(miny, y0)
-            maxx = max(maxx, x1)
-            maxy = max(maxy, y1)
-        return {"grid": grid, "boxes": boxes, "bbox": (minx, miny, maxx, maxy), "cell": cell, "segs": segs}
-
-    def _near_indexed(px, py, index):
-        bb = index["bbox"]
-        if bb is None or px < bb[0] or py < bb[1] or px > bb[2] or py > bb[3]:
-            return False
-        cell = index["cell"]
-        ix = int(math.floor(px / cell))
-        iy = int(math.floor(py / cell))
-        segs = index["segs"]
-        boxes = index["boxes"]
-        for i in index["grid"].get((ix, iy), ()):
-            x0, y0, x1, y1, reach = boxes[i]
-            if px < x0 or px > x1 or py < y0 or py > y1:
-                continue
-            ax, ay, bx, by = segs[i][0], segs[i][1], segs[i][2], segs[i][3]
-            if _dist_pt_seg(px, py, ax, ay, bx, by) <= reach:
-                return True
-        return False
 
     def _chain_polylines(segs, tol):
         """Join wall segments that share an endpoint. Never bridge a gap."""
@@ -608,45 +567,148 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=150.0):
 
         return left if _score(left) >= _score(right) else right
 
-    def _travel_hits_forbidden(x0, y0, x1, y1, mat_ix, outer_ix):
-        """Same test used to detect a heel crossing.
+    def _polygons_of(geom):
+        if geom is None or geom.is_empty:
+            return []
+        kind = geom.geom_type
+        if kind == "Polygon":
+            return [geom] if geom.area > 1e-8 else []
+        if kind == "MultiPolygon":
+            return [g for g in geom.geoms if g.geom_type == "Polygon" and g.area > 1e-8]
+        if kind == "GeometryCollection":
+            out = []
+            for g in geom.geoms:
+                out.extend(_polygons_of(g))
+            return out
+        return []
 
-        True when a sample leaves extruded material, or is off-material and
-        within HEEL_OUTER_NEAR of an outer wall.
-        """
-        L = math.hypot(x1 - x0, y1 - y0)
-        if L < 1e-9:
+    def _ring_coords(ring):
+        coords = [(float(c[0]), float(c[1])) for c in ring.coords]
+        if len(coords) >= 2 and math.hypot(coords[0][0] - coords[-1][0], coords[0][1] - coords[-1][1]) < 1e-9:
+            coords = coords[:-1]
+        coords = _dedup(coords)
+        return coords if len(coords) >= 3 else None
+
+    def _part_from_outer_loops(loops):
+        """Outer-wall centerline loops as the part region. Contained loops are holes."""
+        raw = []
+        for pts, closed, _ww in loops:
+            if not closed or len(pts) < 3:
+                continue
+            poly = Polygon(pts)
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+            raw.extend(_polygons_of(poly))
+        if not raw:
+            return None
+        raw.sort(key=lambda g: g.area, reverse=True)
+        nodes = [{"g": g, "parent": None, "children": []} for g in raw]
+        for i, n in enumerate(nodes):
+            pt = n["g"].representative_point()
+            best = None
+            best_area = None
+            for j, m in enumerate(nodes):
+                if i == j or m["g"].area <= n["g"].area + 1e-9:
+                    continue
+                if m["g"].contains(pt):
+                    if best is None or m["g"].area < best_area:
+                        best = j
+                        best_area = m["g"].area
+            if best is not None:
+                n["parent"] = best
+                nodes[best]["children"].append(i)
+        shells = []
+        for i, n in enumerate(nodes):
+            depth = 0
+            p = n["parent"]
+            while p is not None:
+                depth += 1
+                p = nodes[p]["parent"]
+            if depth % 2 == 1:
+                continue
+            holes = [list(nodes[c]["g"].exterior.coords) for c in n["children"]]
+            poly = Polygon(n["g"].exterior.coords, holes)
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+            shells.extend(_polygons_of(poly))
+        if not shells:
+            return None
+        if len(shells) == 1:
+            return shells[0]
+        return unary_union(shells)
+
+    def _inset_part(part, dist):
+        def attempt(d):
+            if d <= 1e-6:
+                return None
+            polys = _polygons_of(part.buffer(-float(d), join_style=2, mitre_limit=2.0))
+            if not polys:
+                return None
+            if len(polys) == 1:
+                return polys[0]
+            return unary_union(polys)
+
+        got = attempt(dist)
+        if got is not None:
+            return got
+        # A closed outer still has a ring when 0.7 mm collapses a thin section.
+        lo, hi = 0.0, float(dist)
+        best = None
+        for _ in range(24):
+            mid = 0.5 * (lo + hi)
+            trial = attempt(mid)
+            if trial is None:
+                hi = mid
+            else:
+                best = trial
+                lo = mid
+        return best
+
+    def _boundary_rings(geom):
+        rings = []
+        for poly in _polygons_of(geom):
+            ext = _ring_coords(poly.exterior)
+            if ext:
+                rings.append(ext)
+            for hole in poly.interiors:
+                h = _ring_coords(hole)
+                if h:
+                    rings.append(h)
+        return rings
+
+    def _leg_inside(x0, y0, x1, y1, pad):
+        """True when the whole leg lies in the 0.7 mm-inset part (boundary included)."""
+        if pad is None or pad.is_empty:
             return False
-        bb = mat_ix["bbox"] if mat_ix else None
-        if bb is None:
-            return True
-        minx, maxx = (x0, x1) if x0 <= x1 else (x1, x0)
-        miny, maxy = (y0, y1) if y0 <= y1 else (y1, y0)
-        if maxx < bb[0] or minx > bb[2] or maxy < bb[1] or miny > bb[3]:
-            return True
-        steps = max(2, int(L / 0.25) + 1)
-        for i in range(steps + 1):
-            t = i / float(steps)
-            px = x0 + t * (x1 - x0)
-            py = y0 + t * (y1 - y0)
-            on = _near_indexed(px, py, mat_ix)
-            near_outer = False
-            if not on and outer_ix and outer_ix["bbox"] is not None:
-                near_outer = _near_indexed(px, py, outer_ix)
-            # Off the bead (crosses the printed region), including the off-material
-            # graze within 0.7 mm of an outer wall.
-            if (not on) or near_outer:
-                return True
-        return False
+        if math.hypot(x1 - x0, y1 - y0) < 1e-9:
+            return bool(pad.covers(Point(x0, y0)))
+        return bool(pad.covers(LineString([(x0, y0), (x1, y1)])))
 
     def _qualify_heelroute(lyr, x0, y0, x1, y1, lctx):
+        """Leave the outer-wall polygon, or come within 0.7 mm of its boundary.
+
+        This does not use a bead radius. No closed outer loop means the travel
+        is not a heel crossing.
+        """
         if not lctx:
             return False
-        mat = lctx.get("mat_segs") or []
-        outer = lctx.get("outer_segs") or []
-        if not mat or not outer:
+        part = lctx.get("part_poly")
+        if part is None or part.is_empty:
             return False
-        return _travel_hits_forbidden(x0, y0, x1, y1, lctx["mat_ix"], lctx["outer_ix"])
+        if math.hypot(x1 - x0, y1 - y0) < 1e-9:
+            return False
+        minx, miny, maxx, maxy = part.bounds
+        sx0, sx1 = (x0, x1) if x0 <= x1 else (x1, x0)
+        sy0, sy1 = (y0, y1) if y0 <= y1 else (y1, y0)
+        if sx1 < minx or sx0 > maxx or sy1 < miny or sy0 > maxy:
+            return True
+        line = LineString([(x0, y0), (x1, y1)])
+        if not part.covers(line):
+            return True
+        boundary = lctx.get("part_boundary")
+        if boundary is None:
+            boundary = part.boundary
+        return boundary.distance(line) <= HEEL_OUTER_NEAR + 1e-9
 
     def _paths_between(poly, closed, si, ts, ei, te, qe):
         n = len(poly)
@@ -717,55 +779,71 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=150.0):
             px, py = qx, qy
         return L
 
-    def _route_ok(x0, y0, pts, mat_ix, outer_ix):
+    def _route_ok(x0, y0, pts, pad):
         prev = (x0, y0)
         for p in pts:
-            if _travel_hits_forbidden(prev[0], prev[1], p[0], p[1], mat_ix, outer_ix):
+            if not _leg_inside(prev[0], prev[1], p[0], p[1], pad):
                 return False
             prev = p
         return True
 
+    def _best_on_poly(x0, y0, tx, ty, poly, closed, pad, require_inside):
+        if len(poly) < 2:
+            return None
+        ds = _nearest_on_poly(poly, x0, y0, closed)
+        de = _nearest_on_poly(poly, tx, ty, closed)
+        if ds is None or de is None:
+            return None
+        _d0, si, ts, qsx, qsy = ds
+        _d1, ei, te, qex, qey = de
+        qs = (qsx, qsy)
+        qe = (qex, qey)
+        valid = []
+        for path in _paths_between(poly, closed, si, ts, ei, te, qe):
+            pts = _assemble(x0, y0, tx, ty, qs, path)
+            if require_inside and not _route_ok(x0, y0, pts, pad):
+                continue
+            valid.append((_chain_len(x0, y0, pts), pts))
+        if not valid:
+            return None
+        valid.sort(key=lambda item: item[0])
+        if not require_inside:
+            return valid[0]
+        # Prefer a route under the cap. If every valid inset route is longer,
+        # keep the shortest anyway — never substitute the straight crossing.
+        chosen = valid[0]
+        for item in valid:
+            if item[0] <= heel_max_route:
+                chosen = item
+                break
+        return chosen
+
     def _route_waypoints(x0, y0, tx, ty, lctx):
+        pad = lctx.get("safe_pad")
         loops = lctx.get("inner_loops") or []
-        if not loops:
-            return None, "no_inner_wall_polyline", 0.0
-        scored = []
-        for poly, closed in loops:
-            if len(poly) < 2:
-                continue
-            ds = _nearest_on_poly(poly, x0, y0, closed)
-            de = _nearest_on_poly(poly, tx, ty, closed)
-            if ds is None or de is None:
-                continue
-            scored.append((ds[0] + de[0], poly, closed, ds, de))
-        if not scored:
-            return None, "no_inner_wall_polyline", 0.0
-        scored.sort(key=lambda item: item[0])
-        mat_ix = lctx["mat_ix"]
-        outer_ix = lctx["outer_ix"]
-        for _score, poly, closed, ds, de in scored:
-            _d0, si, ts, qsx, qsy = ds
-            _d1, ei, te, qex, qey = de
-            qs = (qsx, qsy)
-            qe = (qex, qey)
-            valid = []
-            for path in _paths_between(poly, closed, si, ts, ei, te, qe):
-                pts = _assemble(x0, y0, tx, ty, qs, path)
-                if not _route_ok(x0, y0, pts, mat_ix, outer_ix):
+        if pad is not None and loops:
+            scored = []
+            for poly, closed in loops:
+                if len(poly) < 2:
                     continue
-                valid.append((_chain_len(x0, y0, pts), pts))
-            if not valid:
-                continue
-            valid.sort(key=lambda item: item[0])
-            # Prefer a route under the cap. If every valid inset route is longer,
-            # keep the shortest anyway — never substitute the straight crossing.
-            chosen = valid[0]
-            for item in valid:
-                if item[0] <= heel_max_route:
-                    chosen = item
-                    break
-            return chosen[1], None, chosen[0]
-        return None, "no_valid_route", 0.0
+                ds = _nearest_on_poly(poly, x0, y0, closed)
+                de = _nearest_on_poly(poly, tx, ty, closed)
+                if ds is None or de is None:
+                    continue
+                scored.append((ds[0] + de[0], poly, closed))
+            scored.sort(key=lambda item: item[0])
+            for _score, poly, closed in scored:
+                hit = _best_on_poly(x0, y0, tx, ty, poly, closed, pad, True)
+                if hit is not None:
+                    return hit[1], None, hit[0]
+        best = None
+        for ring in lctx.get("safe_rings") or []:
+            hit = _best_on_poly(x0, y0, tx, ty, ring, True, pad, False)
+            if hit is not None and (best is None or hit[0] < best[0]):
+                best = hit
+        if best is not None:
+            return best[1], None, best[0]
+        return None, "no_closed_outer_loop", 0.0
 
     def _build_layer_ctx(all_lines):
         layer = -1
@@ -789,8 +867,7 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=150.0):
                 ny = y if ny is None else ny
                 if _is_ext(l) and role in ("Outer wall", "Overhang wall", "Inner wall"):
                     seg = (x, y, nx, ny, w)
-                    c = ctx.setdefault(layer, {"outer_segs": [], "inner_segs": [], "mat_segs": [], "inner_width": w})
-                    c["mat_segs"].append(seg)
+                    c = ctx.setdefault(layer, {"outer_segs": [], "inner_segs": [], "inner_width": w})
                     if role in ("Outer wall", "Overhang wall"):
                         c["outer_segs"].append(seg)
                     else:
@@ -816,8 +893,17 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=150.0):
                 if len(op) >= 2:
                     inset_loops.append((op, bool(closed and len(op) >= 3)))
             c["inner_loops"] = inset_loops
-            c["mat_ix"] = _build_seg_index(c["mat_segs"], lambda s: s[4] * 0.5 + HEEL_ON_TOL)
-            c["outer_ix"] = _build_seg_index(c["outer_segs"], lambda s: HEEL_OUTER_NEAR)
+            part = _part_from_outer_loops(outer_loops)
+            c["part_poly"] = part
+            c["part_boundary"] = None if part is None else part.boundary
+            safe = None if part is None else _inset_part(part, HEEL_OUTER_NEAR)
+            c["safe_poly"] = safe
+            if safe is None or safe.is_empty:
+                c["safe_pad"] = None
+                c["safe_rings"] = []
+            else:
+                c["safe_pad"] = safe.buffer(1e-4)
+                c["safe_rings"] = _boundary_rings(safe)
         return ctx
 
     lines = text.splitlines(keepends=True)
@@ -917,7 +1003,7 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=150.0):
                         stats["heelroute_fallback"] += 1
                         crosses = True
                         if lctx is not None:
-                            crosses = _travel_hits_forbidden(x0, y0, tx, ty, lctx["mat_ix"], lctx["outer_ix"])
+                            crosses = _qualify_heelroute(lyr, x0, y0, tx, ty, lctx)
                         print(
                             f"pp_d heelroute FALLBACK layer={lyr} reason={fail} "
                             f"start=({x0:.3f},{y0:.3f}) seam=({tx:.3f},{ty:.3f}) "
@@ -1046,38 +1132,88 @@ def _pip(px, py, poly):
 def _test_heelroute():
     import io
     import contextlib
+    from shapely.geometry import LineString, Point, Polygon
+
     TF = 12720.0
-    seam = {0: (110.0, 0.0)}
-    # Closed inner loop. Straight travel crosses the interior; the inset walk stays on the bead.
-    outer_inner = _closed_walls(
-        [(90, 0), (150, 0), (150, 40), (90, 40)],
-        [[(110, 20), (130, 20), (130, 1), (110, 1)]],
-        (120, 1),
-    )
-    out, st = collapse_seam_travels(outer_inner, TF, seam)
-    assert st["heelroute_routed"] == 1, st
-    assert st["heelroute_fallback"] == 0, st
+
+    def _seg_dist(px, py, ax, ay, bx, by):
+        abx, aby = bx - ax, by - ay
+        ab2 = abx * abx + aby * aby
+        if ab2 < 1e-18:
+            return math.hypot(px - ax, py - ay)
+        t = max(0.0, min(1.0, ((px - ax) * abx + (py - ay) * aby) / ab2))
+        return math.hypot(px - (ax + t * abx), py - (ay + t * aby))
+
+    def _wall_dist(px, py, loops):
+        best = 1e18
+        for loop in loops:
+            for a, b in zip(loop, loop[1:] + loop[:1]):
+                best = min(best, _seg_dist(px, py, a[0], a[1], b[0], b[1]))
+        return best
+
+    # Inset route runs across the bottom arm, off every wall bead, over empty
+    # space. The bead test rejected this; the part-region test must accept it.
+    c_outer = [(0, 0), (40, 0), (40, 8), (12, 8), (12, 32), (40, 32), (40, 40), (0, 40)]
+    c_inner = [(4, 20), (4, 36), (8, 36), (8, 4), (4, 4)]
+    infill_g = _closed_walls(c_outer, [c_inner], (36, 1.2), anchor=(2, -2))
+    out, st = collapse_seam_travels(infill_g, TF, {0: (20.0, 0.0)})
+    assert st["heelroute_routed"] == 1 and st["heelroute_fallback"] == 0, st
     assert ";PP_HEELROUTE_START" in out and ";PP_HEELROUTE_END" in out
     assert "PP_HEELROUTE_FALLBACK" not in out
     assert "G1 E-1.5 F1800" in out and "G1 E1.5 F1800" in out
     for l in out.splitlines():
         if ";heel route" in l:
             assert " E" not in l.split(";")[0]
-    assert _extrusion_lines(outer_inner) == _extrusion_lines(out)
-    rect_pts = _heel_pts(out)
-    assert rect_pts, out
-    assert math.hypot(rect_pts[0][0] - 110, rect_pts[0][1] - 20) < 2.0, rect_pts[0]
-    assert math.hypot(rect_pts[-1][0] - 120, rect_pts[-1][1] - 1) < 1e-6, rect_pts[-1]
-    z_g = outer_inner.replace(
-        "G1 X120.000 Y1.000 F12000\n",
-        "G1 X120.000 Y1.000 Z3.500 F12000\n",
+    assert _extrusion_lines(infill_g) == _extrusion_lines(out)
+    pts = _heel_pts(out)
+    assert pts and math.hypot(pts[-1][0] - 36, pts[-1][1] - 1.2) < 1e-6, pts[-1]
+    assert any(3.0 <= p[0] <= 9.0 for p in pts[:-1]), pts
+    part = Polygon(c_outer)
+    seq = [(4.0, 20.0)] + pts
+    off_bead = False
+    for a, b in zip(seq, seq[1:]):
+        mx, my = 0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1])
+        if _wall_dist(mx, my, (c_outer, c_inner)) > 0.5 and part.covers(Point(mx, my)):
+            off_bead = True
+            break
+    assert off_bead, pts
+    z_g = infill_g.replace(
+        "G1 X36.000 Y1.200 F12000\n",
+        "G1 X36.000 Y1.200 Z3.500 F12000\n",
     )
-    out_z, st_z = collapse_seam_travels(z_g, TF, seam)
+    out_z, st_z = collapse_seam_travels(z_g, TF, {0: (20.0, 0.0)})
     assert st_z["heelroute_routed"] == 1, st_z
     seam_lines = [l for l in out_z.splitlines() if l.endswith(";heel route seam")]
     mid_lines = [l for l in out_z.splitlines() if l.endswith(";heel route")]
     assert seam_lines and "Z3.500" in seam_lines[-1], seam_lines
     assert mid_lines and all("Z" not in l.split(";")[0] for l in mid_lines), mid_lines
+
+    # Deep inside a convex outer (>0.7 mm from the boundary): not a heel crossing.
+    # 0.4 mm from the boundary is, with no dependence on a bead tolerance.
+    def _box_travel(y):
+        return (
+            ";LAYER_CHANGE\n"
+            "G1 X0 Y0 F6000\n"
+            ";TYPE:Outer wall\n"
+            ";WIDTH:0.8\n"
+            "G1 X40 Y0 E0.01\n"
+            "G1 X40 Y20 E0.01\n"
+            "G1 X0 Y20 E0.01\n"
+            "G1 X0 Y0 E0.01\n"
+            f"G1 X10 Y{y:.1f} F6000\n"
+            ";C_SEAM_END\n"
+            f"G1 X30 Y{y:.1f} F12000\n"
+            ";TYPE:Gap infill\n"
+            "G1 X5 Y-1 E0.02\n"
+        )
+
+    out_deep, st_deep = collapse_seam_travels(_box_travel(1.2), TF, {0: (20.0, 0.0)})
+    assert st_deep["heelroute_routed"] == 0 and st_deep["heelroute_fallback"] == 0, st_deep
+    assert ";PP_HEELROUTE" not in out_deep
+    assert ";C seam travel: lift + direct" in out_deep
+    out_near, st_near = collapse_seam_travels(_box_travel(0.4), TF, {0: (20.0, 0.0)})
+    assert st_near["heelroute_routed"] == 1 and st_near["heelroute_fallback"] == 0, st_near
+    assert "PP_HEELROUTE_FALLBACK" not in out_near
 
     along_wall = """;LAYER_CHANGE
 G1 X100 Y0 F6000
@@ -1090,18 +1226,17 @@ G1 X100 Y2 E0.01
 G1 X100 Y0 E0.01
 ;TYPE:Inner wall
 ;WIDTH:0.45
-G1 X101 Y0.5 E0.01
-G1 X119 Y0.5 E0.01
+G1 X101 Y1 E0.01
+G1 X119 Y1 E0.01
 ;C_SEAM_END
-G1 X119 Y0.5 F12000
-G1 X115 Y0.5 F12000
+G1 X119 Y1 F12000
+G1 X115 Y1 F12000
 ;TYPE:Inner wall
-G1 X101 Y1 E0.02
+G1 X101 Y1.5 E0.02
 """
-    out2, st2 = collapse_seam_travels(along_wall, TF, seam)
+    out2, st2 = collapse_seam_travels(along_wall, TF, {0: (110.0, 0.0)})
     assert st2.get("heelroute_routed", 0) == 0 and st2.get("heelroute_fallback", 0) == 0
     assert ";PP_HEELROUTE" not in out2
-    assert ";C seam travel: lift + direct" in out2
     assert out2 == (
         ";LAYER_CHANGE\n"
         "G1 X100 Y0 F6000\n"
@@ -1114,20 +1249,22 @@ G1 X101 Y1 E0.02
         "G1 X100 Y0 E0.01\n"
         ";TYPE:Inner wall\n"
         ";WIDTH:0.45\n"
-        "G1 X101 Y0.5 E0.01\n"
-        "G1 X119 Y0.5 E0.01\n"
+        "G1 X101 Y1 E0.01\n"
+        "G1 X119 Y1 E0.01\n"
         ";C_SEAM_END\n"
         ";C seam travel: lift + direct\n"
         "G1 E-0.5 F1800\n"
-        "G1 Y0.900 F12720 ;lift\n"
-        "G1 X115.000 Y0.900 F12720 ;seam travel\n"
-        "G1 Y0.500 F12720 ;lower\n"
+        "G1 Y1.400 F12720 ;lift\n"
+        "G1 X115.000 Y1.400 F12720 ;seam travel\n"
+        "G1 Y1.000 F12720 ;lower\n"
         "G1 E0.45 F1800\n"
         "G1 F12000\n"
         ";TYPE:Inner wall\n"
-        "G1 X101 Y1 E0.02\n"
+        "G1 X101 Y1.5 E0.02\n"
     )
 
+    # No closed outer loop: the travel is not a heel crossing, so the normal
+    # collapse is unchanged and no straight tagged fallback is emitted.
     no_inner = """;LAYER_CHANGE
 G1 X100 Y0 F6000
 ;TYPE:Outer wall
@@ -1141,9 +1278,9 @@ G1 X110 Y0.4 F12000
 ;TYPE:Outer wall
 G1 X100 Y0 E0.02
 """
-    out3, st3 = collapse_seam_travels(no_inner, TF, seam)
-    assert st3["heelroute_fallback"] == 1
-    assert "PP_HEELROUTE_FALLBACK reason=no_inner_wall_polyline" in out3
+    out3, st3 = collapse_seam_travels(no_inner, TF, {0: (110.0, 0.0)})
+    assert st3["heelroute_routed"] == 0 and st3["heelroute_fallback"] == 0, st3
+    assert "PP_HEELROUTE" not in out3
     assert out3 == (
         ";LAYER_CHANGE\n"
         "G1 X100 Y0 F6000\n"
@@ -1154,125 +1291,130 @@ G1 X100 Y0 E0.02
         "G1 X120 Y20 E0.01\n"
         "G1 X118 Y18 E0.01\n"
         ";C_SEAM_END\n"
-        ";PP_HEELROUTE_START\n"
-        "G1 E-1.5 F1800\n"
-        ";PP_HEELROUTE_FALLBACK reason=no_inner_wall_polyline\n"
         ";C seam travel: lift + direct\n"
+        "G1 E-0.5 F1800\n"
         "G1 Y18.400 F12720 ;lift\n"
         "G1 X110.000 Y0.800 F12720 ;seam travel\n"
         "G1 Y0.400 F12720 ;lower\n"
+        "G1 E0.45 F1800\n"
         "G1 F12000\n"
-        "G1 E1.5 F1800\n"
-        ";PP_HEELROUTE_END\n"
         ";TYPE:Outer wall\n"
         "G1 X100 Y0 E0.02\n"
     )
 
-    # Crescent whose vertex centroid lies in the bay, outside the polygon.
-    # A centroid inset would step into the bay; the winding inset stays in the body.
+    # Closed outer and no inner wall: still route on the 0.7 mm inset boundary.
+    closed_only = _closed_walls([(0, 0), (50, 0), (50, 25), (0, 25)], [], (40, 0.2), anchor=(10, -2))
+    out_ci, st_ci = collapse_seam_travels(closed_only, TF, {0: (25.0, 0.0)})
+    assert st_ci["heelroute_routed"] == 1 and st_ci["heelroute_fallback"] == 0, st_ci
+    assert "PP_HEELROUTE_FALLBACK" not in out_ci
+    ci_pts = _heel_pts(out_ci)
+    assert len(ci_pts) >= 2, ci_pts
+    assert math.hypot(ci_pts[-1][0] - 40, ci_pts[-1][1] - 0.2) < 1e-6
+
+    # Crescent outer. Horn-to-horn chord crosses the bay and must be routed.
     crescent = [(0, 0), (8, 10), (22, 10), (30, 0), (24, 3), (15, 5), (6, 3)]
     cx = sum(p[0] for p in crescent) / len(crescent)
     cy = sum(p[1] for p in crescent) / len(crescent)
     assert not _pip(cx, cy, crescent), (cx, cy)
-    half = 0.225
-    vx, vy = 15.0, 5.0
-    span = math.hypot(cx - vx, cy - vy)
-    ox = vx + (cx - vx) / span * half
-    oy = vy + (cy - vy) / span * half
-    assert oy < vy and not _pip(ox, oy, crescent), (ox, oy, cx, cy)
-    cres_g = _closed_walls(
-        [(-8, -6), (40, -6), (40, 18), (-8, 18)],
-        [crescent],
-        (30, 0),
-        anchor=(1, -4),
-    )
+    cres_poly = Polygon(crescent)
+    assert not cres_poly.covers(LineString([(0, 0), (30, 0)]))
+    cres_g = _closed_walls(crescent, [], (30, 0), anchor=(15, -2))
     out_c, st_c = collapse_seam_travels(cres_g, TF, {0: (15.0, 0.0)})
     assert st_c["heelroute_routed"] == 1 and st_c["heelroute_fallback"] == 0, st_c
+    assert "PP_HEELROUTE_FALLBACK" not in out_c
     cpts = _heel_pts(out_c)
-    mid = [p for p in cpts if 12.0 <= p[0] <= 18.0]
-    assert mid, cpts
-    assert all(5.0 < p[1] < 9.0 for p in mid), mid
+    assert _path_len((0, 0), cpts) > 30.0 + 1.0
+    assert any(p[1] > 2.0 for p in cpts[:-1]), cpts
+    pad = cres_poly.buffer(1e-3)
+    for p in cpts:
+        assert pad.covers(Point(p)), p
     assert _extrusion_lines(cres_g) == _extrusion_lines(out_c)
 
-    # Two disjoint inner loops. The travel starts and ends on the right loop;
-    # a merged chain would jump across to the left loop.
+    # Two inner loops and a notch the straight travel crosses. The route stays
+    # on the near loop (around the notch), not the decoy on the far left.
+    notch = [(0, 0), (40, 0), (50, 20), (60, 0), (100, 0), (100, 40), (0, 40)]
     two_g = _closed_walls(
-        [(-5, -3), (100, -3), (100, 16), (-5, 16)],
+        notch,
         [
-            [(5, 1), (22, 1), (22, 9), (5, 9)],
-            [(40, 9), (85, 9), (85, 1), (40, 1)],
+            [(2, 30), (12, 30), (12, 36), (2, 36)],
+            [(30, 1.2), (30, 28), (70, 28), (70, 1.2)],
         ],
-        (60, 1),
-        anchor=(50, -1),
+        (70, 1.2),
+        anchor=(50, -2),
     )
     out_t, st_t = collapse_seam_travels(two_g, TF, {0: (50.0, 0.0)})
     assert st_t["heelroute_routed"] == 1 and st_t["heelroute_fallback"] == 0, st_t
     tpts = _heel_pts(out_t)
-    assert tpts, out_t
-    assert all(p[0] > 30.0 for p in tpts), tpts
+    assert tpts and all(p[0] > 20.0 for p in tpts), tpts
+    assert any(p[1] > 20.0 for p in tpts), tpts
     assert _extrusion_lines(two_g) == _extrusion_lines(out_t)
 
-    # Shorter inset walk is ~100 mm, above the old 60 mm cap and under the 150 mm default.
-    long_outer = [(-6, -4), (110, -4), (110, 20), (-6, 20)]
-    long_inner = [(10, 12), (100, 12), (100, 1.2), (10, 1.2)]
-    long_g = _closed_walls(long_outer, [long_inner], (100, 1.2), anchor=(1, -2))
+    # Around-path is between the old 60 mm cap and the 150 mm default.
+    long_outer = [(0, 0), (12, 0), (12, 35), (50, 35), (50, 0), (62, 0), (62, 48), (0, 48)]
+    long_inner = [(4, 1.2), (4, 42), (58, 42), (58, 1.2)]
+    long_g = _closed_walls(long_outer, [long_inner], (58, 1.2), anchor=(1, -2))
     err = io.StringIO()
     with contextlib.redirect_stderr(err):
-        out_l, st_l = collapse_seam_travels(long_g, TF, {0: (50.0, 0.0)})
+        out_l, st_l = collapse_seam_travels(long_g, TF, {0: (30.0, 0.0)})
     long_pts = _heel_pts(out_l)
-    long_len = _path_len((10, 12), long_pts)
-    straight = math.hypot(100 - 10, 1.2 - 12)
+    long_len = _path_len((4, 1.2), long_pts)
+    straight = math.hypot(58 - 4, 0)
     assert st_l["heelroute_routed"] == 1 and st_l["heelroute_fallback"] == 0, st_l
-    assert long_len > 60.0, long_len
+    assert 60.0 < long_len < 150.0, long_len
     assert long_len > straight + 5.0, (long_len, straight)
     assert "PP_HEELROUTE_FALLBACK" not in out_l
     assert "over_cap" not in err.getvalue()
     assert _extrusion_lines(long_g) == _extrusion_lines(out_l)
     err60 = io.StringIO()
     with contextlib.redirect_stderr(err60):
-        out60, st60 = collapse_seam_travels(long_g, TF, {0: (50.0, 0.0)}, heel_max_route=60.0)
+        out60, st60 = collapse_seam_travels(long_g, TF, {0: (30.0, 0.0)}, heel_max_route=60.0)
     assert st60["heelroute_routed"] == 1 and st60["heelroute_fallback"] == 0, st60
     assert "PP_HEELROUTE_FALLBACK" not in out60
     log60 = err60.getvalue()
     assert "over_cap" in log60, log60
     assert "emitting original straight move" not in log60
-    assert abs(_path_len((10, 12), _heel_pts(out60)) - long_len) < 1e-6
+    assert abs(_path_len((4, 1.2), _heel_pts(out60)) - long_len) < 1e-6
 
-    # Exit to a point off every inner loop is rejected; straight move is last resort only.
+    # Inner loop cannot reach a seam in the margin. Closed outer still routes
+    # on the inset boundary; the straight move is not emitted.
     far_g = _closed_walls(
         [(-5, -5), (100, -5), (100, 30), (-5, 30)],
-        [[(0, 10), (15, 10), (15, 1), (0, 1)]],
-        (70, 1),
-        anchor=(70, -3),
+        [[(0, 10), (15, 10), (15, 2), (0, 2)]],
+        (70, -4.4),
+        anchor=(70, -6),
     )
     err_f = io.StringIO()
     with contextlib.redirect_stderr(err_f):
-        out_f, st_f = collapse_seam_travels(far_g, TF, {0: (0.0, 0.0)})
-    assert st_f["heelroute_fallback"] == 1 and st_f["heelroute_routed"] == 0, st_f
-    assert "PP_HEELROUTE_FALLBACK reason=no_valid_route" in out_f
-    assert "X70.000" in out_f
-    log_f = err_f.getvalue()
-    assert "straight_crosses=1" in log_f and "emitting original straight move" in log_f, log_f
+        out_f, st_f = collapse_seam_travels(far_g, TF, {0: (0.0, -5.0)})
+    assert st_f["heelroute_routed"] == 1 and st_f["heelroute_fallback"] == 0, st_f
+    assert "PP_HEELROUTE_FALLBACK" not in out_f
+    assert "emitting original straight move" not in err_f.getvalue()
+    fpts = _heel_pts(out_f)
+    assert len(fpts) >= 2 and math.hypot(fpts[-1][0] - 70, fpts[-1][1] + 4.4) < 1e-6, fpts[-1]
     assert _extrusion_lines(far_g) == _extrusion_lines(out_f)
 
-    # Open inner chain (not closed). Offset must move the crossbar away from the
-    # nearer outer wall, not toward it.
+    # Open inner chain. Offset moves the crossbar away from the nearer outer wall.
     open_g = """;LAYER_CHANGE
 G1 X0 Y0 F6000
 ;TYPE:Outer wall
 ;WIDTH:0.8
+G1 X0 Y0 E0.01
+G1 X35 Y0 E0.01
+G1 X40 Y12 E0.01
+G1 X60 Y12 E0.01
+G1 X65 Y0 E0.01
 G1 X100 Y0 E0.01
 G1 X100 Y40 E0.01
 G1 X0 Y40 E0.01
 G1 X0 Y0 E0.01
-G1 X30 Y1 F6000
+G1 X30 Y1.2 F6000
 ;TYPE:Inner wall
 ;WIDTH:0.45
-G1 X30 Y10 E0.01
-G1 X70 Y10 E0.01
-G1 X70 Y1 E0.01
+G1 X30 Y15 E0.01
+G1 X70 Y15 E0.01
+G1 X70 Y1.2 E0.01
 ;C_SEAM_END
-G1 X30 Y1 F12000
+G1 X30 Y1.2 F12000
 ;TYPE:Gap infill
 G1 X30 Y-2 E0.02
 """
@@ -1280,10 +1422,13 @@ G1 X30 Y-2 E0.02
     assert st_o["heelroute_routed"] == 1 and st_o["heelroute_fallback"] == 0, st_o
     opts = _heel_pts(out_o)
     high = [p for p in opts if p[1] > 5.0]
-    assert high and min(p[1] for p in high) > 10.0, opts
+    assert high and min(p[1] for p in high) > 15.0, opts
     assert _extrusion_lines(open_g) == _extrusion_lines(out_o)
 
-    print("heelroute tests ok", st, st2, st3, st_c, st_t, st_l, round(long_len, 2), st60, st_f, st_o)
+    print(
+        "heelroute tests ok",
+        st, st_deep, st_near, st2, st3, st_ci, st_c, st_t, st_l, round(long_len, 2), st60, st_f, st_o,
+    )
 
 
 if __name__ == "__main__":
