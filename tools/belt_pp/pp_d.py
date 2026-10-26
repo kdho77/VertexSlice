@@ -1083,25 +1083,21 @@ def _hg_span_ok(x0, y0, x1, y1, geom, role):
             if _hg_dist_point_index(x0, y0, geom["index"]) + 1e-3 < _HEEL_ACCEPT_INSET:
                 return False
             lifted = _hg_dist_point_index(x0, y0 + LIFT_MM, geom["index"])
-            if lifted + 1e-3 >= _HEEL_ACCEPT_INSET + _HEEL_EMIT_PAD:
-                return True
-            # A channel under ~1.4 mm cannot keep 0.5 mm after the 0.4 mm lift.
-            return not _hg_deeper_clears(x0, y0, geom)
+            # Emitted coordinates. 0.5 mm unlifted can sit ~0.1 mm from a wall
+            # above the leg after the 0.4 mm lift.
+            return lifted + 1e-3 >= _HEEL_ACCEPT_INSET + _HEEL_EMIT_PAD
         if not _hg_strict_inside(x0, y0, geom) or not _hg_strict_inside(x1, y1, geom):
             return False
         # Half of _HEEL_MIN_WIDTH. A thinner sliver has no such inset.
         if _hg_segment_closer_than(x0, y0, x1, y1, geom["index"], _HEEL_MIN_WIDTH * 0.5 - 1e-3):
             return False
-        # The leg is emitted 0.4 mm higher in Y. That shift can land it on the
-        # outer wall even when the unlifted point was 0.5 mm inside. A channel
-        # that cannot hold a deeper inset keeps the 0.5 mm offset.
+        # The leg is emitted 0.4 mm higher in Y. Every non-seam leg, on this
+        # layer's outer wall, stays at least 0.5 mm inside after that shift.
         if _hg_segment_closer_than(
             x0, y0 + LIFT_MM, x1, y1 + LIFT_MM, geom["index"],
             _HEEL_ACCEPT_INSET + _HEEL_EMIT_PAD - 1e-3,
         ):
-            mx, my = 0.5 * (x0 + x1), 0.5 * (y0 + y1)
-            if _hg_deeper_clears(mx, my, geom) or _hg_deeper_clears(x0, y0, geom):
-                return False
+            return False
         return True
     return _hg_end_span_ok(x0, y0, x1, y1, geom, role)
 
@@ -1173,7 +1169,7 @@ def _hg_nonfinal_problem(x0, y0, x1, y1, geom, allow_departure):
         ud0 = _hg_dist_point_index(x0, y0, index)
         if ud0 + 1e-3 < _HEEL_ACCEPT_INSET:
             return "wall_ride"
-        if lifted_d(x0, y0) + 1e-3 < _HEEL_ACCEPT_INSET + _HEEL_EMIT_PAD and _hg_deeper_clears(x0, y0, geom):
+        if lifted_d(x0, y0) + 1e-3 < _HEEL_ACCEPT_INSET + _HEEL_EMIT_PAD:
             return "wall_ride"
         return None
     lifted_close = _hg_segment_closer_than(x0, y0 + LIFT_MM, x1, y1 + LIFT_MM, index, lift_limit)
@@ -1200,10 +1196,8 @@ def _hg_nonfinal_problem(x0, y0, x1, y1, geom, allow_departure):
             if prev_u + 1e-3 < _HEEL_ACCEPT_INSET and ud < prev_u - 0.05:
                 return "wall_ride"
             prev_u = ud
-            # Wide material still has to reach 0.5 mm after the lift. A
-            # channel that cannot hold that step stops at the 0.5 mm offset.
-            stuck = ud + 1e-3 >= _HEEL_ACCEPT_INSET and not _hg_deeper_clears(px, py, geom)
-            if ud + 1e-3 >= _HEEL_ACCEPT_INSET and (d >= lift_limit or stuck):
+            # Arrival is 0.5 mm inside after the lift, not merely unlifted.
+            if ud + 1e-3 >= _HEEL_ACCEPT_INSET and d >= lift_limit:
                 cut = t
                 break
         # Deep enough for this channel, and not a long skim along the wall.
@@ -2211,6 +2205,14 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
     def _best_on_poly(x0, y0, tx, ty, poly, closed, geom, why, nearest_exit=False):
         if geom is None or len(poly) < 2:
             return None
+        # A dropped edge leaves the two inset ends a fraction of a millimetre
+        # apart. Treat that as a loop so the shorter direction is still there.
+        if (
+            not closed
+            and len(poly) >= 3
+            and 1e-4 < math.hypot(poly[0][0] - poly[-1][0], poly[0][1] - poly[-1][1]) <= 1.0
+        ):
+            closed = True
         ds = _attach_point(x0, y0, poly, closed, geom, "entry")
         if ds is None:
             return None
@@ -2241,13 +2243,33 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             for path in _paths_between(poly, closed, si, ts, ei, te, qe):
                 pts = _assemble(x0, y0, tx, ty, qs, path)
                 scored.append((_chain_len(x0, y0, pts), pts))
+            # An open chain's usable end can sit next to the start while its
+            # index is the far end of the chain. Hop there instead of walking
+            # the long way around the broken loop.
+            if math.hypot(qex - x0, qey - y0) <= _HEEL_APPROACH_MAX + 0.05:
+                direct = _assemble(x0, y0, tx, ty, qe, [])
+                scored.append((_chain_len(x0, y0, direct), direct))
         scored.sort(key=lambda item: item[0])
+        # The shorter direction first. A chain longer than the cap is only
+        # checked when nothing shorter stayed inside.
+        over = None
         for dist, pts in scored:
+            if dist > heel_max_route + 1e-6:
+                if over is None:
+                    over = (dist, pts)
+                continue
             reason = _hg_route_problem(x0, y0, pts, geom)
             if reason:
                 why.append(reason)
                 continue
             return (dist, pts)
+        if over is not None:
+            dist, pts = over
+            reason = _hg_route_problem(x0, y0, pts, geom)
+            if reason:
+                why.append(reason)
+            else:
+                return (dist, pts)
         return None
 
     def _route_waypoints(x0, y0, tx, ty, lctx):
@@ -2264,9 +2286,11 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
         straight = math.hypot(tx - x0, ty - y0)
 
         def _prime_inside(px, py):
+            index = geom["index"]
             return (
                 _hg_strict_inside(px, py, geom)
-                and _hg_dist_point_index(px, py, geom["index"]) + 1e-3 >= _HEEL_ACCEPT_INSET
+                and _hg_dist_point_index(px, py, index) + 1e-3 >= _HEEL_ACCEPT_INSET
+                and _hg_dist_point_index(px, py + LIFT_MM, index) + 1e-3 >= _HEEL_ACCEPT_INSET
             )
 
         # A short hop that already stays inside is the final approach. A long
@@ -2538,18 +2562,38 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
                 saw_shell = True
                 if fail is None or rank.get(reason, 0) >= rank.get(fail, 0):
                     fail = reason
-        # A one-point hop has no route leg, so the prime would land on the
-        # lifted start. Step inside first when that start is still on the wall.
-        if waypts is not None and len(waypts) == 1:
+        # The prime is the last interior point, lifted. It has to be 0.5 mm
+        # inside this layer's outer wall. A one-point hop primes at the start.
+        if waypts is not None:
             gctx = layer_ctx.get(route_lyr)
             geom = gctx.get("geom") if gctx else None
             if geom is not None:
-                anchor = _hg_prime_anchor(x0, y0, geom)
-                if anchor is not None:
-                    trial = [anchor, waypts[0]]
-                    if _hg_route_problem(x0, y0, trial, geom) is None:
+                index = geom["index"]
+
+                def _prime_ok(px, py):
+                    return (
+                        _hg_strict_inside(px, py, geom)
+                        and _hg_dist_point_index(px, py, index) + 1e-3 >= _HEEL_ACCEPT_INSET
+                        and _hg_dist_point_index(px, py + LIFT_MM, index) + 1e-3 >= _HEEL_ACCEPT_INSET
+                    )
+
+                prime_at = waypts[-2] if len(waypts) >= 2 else (x0, y0)
+                if not _prime_ok(prime_at[0], prime_at[1]):
+                    anchor = _hg_prime_anchor(prime_at[0], prime_at[1], geom)
+                    if anchor is None and len(waypts) == 1:
+                        anchor = _hg_prime_anchor(x0, y0, geom)
+                    trial = None
+                    if anchor is not None and _prime_ok(anchor[0], anchor[1]):
+                        if len(waypts) == 1:
+                            trial = [anchor, waypts[0]]
+                        else:
+                            trial = waypts[:-1] + [anchor, waypts[-1]]
+                    if trial is not None and _hg_route_problem(x0, y0, trial, geom) is None:
                         waypts = trial
                         rlen = _chain_len(x0, y0, trial)
+                    else:
+                        fail = "wall_ride"
+                        waypts = None
         if waypts is not None and rlen > heel_max_route:
             fail = "over_cap"
             waypts = None
@@ -3492,25 +3536,28 @@ G1 X1 Y-1 E0.02
     assert _wall_dist(px, py + LIFT_MM, (clear_outer,)) + 1e-3 >= 0.5, (px, py)
     assert _extrusion_lines(clear_g) == _extrusion_lines(out_cl)
 
-    # A 1.2 mm channel still has a 0.5 mm offset. Route through it.
+    # A 1.2 mm channel cannot keep 0.5 mm after the 0.4 mm lift. Reject it
+    # instead of emitting a leg ~0.1 mm from the far wall.
     narrow = [(0, 0), (20, 0), (20, 1.2), (0, 1.2)]
     narrow_g = _closed_walls(narrow, [], (16.0, 0.05), anchor=(2, -2))
     err_nw = io.StringIO()
     with contextlib.redirect_stderr(err_nw):
         out_nw, st_nw = collapse_seam_travels(narrow_g, TF, {0: (10.0, 0.0)})
-    assert st_nw["heelroute_routed"] == 1 and st_nw["heelroute_rejected"] == 0, (st_nw, err_nw.getvalue())
-    nwpts = _heel_pts(out_nw)
-    assert len(nwpts) >= 2, nwpts
-    prev = (0.0, 0.0)
-    for i, p in enumerate(nwpts[:-1]):
-        samples = _seg_samples(prev, p, 0.25)
-        if i == 0:
-            samples = [s for s in samples if _wall_dist(s[0], s[1], (narrow,)) + 1e-3 >= 0.5]
-            assert samples, p
-        for sx, sy in samples:
-            assert _wall_dist(sx, sy, (narrow,)) + 1e-3 >= 0.5, (sx, sy, p)
-        prev = p
+    assert st_nw["heelroute_routed"] == 0 and st_nw["heelroute_rejected"] == 1, (st_nw, err_nw.getvalue())
+    assert ";PP_HEELROUTE_REJECT" in out_nw
+    assert "G1 E-1.5 F1800" in out_nw
+    assert ";heel route\n" not in out_nw and not any(
+        ln.endswith(";heel route") for ln in out_nw.splitlines()
+    )
     assert _extrusion_lines(narrow_g) == _extrusion_lines(out_nw)
+
+    # Already 0.5 mm inside, but the lift puts the point 0.4 mm from the ceiling.
+    # That is a wall ride on this layer's outer wall, not an opening hop.
+    ceil = [(0.0, 0.0), (40.0, 0.0), (40.0, 20.0), (0.0, 20.0)]
+    ceil_shells = _hg_shells_from_loops([(ceil, True, 0.8)])
+    ceil_geom = {"shells": ceil_shells, "index": _hg_build_edge_index(ceil_shells)}
+    assert _hg_nonfinal_problem(10.0, 19.2, 12.0, 19.2, ceil_geom, True) == "wall_ride"
+    assert _hg_nonfinal_problem(10.0, 0.0, 10.0, 1.2, ceil_geom, True) is None
 
     # One-point hop: no inset legs, so the prime would sit on the lifted start.
     # That start is 0.6 mm under the top wall (0.2 mm after the lift). The
