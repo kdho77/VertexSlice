@@ -297,6 +297,8 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=150.0):
     Qualifying travels are rerouted along an inward inset of the inner-wall loop
     nearest the travel when every leg lies inside that polygon inset by 0.7 mm.
     Otherwise the route follows the inset polygon's boundary (shorter direction).
+    A ring reached only by a chord that leaves the part is not used; the walk
+    then follows the outer-wall boundary instead of that chord.
     ``heel_max_route`` (default 150 mm) is the preferred maximum length; a longer
     route is still used. The original straight move is emitted only when the
     layer has no closed outer loop, and that fallback is logged.
@@ -787,6 +789,20 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=150.0):
             prev = p
         return True
 
+    def _route_in_part(x0, y0, pts, part_tol):
+        """True when every leg stays in the outer-wall polygon (boundary included)."""
+        if part_tol is None or part_tol.is_empty:
+            return False
+        prev = (x0, y0)
+        for p in pts:
+            if math.hypot(p[0] - prev[0], p[1] - prev[1]) < 1e-9:
+                if not part_tol.covers(Point(p[0], p[1])):
+                    return False
+            elif not part_tol.covers(LineString([prev, p])):
+                return False
+            prev = p
+        return True
+
     def _best_on_poly(x0, y0, tx, ty, poly, closed, pad, require_inside):
         if len(poly) < 2:
             return None
@@ -836,13 +852,31 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=150.0):
                 hit = _best_on_poly(x0, y0, tx, ty, poly, closed, pad, True)
                 if hit is not None:
                     return hit[1], None, hit[0]
-        best = None
-        for ring in lctx.get("safe_rings") or []:
-            hit = _best_on_poly(x0, y0, tx, ty, ring, True, pad, False)
-            if hit is not None and (best is None or hit[0] < best[0]):
-                best = hit
-        if best is not None:
-            return best[1], None, best[0]
+        # Shorter direction on the 0.7 mm inset. A ring reached only by a chord
+        # across the opening is skipped. If every inset ring is disconnected from
+        # one endpoint, walk the outer-wall boundary instead of that chord.
+        part_tol = lctx.get("part_tol")
+
+        def _pick(rings):
+            best = None
+            best_in = None
+            for ring in rings:
+                hit = _best_on_poly(x0, y0, tx, ty, ring, True, pad, False)
+                if hit is None:
+                    continue
+                if best is None or hit[0] < best[0]:
+                    best = hit
+                if _route_in_part(x0, y0, hit[1], part_tol) and (best_in is None or hit[0] < best_in[0]):
+                    best_in = hit
+            return best_in, best
+
+        inset_in, _inset_any = _pick(lctx.get("safe_rings") or [])
+        if inset_in is not None:
+            return inset_in[1], None, inset_in[0]
+        part_in, part_any = _pick(lctx.get("part_rings") or [])
+        chosen = part_in if part_in is not None else part_any
+        if chosen is not None:
+            return chosen[1], None, chosen[0]
         return None, "no_closed_outer_loop", 0.0
 
     def _build_layer_ctx(all_lines):
@@ -904,6 +938,10 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=150.0):
             else:
                 c["safe_pad"] = safe.buffer(1e-4)
                 c["safe_rings"] = _boundary_rings(safe)
+            # 0.25 mm covers the centerline and a short hop to a seam that sits just
+            # off it. A chord across the heel opening is farther out than that.
+            c["part_tol"] = None if part is None or part.is_empty else part.buffer(0.25)
+            c["part_rings"] = [] if part is None or part.is_empty else _boundary_rings(part)
         return ctx
 
     lines = text.splitlines(keepends=True)
@@ -1330,6 +1368,35 @@ G1 X100 Y0 E0.02
         assert pad.covers(Point(p)), p
     assert _extrusion_lines(cres_g) == _extrusion_lines(out_c)
 
+    # A second outer island in the bay must not win by a straight chord across
+    # the opening. The shorter inset walk of the crescent stays in the crescent.
+    # The return to the horn is before C_SEAM_END, so the seam travel still
+    # starts at (0, 0).
+    island = [(13.0, 0.2), (17.0, 0.2), (17.0, 1.5), (13.0, 1.5)]
+    assert not cres_poly.buffer(1e-6).intersects(Polygon(island))
+    isle_g = _closed_walls(crescent, [], (30, 0), anchor=(15, -2))
+    isle_lines = [
+        "G1 X13.000 Y0.200 F6000\n",
+        ";TYPE:Outer wall\n",
+        ";WIDTH:0.8\n",
+        "G1 X17.000 Y0.200 E0.01000\n",
+        "G1 X17.000 Y1.500 E0.01000\n",
+        "G1 X13.000 Y1.500 E0.01000\n",
+        "G1 X13.000 Y0.200 E0.01000\n",
+        "G1 X0.000 Y0.000 F6000\n",
+    ]
+    isle_g = isle_g.replace(";C_SEAM_END\n", "".join(isle_lines) + ";C_SEAM_END\n", 1)
+    out_i, st_i = collapse_seam_travels(isle_g, TF, {0: (15.0, 0.0)})
+    assert st_i["heelroute_routed"] == 1 and st_i["heelroute_fallback"] == 0, st_i
+    ipts = _heel_pts(out_i)
+    assert _path_len((0, 0), ipts) > 30.0 + 1.0
+    isle_poly = Polygon(island).buffer(0.2)
+    for p in ipts:
+        assert not isle_poly.covers(Point(p)), p
+        assert cres_poly.buffer(0.2).covers(Point(p)), p
+    for a, b in zip([(0.0, 0.0)] + ipts, ipts):
+        assert cres_poly.buffer(0.2).covers(LineString([a, b])), (a, b)
+
     # Two inner loops and a notch the straight travel crosses. The route stays
     # on the near loop (around the notch), not the decoy on the far left.
     notch = [(0, 0), (40, 0), (50, 20), (60, 0), (100, 0), (100, 40), (0, 40)]
@@ -1427,7 +1494,7 @@ G1 X30 Y-2 E0.02
 
     print(
         "heelroute tests ok",
-        st, st_deep, st_near, st2, st3, st_ci, st_c, st_t, st_l, round(long_len, 2), st60, st_f, st_o,
+        st, st_deep, st_near, st2, st3, st_ci, st_c, st_i, st_t, st_l, round(long_len, 2), st60, st_f, st_o,
     )
 
 
