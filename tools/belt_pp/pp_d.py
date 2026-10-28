@@ -308,9 +308,13 @@ _HEEL_OUT_LEN = 0.01
 _HEEL_MIN_WIDTH = 1.0
 _HG_CELL = 4.0
 # Heel band only. Everywhere else the route cap stays 60 mm.
+# v3 numbers the heel as layers 355–447. A heel-cut keeps the same machine Z
+# (231.592–291.441) and numbers those layers from 0, so the band is also a Z range.
 _HEEL_BAND_LO = 355
 _HEEL_BAND_HI = 447
 _HEEL_BAND_CAP = 200.0
+_HEEL_Z_LO = 231.592 - 0.30
+_HEEL_Z_HI = 291.441 + 0.30
 # Pure +Y lifts on these layers stop inside the outline but under 0.5 mm.
 # Other layers keep a same-wall shallow lift; only an outline departure is combined.
 _HEEL_LIFT_FIX_LAYERS = (40, 41, 251)
@@ -1733,14 +1737,23 @@ def _hg_make_walk_rings(shells, geom, walk_d):
     return primary
 
 
-def _hg_route_cap(layer, heel_max_route):
-    """60 mm everywhere, 200 mm on heel layers 355–447.
+def _hg_in_heel(layer, z=None):
+    """True on v3 layers 355–447, or at the same heights on a renumbered heel-cut."""
+    if z is not None and _HEEL_Z_LO <= float(z) <= _HEEL_Z_HI:
+        return True
+    return layer is not None and _HEEL_BAND_LO <= layer <= _HEEL_BAND_HI
 
-    An explicit cap above 200 mm is kept. The heel band only raises a
-    smaller cap, so other layers stay on the caller's value.
+
+def _hg_route_cap(layer, heel_max_route, z=None):
+    """60 mm everywhere, 200 mm on the heel.
+
+    The heel is layers 355–447 on the full v3 file, or any layer whose ``;Z:``
+    sits in that band. A heel-cut renumbers layers from 0 and keeps the Z, so
+    the cap follows Z. An explicit cap above 200 mm is kept. The band only
+    raises a smaller cap.
     """
     cap = 60.0 if heel_max_route is None else float(heel_max_route)
-    if layer is not None and _HEEL_BAND_LO <= layer <= _HEEL_BAND_HI and cap < _HEEL_BAND_CAP:
+    if _hg_in_heel(layer, z) and cap < _HEEL_BAND_CAP:
         return _HEEL_BAND_CAP
     return cap
 
@@ -1761,6 +1774,8 @@ _HG_HOP_MAX = 1.2
 _HG_NECK_STEP = 0.15
 # A neck-route endpoint has to sit in the unlifted 0.5 mm region, not on the belt wall.
 _HG_NECK_SNAP = 0.45
+# Heel fallback after the lifted route failed. Belt-wall ends sit ~0.6 mm out.
+_HG_HEEL_SNAP = 1.2
 
 
 def _hg_hop_clearance_rises(x0, y0, x1, y1, geom, d0=None):
@@ -1812,6 +1827,12 @@ def _hg_prelift_hop(x0, y0, geom, max_len=_HG_HOP_MAX):
             sx = x0 + ix * step
             sy = y0 + iy * step
             if not _hg_point_deep(sx, sy, geom):
+                continue
+            # The hop and the lift that follows it are both emitted. Either one
+            # leaving the outer wall is the same failure as an outside prime.
+            if _hg_map3_outside_len(x0, y0, sx, sy, geom) > _HEEL_OUT_LEN:
+                continue
+            if _hg_map3_outside_len(sx, sy, sx, sy + LIFT_MM, geom) > _HEEL_OUT_LEN:
                 continue
             ud = _hg_dist_point_index(sx, sy, index)
             ld = _hg_dist_point_index(sx, sy + LIFT_MM, index)
@@ -2025,11 +2046,14 @@ def _hg_neck_bfs(start, goal, lazy, kind, connect_only):
     return rev
 
 
-def _hg_nolift_neck_route(x0, y0, tx, ty, geom, cap):
-    """Unlifted route across a neck that splits the lifted 0.5 mm region.
+def _hg_nolift_neck_route(x0, y0, tx, ty, geom, cap, require_split=True, snap=None):
+    """Unlifted route at least 0.5 mm inside, at layer height.
 
-    None unless the lifted region does not connect the ends and an unlifted
-    path at least 0.5 mm inside does. The whole route stays at layer height.
+    With ``require_split``, None unless the lifted 0.5 mm region does not
+    connect the ends. A heel travel whose lifted route already failed can
+    pass ``require_split=False`` and a wider snap, so a belt-wall end about
+    0.6 mm from the deep region still walks inside. True different shells
+    never get a path.
     """
     if not geom or not geom.get("shells") or cap is None:
         return None
@@ -2038,17 +2062,19 @@ def _hg_nolift_neck_route(x0, y0, tx, ty, geom, cap):
     lazy = _hg_neck_lazy(geom)
     if lazy is None:
         return None
-    us = _hg_neck_snap_lazy(x0, y0, lazy, 1, _HG_NECK_SNAP)
-    ue = _hg_neck_snap_lazy(tx, ty, lazy, 1, _HG_NECK_SNAP)
+    snap_d = _HG_NECK_SNAP if snap is None else snap
+    us = _hg_neck_snap_lazy(x0, y0, lazy, 1, snap_d)
+    ue = _hg_neck_snap_lazy(tx, ty, lazy, 1, snap_d)
     if us is None or ue is None:
         return None
-    ls = _hg_neck_snap_lazy(x0, y0, lazy, 2, 1.0)
-    le = _hg_neck_snap_lazy(tx, ty, lazy, 2, 1.0)
-    # Both ends sit in the lifted region, and that region does not connect them.
-    if ls is None or le is None or ls[0] > 0.8 or le[0] > 0.8:
-        return None
-    if _hg_neck_bfs(ls[1], le[1], lazy, 2, True):
-        return None
+    if require_split:
+        ls = _hg_neck_snap_lazy(x0, y0, lazy, 2, 1.0)
+        le = _hg_neck_snap_lazy(tx, ty, lazy, 2, 1.0)
+        # Both ends sit in the lifted region, and that region does not connect them.
+        if ls is None or le is None or ls[0] > 0.8 or le[0] > 0.8:
+            return None
+        if _hg_neck_bfs(ls[1], le[1], lazy, 2, True):
+            return None
     dense = _hg_neck_bfs(us[1], ue[1], lazy, 1, False)
     if not dense:
         return None
@@ -2089,6 +2115,39 @@ def _hg_nolift_neck_route(x0, y0, tx, ty, geom, cap):
     if length > cap + 1e-6:
         return None
     return pts, length
+
+
+def _hg_wall_entry(x0, y0, geom):
+    """Point just inside the wall when the nozzle is already past the centerline.
+
+    The gap is at most the on-wall tolerance. None when the start is inside,
+    further out than that, or a lift from the entry still leaves the outline.
+    """
+    if not geom or not geom.get("shells") or not geom.get("index"):
+        return None
+    if _hg_strict_inside(x0, y0, geom):
+        return None
+    index = geom["index"]
+    d0, bx, by = _hg_nearest_boundary(x0, y0, index)
+    if d0 < 1e-6 or d0 > _HEEL_BOUND_EPS:
+        return None
+    ux, uy = bx - x0, by - y0
+    ul = math.hypot(ux, uy)
+    if ul < 1e-6:
+        return None
+    # Past the centerline, so the lift that follows starts inside the outline.
+    nudge = 0.02
+    ex = bx + ux / ul * nudge
+    ey = by + uy / ul * nudge
+    if not _hg_strict_inside(ex, ey, geom):
+        return None
+    if not _hg_strict_inside(ex, ey + LIFT_MM, geom):
+        return None
+    if _hg_map3_outside_len(ex, ey, ex, ey + LIFT_MM, geom) > _HEEL_OUT_LEN:
+        return None
+    if _hg_map3_outside_len(x0, y0, ex, ey, geom) > d0 + nudge + 0.02:
+        return None
+    return (ex, ey)
 
 
 def _hg_lift_departs(x0, y0, geom):
@@ -2182,6 +2241,20 @@ def _hg_top_cross_count(x0, y0, x1, y1, geom):
         if qy >= top - TOP_BAND:
             count += 1
     return count
+
+
+def _hg_outline_leaves(x0, y0, x1, y1, geom):
+    """True when this straight move leaves the real outer-wall polygon.
+
+    The unlifted segment and the same segment after the 0.4 mm lift both
+    count. Any length past the 0.001 mm outline buffer is a crossing, including
+    a side exit the top silhouette never sees.
+    """
+    if not geom or not geom.get("shells"):
+        return False
+    if _hg_map3_outside_len(x0, y0, x1, y1, geom) > _HEEL_OUT_LEN:
+        return True
+    return _hg_map3_outside_len(x0, y0 + LIFT_MM, x1, y1 + LIFT_MM, geom) > _HEEL_OUT_LEN
 
 
 def _hg_inset_ring(ring, geom, dist):
@@ -2328,8 +2401,10 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
     interior point, and the seam leg carries no E. Travels inside a
     ``;COMB_LIFT`` block use the same test. A route longer than
     ``heel_max_route`` (default 60 mm) is rejected and logged, not used.
-    Layers 355–447 use a 200 mm cap instead; a long heel route still
-    retracts before the walk and primes on the last interior point.
+    The heel uses a 200 mm cap instead. On the full file that is layers
+    355–447; a heel-cut keeps those ``;Z:`` heights and is capped the same
+    way. A long heel route still retracts before the walk and primes on the
+    last interior point.
     A start that is inside the wall but has no room for the 0.4 mm lift
     hops inward, unlifted, until it is 0.5 mm inside with lift room, then
     lifts and routes. A heel travel whose lifted 0.5 mm region is split by
@@ -3068,7 +3143,17 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
     reject_log = []
     flag_log = []
     layer = -1; pos_layer = -1
+    layer_z = {}
     ymin_of = lambda k: _seam.get(k, (0, 0.0))[1]
+
+    def _heel_here(lyr):
+        if lyr is None or lyr < 0:
+            return False
+        return _hg_in_heel(lyr, layer_z.get(lyr))
+
+    def _cap_here(lyr):
+        z = None if lyr is None else layer_z.get(lyr)
+        return _hg_route_cap(lyr, heel_max_route, z)
 
     def track(l):
         nonlocal x, y, z, f
@@ -3248,7 +3333,7 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
                 return
             # Snap an outside approach on any layer. Shell jumps and dead
             # routes are only retried in the heel, where a miss is flagged.
-            in_heel = _HEEL_BAND_LO <= report_layer <= _HEEL_BAND_HI
+            in_heel = _heel_here(report_layer)
             if fail != "outside_approach" and not (
                 in_heel and fail in ("different_shells", "no_valid_route", "wall_ride")
             ):
@@ -3259,7 +3344,7 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
                 if not cctx or not cctx.get("shells"):
                     continue
                 got = _hg_wall_approach(
-                    x0, y0, tx, ty, cctx["geom"], _hg_route_cap(cand, heel_max_route))
+                    x0, y0, tx, ty, cctx["geom"], _cap_here(cand))
                 if got is None:
                     continue
                 wpts, rdist = got
@@ -3383,37 +3468,53 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             _repair_prime()
 
         # The lift has no room at the start. Heel only: the same shallow
-        # start outside the band stays a reject.
+        # start outside the band stays a reject. outside_approach covers the
+        # short lifted moves whose straight path leaves the outline.
         if (
             waypts is None
-            and fail == "no_valid_route"
-            and _HEEL_BAND_LO <= report_layer <= _HEEL_BAND_HI
+            and fail in ("no_valid_route", "outside_approach")
+            and _heel_here(report_layer)
         ):
             _attempt_prelift()
 
-        # Heel neck: the lifted 0.5 mm region is split, the unlifted one is not.
-        # Clearance is against the layer being printed. The previous layer's
-        # outline is a different wall and is not a second veto.
+        # Heel: walk unlifted when the lifted route failed and both ends share
+        # a shell. A neck that splits the lifted region is the first try. A
+        # belt-wall end further than 0.45 mm from that region still gets an
+        # unlifted path. Clearance is against the layer being printed.
         if (
             waypts is None
-            and _HEEL_BAND_LO <= report_layer <= _HEEL_BAND_HI
-            and fail in ("outside_approach", "no_valid_route")
+            and _heel_here(report_layer)
+            and fail in ("outside_approach", "no_valid_route", "outside", "wall_ride")
         ):
             geoms = _layer_geoms(report_layer, lyr, layer)
-            cap = _hg_route_cap(report_layer, heel_max_route)
+            cap = _cap_here(report_layer)
             printed = None
             pctx = layer_ctx.get(report_layer)
             if pctx and pctx.get("geom") and pctx["geom"].get("shells"):
                 printed = pctx["geom"]
-            for g in geoms:
-                got = _hg_nolift_neck_route(x0, y0, tx, ty, g, cap)
+
+            def _accept_nolift(g, got):
+                nonlocal waypts, fail, rlen, nolift
                 if got is None:
-                    continue
+                    return False
                 wpts, rdist = got
                 if printed is not None and printed is not g and not _hg_nolift_ok(x0, y0, wpts, printed):
-                    continue
+                    return False
                 waypts, fail, rlen, nolift = wpts, None, rdist, True
-                break
+                return True
+
+            for g in geoms:
+                if _accept_nolift(g, _hg_nolift_neck_route(x0, y0, tx, ty, g, cap)):
+                    break
+            if waypts is None:
+                for g in geoms:
+                    if _accept_nolift(
+                        g,
+                        _hg_nolift_neck_route(
+                            x0, y0, tx, ty, g, cap, require_split=False, snap=_HG_HEEL_SNAP
+                        ),
+                    ):
+                        break
 
         # L40/L41: the routed opening still lifts from a point with no lift room.
         if (
@@ -3428,7 +3529,7 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
                 if not _attempt_prelift():
                     waypts, fail, rlen, route_lyr, ox, oy, prelift = saved
 
-        route_cap = _hg_route_cap(report_layer, heel_max_route)
+        route_cap = _cap_here(report_layer)
         if waypts is not None and rlen > route_cap:
             fail = "over_cap"
             waypts = None
@@ -3457,9 +3558,68 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
                         _hg_opening_segment_ok(x0, y0, wx, wy + LIFT_MM, g) for g in geoms)
                 if opened:
                     combine = True
-                elif fix_lift:
-                    fail = "outside"
-                    waypts = None
+                elif fix_lift or _heel_here(report_layer):
+                    # A pure +Y lift that leaves the outline is not emitted.
+                    # Hop inward first, or keep the whole route at layer height.
+                    saved = (waypts, fail, rlen, route_lyr, ox, oy, prelift, nolift)
+                    if not _attempt_prelift() and _heel_here(report_layer):
+                        waypts, fail, rlen, route_lyr, ox, oy, prelift, nolift = saved
+                        cap = _cap_here(report_layer)
+                        printed = None
+                        pctx = layer_ctx.get(report_layer)
+                        if pctx and pctx.get("geom") and pctx["geom"].get("shells"):
+                            printed = pctx["geom"]
+                        for g in geoms:
+                            got = _hg_nolift_neck_route(
+                                x0, y0, tx, ty, g, cap, require_split=False, snap=_HG_HEEL_SNAP)
+                            if got is None:
+                                continue
+                            wpts, rdist = got
+                            if printed is not None and printed is not g and not _hg_nolift_ok(x0, y0, wpts, printed):
+                                continue
+                            waypts, fail, rlen, nolift = wpts, None, rdist, True
+                            break
+                    if prelift is None and not nolift:
+                        # The nozzle is already past the centerline by a fraction
+                        # of a millimetre. Step back onto the wall, then lift.
+                        # Rejecting would emit the longer outside straight.
+                        entry = None
+                        for g in geoms:
+                            cand = _hg_wall_entry(x0, y0, g)
+                            if cand is None:
+                                continue
+                            if not all(
+                                _hg_map3_outside_len(
+                                    cand[0], cand[1], cand[0], cand[1] + LIFT_MM, gg
+                                ) <= _HEEL_OUT_LEN
+                                for gg in geoms
+                            ):
+                                continue
+                            entry = cand
+                            break
+                        if entry is not None:
+                            wpts, _reason, rdist, cand_lyr = _search_from(entry[0], entry[1])
+                            if wpts is not None:
+                                waypts = wpts
+                                fail = None
+                                route_lyr = cand_lyr
+                                prelift = entry
+                                ox, oy = entry
+                                rlen = rdist + math.hypot(entry[0] - x0, entry[1] - y0)
+                                nolift = False
+                                _repair_prime()
+                    if prelift is None and not nolift:
+                        fail = "outside"
+                        waypts = None
+                        prelift = None
+                        nolift = False
+
+        # The entry hop is measured after the first cap check.
+        if waypts is not None and rlen > route_cap:
+            fail = "over_cap"
+            waypts = None
+            prelift = None
+            nolift = False
 
         if waypts is not None:
             stats["heelroute_routed"] += 1
@@ -3479,24 +3639,27 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             )
             return "fallback", _emit_heel_retract_prime(blk, extra_comments=fb)
         stats["heelroute_rejected"] += 1
+        # A shared shell was already given every inside attempt. What remains
+        # cannot be routed and is listed for Kendon, not dropped.
+        shown = "different_shells_unroutable" if fail == "different_shells" else fail
         extra = ""
         if fail == "over_cap":
             extra = f" length={rlen:.2f} cap={route_cap:.2f}"
         msg = (
-            f"pp_d heelroute REJECT layer={report_layer} reason={fail}{extra} "
+            f"pp_d heelroute REJECT layer={report_layer} reason={shown}{extra} "
             f"start=({x0:.3f},{y0:.3f}) seam=({tx:.3f},{ty:.3f}) "
             f"— kept original move"
         )
         print(msg, file=sys.stderr)
         reject_log.append(msg)
-        if _HEEL_BAND_LO <= report_layer <= _HEEL_BAND_HI and fail in (
+        if _heel_here(report_layer) and fail in (
             "different_shells", "no_valid_route", "outside_approach", "outside", "wall_ride", "over_cap",
         ):
             gctx = layer_ctx.get(report_layer) or layer_ctx.get(lyr)
             geom = gctx.get("geom") if gctx else None
-            crosses = _hg_top_cross_count(x0, y0, tx, ty, geom) if geom else 0
+            crosses = _hg_outline_leaves(x0, y0, tx, ty, geom) if geom else False
             flag = (
-                f"pp_d heelroute FLAG layer={report_layer} line={src_line} reason={fail} "
+                f"pp_d heelroute FLAG layer={report_layer} line={src_line} reason={shown} "
                 f"start=({x0:.3f},{y0:.3f}) seam=({tx:.3f},{ty:.3f}) crosses_top={1 if crosses else 0}"
             )
             print(flag, file=sys.stderr)
@@ -3544,11 +3707,86 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             region = []
             return
 
-        def _take_comb(l, src_idx):
+        consumed = set()
+        arm_follow = False
+        follow = []
+        follow_len = 0.0
+        follow_xy = [x, y]
+
+        def _sync_follow():
+            follow_xy[0], follow_xy[1] = x, y
+
+        def _flush_follow():
+            """Retract a run of slicer travels that add up to at least 6 mm."""
+            nonlocal follow_len
+            if not follow:
+                return
+            if follow_len >= 6.0 - 1e-6:
+                out.append(f"G1 E-{HEEL_E:g} F{HEEL_EF:g}\n")
+                for item in follow:
+                    out.append(item)
+                    track(item)
+                out.append(f"G1 E{HEEL_E:g} F{HEEL_EF:g}\n")
+            else:
+                for item in follow:
+                    out.append(item)
+                    track(item)
+            follow.clear()
+            follow_len = 0.0
+            _sync_follow()
+
+        def _emit_plain(l):
+            nonlocal follow_len
+            if arm_follow and _is_xy_travel(l):
+                nx, ny = _w(l, "X"), _w(l, "Y")
+                nx = follow_xy[0] if nx is None else nx
+                ny = follow_xy[1] if ny is None else ny
+                follow_len += math.hypot(nx - follow_xy[0], ny - follow_xy[1])
+                follow_xy[0], follow_xy[1] = nx, ny
+                follow.append(l)
+                return
+            _flush_follow()
+            out.append(l)
+            track(l)
+            _sync_follow()
+
+        def _note_nolift(blk):
+            nonlocal arm_follow
+            if any("PP_HEELROUTE_NOLIFT" in b for b in blk):
+                arm_follow = True
+            _sync_follow()
+
+        def _lower_after(k, px, py):
+            """Next travel is the 0.4 mm drop from the lifted comb point to the seam."""
+            for k2 in range(k + 1, len(region)):
+                if k2 in consumed:
+                    continue
+                _i2, l2 = region[k2]
+                if l2.startswith((
+                    ";LAYER_CHANGE", ";TYPE:", ";WIDTH:", ";C_SEAM", ";C seam",
+                    ";PP_", ";WIPE", ";COMB",
+                )):
+                    return None
+                if _is_ext(l2):
+                    return None
+                if not _is_xy_travel(l2):
+                    continue
+                nx, ny = _w(l2, "X"), _w(l2, "Y")
+                nx = px if nx is None else nx
+                ny = py if ny is None else ny
+                drop = py - ny
+                if abs(nx - px) <= 0.05 and 0.2 <= drop <= 0.6:
+                    return k2, nx, ny
+                return None
+            return None
+
+        def _take_comb(l, src_idx, target=None):
             """Route a comb crossing. False leaves the caller's byte choice."""
             nx, ny, nz, nf = _w(l, "X"), _w(l, "Y"), _w(l, "Z"), _w(l, "F")
             cx = x if nx is None else nx
             cy = y if ny is None else ny
+            if target is not None:
+                cx, cy = target
             if not (y <= ymin_of(pos_layer) + BELT_SIDE_BAND or cy <= ymin_of(layer) + BELT_SIDE_BAND):
                 return False
             if math.hypot(cx - x, cy - y) < 1e-3:
@@ -3559,16 +3797,25 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             if status == "plain":
                 return False
             _emit_lines(blk)
+            _note_nolift(blk)
             return True
 
         for k, (idx, l) in enumerate(region):
+            if k in consumed:
+                continue
             if k in comb_ks and k != last:
-                if _take_comb(l, idx):
+                nx, ny = _w(l, "X"), _w(l, "Y")
+                cx = x if nx is None else nx
+                cy = y if ny is None else ny
+                low = _lower_after(k, cx, cy)
+                target = None if low is None else (low[1], low[2])
+                if _take_comb(l, idx, target):
+                    if low is not None:
+                        consumed.add(low[0])
                     continue
                 if seam_active and k in trav and k != last:
                     continue
-                out.append(l)
-                track(l)
+                _emit_plain(l)
                 continue
             if seam_active and k in trav and k != last:
                 continue
@@ -3577,18 +3824,22 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
                     if tf is not None:
                         _emit_lines([f"G1 F{tf:g}\n"])
                     continue
-                status, blk = _apply_heel(x, y, tx, ty, tz, tf, zmove, idx + 1)
+                low = _lower_after(k, tx, ty)
+                sx, sy = (tx, ty) if low is None else (low[1], low[2])
+                status, blk = _apply_heel(x, y, sx, sy, tz, tf, zmove, idx + 1)
+                if low is not None and status != "plain":
+                    consumed.add(low[0])
                 if status == "plain":
-                    d = math.hypot(tx - x, ty - y)
-                    retract = d >= RETRACT_MIN_TRAVEL and ty <= ymin_of(layer) + BELT_SIDE_BAND
+                    d = math.hypot(sx - x, sy - y)
+                    retract = d >= RETRACT_MIN_TRAVEL and sy <= ymin_of(layer) + BELT_SIDE_BAND
                     body = [";C seam travel: lift + direct\n"]
                     if retract:
                         body.append(f"G1 E-{RETRACT_MM:g} F{RETRACT_F:g}\n")
                         stats["retracts"] += 1
                     body.append(f"G1 Y{y + LIFT_MM:.3f} F{TF:g} ;lift\n")
                     zs = f" Z{tz:.3f}" if zmove else ""
-                    body.append(f"G1 X{tx:.3f} Y{ty + LIFT_MM:.3f}{zs} F{TF:g} ;seam travel\n")
-                    body.append(f"G1 Y{ty:.3f} F{TF:g} ;lower\n")
+                    body.append(f"G1 X{sx:.3f} Y{sy + LIFT_MM:.3f}{zs} F{TF:g} ;seam travel\n")
+                    body.append(f"G1 Y{sy:.3f} F{TF:g} ;lower\n")
                     if retract:
                         body.append(f"G1 E{RETRACT_MM + RESTART_EXTRA:g} F{RETRACT_F:g}\n")
                     if tf is not None:
@@ -3596,14 +3847,20 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
                     _emit_lines(body)
                 else:
                     _emit_lines(blk)
+                    _note_nolift(blk)
                 continue
-            out.append(l)
-            track(l)
+            _emit_plain(l)
+        _flush_follow()
         region = []
 
     for idx, l in enumerate(lines):
         if l.startswith(";LAYER_CHANGE"):
             layer += 1
+        elif layer >= 0 and l.startswith(";Z:"):
+            try:
+                layer_z[layer] = float(l.split(":", 1)[1].strip().split()[0])
+            except ValueError:
+                pass
         if l.startswith(";C_SEAM_END"):
             flush(False)          # glide etc. before the marker stays as is
             out.append(l); seam_from = True; continue
@@ -4514,6 +4771,13 @@ G1 X1 Y-1 E0.02
     assert _hg_route_cap(447, 60.0) == 200.0
     assert _hg_route_cap(448, 60.0) == 60.0
     assert _hg_route_cap(400, 250.0) == 250.0
+    # Heel-cut renumbers layers from 0 and keeps the v3 heel Z.
+    assert _hg_route_cap(0, 60.0, z=231.592) == 200.0
+    assert _hg_route_cap(0, 60.0, z=260.866) == 200.0
+    assert _hg_route_cap(0, 60.0, z=291.441) == 200.0
+    assert _hg_route_cap(0, 60.0, z=26.672) == 60.0
+    assert _hg_route_cap(0, 60.0, z=230.941) == 60.0
+    assert _hg_route_cap(0, 60.0, z=292.092) == 60.0
 
     # Layers 355–447 raise a 60 mm cap to 200 mm. The route still retracts and primes.
     # Layer 0 with the default cap stays a reject (asserted above).
@@ -4586,6 +4850,43 @@ G1 X1 Y-1 E0.02
         assert ";heel route" not in out_top
     assert _extrusion_lines(top_g) == _extrusion_lines(out_top)
 
+    # Start already 0.1 mm past the centerline. Step onto the wall, then lift
+    # inside it. The heel Z makes the 200 mm cap apply on layer 0.
+    entry_g = (
+        ";LAYER_CHANGE\n"
+        ";Z:260.000\n"
+        "G1 X0 Y0 F6000\n"
+        ";TYPE:Outer wall\n"
+        ";WIDTH:0.8\n"
+        "G1 X30 Y0 E0.01\n"
+        "G1 X30 Y20 E0.01\n"
+        "G1 X0 Y20 E0.01\n"
+        "G1 X0 Y0 E0.01\n"
+        "G1 X10 Y-0.100 F6000\n"
+        ";C_SEAM_END\n"
+        "G1 X25 Y5.000 F12000\n"
+        ";TYPE:Gap infill\n"
+        "G1 X1 Y-1 E0.02\n"
+    )
+    err_entry = io.StringIO()
+    with contextlib.redirect_stderr(err_entry):
+        out_entry, st_entry = collapse_seam_travels(entry_g, TF, {0: (25.0, 0.0)})
+    assert st_entry["heelroute_routed"] == 1 and st_entry["heelroute_rejected"] == 0, (
+        st_entry, err_entry.getvalue(), out_entry)
+    assert "FLAG" not in err_entry.getvalue()
+    entry_lines = out_entry.splitlines()
+    pre_i = next(i for i, ln in enumerate(entry_lines) if ln.endswith(";heel prelift"))
+    pre_x, pre_y = _w(entry_lines[pre_i], "X"), _w(entry_lines[pre_i], "Y")
+    lift_ln = entry_lines[pre_i + 1]
+    assert lift_ln.endswith(";lift"), lift_ln
+    assert abs(_w(lift_ln, "Y") - (pre_y + LIFT_MM)) < 1e-3
+    rect = [(0.0, 0.0), (30.0, 0.0), (30.0, 20.0), (0.0, 20.0)]
+    rect_shells = _hg_shells_from_loops([(rect, True, 0.8)])
+    rect_geom = {"shells": rect_shells, "index": _hg_build_edge_index(rect_shells)}
+    assert _hg_map3_outside_len(pre_x, pre_y, pre_x, pre_y + LIFT_MM, rect_geom) <= _HEEL_OUT_LEN
+    assert 0.0 < pre_y < 0.1, (pre_x, pre_y)
+    assert _extrusion_lines(entry_g) == _extrusion_lines(out_entry)
+
     # Two shells in the heel band. A travel that cannot stay inside is flagged
     # with the source line and whether the straight move crosses the top.
     two_shell = (
@@ -4617,7 +4918,8 @@ G1 X1 Y-1 E0.02
     flag_txt = err_flag.getvalue()
     assert st_flag["heelroute_rejected"] >= 1, st_flag
     assert "pp_d heelroute FLAG" in flag_txt
-    assert "crosses_top=" in flag_txt and "line=" in flag_txt
+    assert "different_shells_unroutable" in flag_txt
+    assert "crosses_top=1" in flag_txt and "line=" in flag_txt
     assert "start=(50.000,0.200)" in flag_txt and "seam=(10.000,0.200)" in flag_txt
     assert ";PP_HEELROUTE_REJECT" in out_flag
     assert "G1 E-1.5 F1800" in out_flag and "G1 E1.5 F1800" in out_flag
@@ -4715,6 +5017,65 @@ G1 X1 Y-1 E0.02
     assert abs(_w(seam_ln, "X") - 30.0) < 1e-6 and abs(_w(seam_ln, "Y") - 0.300) < 1e-6
     assert _wall_dist(prev[0], prev[1], (dumbbell,)) + 1e-3 >= 0.5, prev
     assert _extrusion_lines(neck_g) == _extrusion_lines(out_nk)
+
+    # Layer 0 at heel Z gets the 200 mm cap. The same shape at a sole Z stays at 60.
+    z_heel = long_g.replace(";LAYER_CHANGE\n", ";LAYER_CHANGE\n;Z:260.000\n", 1)
+    err_zh = io.StringIO()
+    with contextlib.redirect_stderr(err_zh):
+        out_zh, st_zh = collapse_seam_travels(z_heel, TF, {0: (30.0, 0.0)})
+    zh_len = _path_len((4.0, 1.2), _heel_pts(out_zh))
+    assert st_zh["heelroute_routed"] == 1 and st_zh["heelroute_rejected"] == 0, (st_zh, err_zh.getvalue())
+    assert 60.0 < zh_len <= 200.0, zh_len
+    assert "FLAG" not in err_zh.getvalue()
+    z_sole = long_g.replace(";LAYER_CHANGE\n", ";LAYER_CHANGE\n;Z:26.672\n", 1)
+    err_zs = io.StringIO()
+    with contextlib.redirect_stderr(err_zs):
+        _out_zs, st_zs = collapse_seam_travels(z_sole, TF, {0: (30.0, 0.0)})
+    assert st_zs["heelroute_routed"] == 0 and st_zs["heelroute_rejected"] == 1, st_zs
+    assert "cap=60.00" in err_zs.getvalue()
+
+    # Comb endpoint is the lifted seam. The route ends at the true seam, at
+    # layer height, and the following 0.4 mm lower is not traveled again.
+    # Slicer travels after that block that add up to at least 6 mm retract.
+    comb_body = (
+        "G1 X0 Y0 F6000\n"
+        ";TYPE:Outer wall\n"
+        ";WIDTH:0.8\n"
+        "G1 X38 Y0 E0.01\n"
+        "G1 X38 Y16 E0.01\n"
+        "G1 X22 Y16 E0.01\n"
+        "G1 X22 Y1.250 E0.01\n"
+        "G1 X16 Y1.250 E0.01\n"
+        "G1 X16 Y16 E0.01\n"
+        "G1 X0 Y16 E0.01\n"
+        "G1 X0 Y0 E0.01\n"
+        "G1 X8 Y8 F6000\n"
+        ";COMB_LIFT\n"
+        "G1 X30.000 Y0.700\n"
+        "G1 X30.000 Y0.300\n"
+        ";C seam done\n"
+        "G1 X18.000 Y8.000\n"
+        "G1 X8.000 Y8.000\n"
+        ";TYPE:Gap infill\n"
+        "G1 X1 Y-1 E0.02\n"
+    )
+    comb_g = "".join(";LAYER_CHANGE\n" for _ in range(356)) + comb_body
+    err_cb = io.StringIO()
+    with contextlib.redirect_stderr(err_cb):
+        out_cb, st_cb = collapse_seam_travels(comb_g, TF, {355: (19.0, 0.0)})
+    assert st_cb["heelroute_routed"] >= 1 and st_cb["heelroute_rejected"] == 0, (st_cb, err_cb.getvalue())
+    assert ";PP_HEELROUTE_NOLIFT" in out_cb
+    assert "G1 X30.000 Y0.700" not in out_cb and "G1 X30.000 Y0.300\n" not in out_cb
+    cb_seam = [ln for ln in out_cb.splitlines() if ln.endswith(";heel route seam")]
+    assert len(cb_seam) == 1, cb_seam
+    assert abs(_w(cb_seam[0], "Y") - 0.300) < 1e-6, cb_seam[0]
+    assert not any(ln.endswith(";lift") or ln.endswith(";lower") for ln in out_cb.splitlines())
+    cb_lines = out_cb.splitlines()
+    i18 = next(i for i, ln in enumerate(cb_lines) if ln.startswith("G1 X18.000 Y8.000"))
+    i8 = next(i for i, ln in enumerate(cb_lines) if ln.startswith("G1 X8.000 Y8.000"))
+    assert any(ln.startswith("G1 E-1.5 F1800") for ln in cb_lines[i18 - 3:i18])
+    assert any(ln.startswith("G1 E1.5 F1800") for ln in cb_lines[i8 + 1:i8 + 4])
+    assert _extrusion_lines(comb_g) == _extrusion_lines(out_cb)
 
     print(
         "heelroute tests ok",
