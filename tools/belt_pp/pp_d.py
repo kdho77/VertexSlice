@@ -1417,10 +1417,12 @@ def _hg_deeper_clears(px, py, geom):
     return True
 
 
-def _hg_prime_anchor(px, py, geom):
+def _hg_prime_anchor(px, py, geom, require_lift=True):
     """A point at least 0.5 mm inside, for a prime that would otherwise sit on the wall.
 
     None when the start is already clear. The caller adds the short leg.
+    ``require_lift`` is false for an unlifted route: the prime is not raised,
+    so only the layer-height clearance has to be 0.5 mm.
     """
     index = geom["index"]
 
@@ -1430,30 +1432,50 @@ def _hg_prime_anchor(px, py, geom):
     def plain(qx, qy):
         return _hg_dist_point_index(qx, qy, index)
 
-    if lifted(px, py) + 1e-3 >= _HEEL_ACCEPT_INSET and plain(px, py) + 1e-3 >= _HEEL_ACCEPT_INSET:
+    # An unlifted prime is measured at layer height, so 0.499 mm does not count.
+    tol = 0.0 if not require_lift else 1e-3
+    plain_ok = plain(px, py) + tol >= _HEEL_ACCEPT_INSET
+    lift_ok = lifted(px, py) + 1e-3 >= _HEEL_ACCEPT_INSET
+    if plain_ok and (lift_ok or not require_lift) and _hg_strict_inside(px, py, geom):
         return None
-    _bd, qx, qy = _hg_nearest_boundary(px, py + LIFT_MM, index)
-    vx, vy = px - qx, (py + LIFT_MM) - qy
+    by = py if not require_lift else py + LIFT_MM
+    _bd, qx, qy = _hg_nearest_boundary(px, by, index)
+    vx, vy = px - qx, by - qy
     span = math.hypot(vx, vy)
     dirs = []
     if span > 1e-6:
         dirs.append((vx / span, vy / span))
     dirs.append((0.0, 1.0))
     dirs.append((0.0, -1.0))
+    nearest = None
+    nearest_d = None
     for sh in geom["shells"]:
-        rx, ry = _hg_rep_inside(sh["outer"])
+        ring = sh.get("outer") or []
+        if len(ring) < 3:
+            continue
+        d = _hg_ring_dist(px, py, ring)
+        if nearest_d is None or d < nearest_d:
+            nearest_d = d
+            nearest = sh
+    if nearest is not None:
+        rx, ry = _hg_rep_inside(nearest["outer"])
         dx, dy = rx - px, ry - py
         mag = math.hypot(dx, dy)
         if mag > 1e-6:
             dirs.append((dx / mag, dy / mag))
-            break
+    if not require_lift:
+        for k in range(16):
+            ang = k * math.pi / 8.0
+            dirs.append((math.cos(ang), math.sin(ang)))
     best = None
     for dx, dy in dirs:
-        for step in (0.05, 0.10, 0.12, 0.15, 0.2, 0.35, 0.5, 0.8, 1.2, 1.8, 2.6):
+        for step in (0.05, 0.10, 0.12, 0.15, 0.2, 0.35, 0.5, 0.8, 1.0, 1.2, 1.5, 1.8, 2.6):
             sx, sy = px + dx * step, py + dy * step
             if not _hg_strict_inside(sx, sy, geom):
                 break
-            if lifted(sx, sy) + 1e-3 < _HEEL_ACCEPT_INSET or plain(sx, sy) + 1e-3 < _HEEL_ACCEPT_INSET:
+            if plain(sx, sy) + tol < _HEEL_ACCEPT_INSET:
+                continue
+            if require_lift and lifted(sx, sy) + 1e-3 < _HEEL_ACCEPT_INSET:
                 continue
             if best is None or step < best[0]:
                 best = (step, sx, sy)
@@ -2336,6 +2358,130 @@ def _hg_rescue_route(x0, y0, tx, ty, geom, cap):
             continue
         return pts, length
     return None
+
+
+def _hg_ring_route(x0, y0, tx, ty, geom, cap, max_end=0.80):
+    """Shorter walk along one outer-wall ring.
+
+    A chord across a thin or concave shell can leave the outline while both
+    ends still sit on that ring. The walk stays on the centerline, so its
+    outside length is the stub from the ring to an end that is not already
+    on it. None when the ends are not on one ring or the walk is over ``cap``.
+    """
+    if not geom or not geom.get("shells") or cap is None:
+        return None
+
+    def _project(ring, px, py):
+        hit = None
+        n = len(ring)
+        for i in range(n):
+            ax, ay = ring[i]
+            bx, by = ring[(i + 1) % n]
+            qx, qy, d = _hg_closest_on_seg(px, py, ax, ay, bx, by)
+            if hit is None or d < hit[0]:
+                hit = (d, i, qx, qy)
+        return hit
+
+    def _clean(pts):
+        out = []
+        for px, py in pts:
+            if out and math.hypot(px - out[-1][0], py - out[-1][1]) <= 1e-4:
+                continue
+            out.append((px, py))
+        if out and math.hypot(out[0][0] - x0, out[0][1] - y0) <= 1e-4:
+            out = out[1:]
+        return out
+
+    def _simplify(pts):
+        kept = list(pts)
+        changed = True
+        while changed and len(kept) >= 3:
+            changed = False
+            nxt = [kept[0]]
+            for i in range(1, len(kept) - 1):
+                ax, ay = nxt[-1]
+                bx, by = kept[i]
+                cx, cy = kept[i + 1]
+                _qx, _qy, d = _hg_closest_on_seg(bx, by, ax, ay, cx, cy)
+                span = math.hypot(cx - ax, cy - ay)
+                if d <= 0.02 and span + 1e-6 >= math.hypot(bx - ax, by - ay):
+                    changed = True
+                    continue
+                nxt.append((bx, by))
+            nxt.append(kept[-1])
+            kept = nxt
+        return kept
+
+    def _accept(path):
+        if not path:
+            return None
+        length = 0.0
+        prev = (x0, y0)
+        for px, py in path:
+            if _hg_map3_outside_len(prev[0], prev[1], px, py, geom) > _HEEL_OUT_LEN:
+                return None
+            if _hg_strict_top_count(prev[0], prev[1], px, py, geom) > 0:
+                return None
+            length += math.hypot(px - prev[0], py - prev[1])
+            prev = (px, py)
+        if length > cap + 1e-6 or length < 1e-6:
+            return None
+        return path, length
+
+    def _measure(pts):
+        # A collinear shortcut across a concave top leaves the outline.
+        # The unsimplified ring is the path when that shortcut fails.
+        raw = list(pts)
+        simple = _simplify(raw)
+        got = _accept(simple)
+        if got is None and simple != raw:
+            got = _accept(raw)
+        return got
+
+    best = None
+    for sh in geom["shells"]:
+        ring = sh.get("outer") or []
+        n = len(ring)
+        if n < 3:
+            continue
+        ds, si, sx, sy = _project(ring, x0, y0)
+        de, ei, ex, ey = _project(ring, tx, ty)
+        if ds > max_end or de > max_end:
+            continue
+
+        def _walk(direction):
+            pts = [(sx, sy)]
+            if direction > 0 and si == ei:
+                pts.append((ex, ey))
+            else:
+                i = (si + 1) % n if direction > 0 else si
+                target = ei if direction > 0 else (ei + 1) % n
+                seen = 0
+                while seen <= n + 1:
+                    pts.append(ring[i])
+                    if i == target:
+                        break
+                    i = (i + direction) % n
+                    seen += 1
+                pts.append((ex, ey))
+            return _clean(pts)
+
+        for direction in (1, -1):
+            base = _walk(direction)
+            # The exact target is appended only when that stub stays inside.
+            # A point just past the centerline keeps the walk on the ring.
+            got = _measure(base)
+            if math.hypot(tx - ex, ty - ey) > 1e-4:
+                tipped = _measure(base + [(tx, ty)])
+                if tipped is not None:
+                    got = tipped
+            if got is None:
+                continue
+            if best is None or got[1] < best[1]:
+                best = got
+    if best is None:
+        return None
+    return best
 
 
 def _hg_emitted_outside(x0, y0, ty, waypts, geom, prelift, nolift):
@@ -3287,6 +3433,13 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
                 return [(tx, ty)], None, straight
             if hop is not None:
                 why.append(hop)
+        # A sub-millimetre move along the wall. The inset walk around the
+        # shell can be far over the cap while the chord itself barely leaves.
+        # L21 is 0.037 mm with an 84 mm boundary walk. Keep the chord.
+        if straight <= 0.25:
+            outside = _hg_map3_outside_len(x0, y0, tx, ty, geom)
+            if outside <= 0.05 and _hg_strict_top_count(x0, y0, tx, ty, geom) == 0:
+                return [(tx, ty)], None, straight
 
         def _on_common(poly):
             step = max(1, len(poly) // 4)
@@ -3478,21 +3631,38 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             blk.append(f"G1 F{tf:g}\n")
         return blk
 
-    def _emit_routed_block(x0, y0, waypts, ty, tz, tf, zmove, combine_lift=False, prelift=None, nolift=False):
+    def _emit_routed_block(x0, y0, waypts, ty, tz, tf, zmove, combine_lift=False, prelift=None, nolift=False, entry_snap=None, snap_lift=True):
         """Retract, walk, prime on the last interior point, then the seam leg with no E.
 
         ``combine_lift`` skips the pure +Y lift. The first travel rises while
         it moves to the first inside point, so a lift that would leave the
         outline is not emitted. ``prelift`` is an unlifted inward hop made
         before that lift. ``nolift`` keeps the whole route at layer height.
-        The retract and the prime stay.
+        The retract and the prime stay. ``entry_snap`` is a point on the
+        current outline: the nozzle was left outside a shell that narrowed,
+        so the block lifts, moves onto that point, and lowers before the route.
+        ``snap_lift`` false moves across at layer height when the lift itself
+        would cross the top.
         """
+        snap_blk = []
+        if entry_snap is not None:
+            sx, sy = entry_snap
+            if snap_lift:
+                snap_blk = [
+                    f"G1 Y{y0 + LIFT_MM:.3f} F{TF:g} ;lift\n",
+                    f"G1 X{sx:.3f} Y{sy + LIFT_MM:.3f} F{TF:g} ;heel snap\n",
+                    f"G1 Y{sy:.3f} F{TF:g} ;lower\n",
+                ]
+            else:
+                snap_blk = [f"G1 X{sx:.3f} Y{sy:.3f} F{TF:g} ;heel snap\n"]
+            x0, y0 = sx, sy
         if nolift:
             blk = [
                 ";PP_HEELROUTE_START\n",
                 ";PP_HEELROUTE_NOLIFT\n",
                 f"G1 E-{HEEL_E:g} F{HEEL_EF:g}\n",
             ]
+            blk.extend(snap_blk)
             for wx, wy in waypts[:-1]:
                 blk.append(f"G1 X{wx:.3f} Y{wy:.3f} F{TF:g} ;heel route\n")
             blk.append(f"G1 E{HEEL_E:g} F{HEEL_EF:g}\n")
@@ -3504,6 +3674,7 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             blk.append(";PP_HEELROUTE_END\n")
             return blk
         blk = [";PP_HEELROUTE_START\n", f"G1 E-{HEEL_E:g} F{HEEL_EF:g}\n"]
+        blk.extend(snap_blk)
         if prelift is not None:
             hx, hy = prelift
             blk.append(f"G1 X{hx:.3f} Y{hy:.3f} F{TF:g} ;heel prelift\n")
@@ -3586,6 +3757,56 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             "thin_region": 5,
             "reversal": 6,
         }
+        # The shell narrowed, so the nozzle is sitting just outside this layer.
+        # Snap onto the current outline, then route from there. A start only
+        # 0.25 mm out stays on the old path: that is a seam parked on the wall,
+        # not a layer change. Further than 1 mm is a different shell.
+        nozzle_x, nozzle_y = x0, y0
+        entry_snap = None
+        snap_lift = True
+        snap_extra = 0.0
+        snap_geom = None
+        for cand in (layer, lyr):
+            cctx = layer_ctx.get(cand)
+            geom = cctx.get("geom") if cctx else None
+            if not geom or not geom.get("shells"):
+                continue
+            snap_geom = geom
+            if cand == layer or layer < 0:
+                break
+        if snap_geom is not None and not _hg_strict_inside(x0, y0, snap_geom):
+            dist, _qx, _qy = _hg_nearest_boundary(x0, y0, snap_geom["index"])
+            straight_snap = math.hypot(tx - x0, ty - y0)
+            # A start 0.25–1 mm outside is the nozzle left past a shell that
+            # narrowed. A shorter gap, under 0.05 mm, is only pulled in when
+            # the chord itself is that short: a 0.1 mm entry stays a reject.
+            far = _HEEL_BOUND_EPS < dist <= 1.0
+            near = 1e-3 < dist <= 0.05 and straight_snap <= 0.25
+            if far or near:
+                snapped = _hg_clamp_inside(x0, y0, snap_geom, max_out=1.0 if far else 0.05)
+                if snapped is not None and math.hypot(snapped[0] - x0, snapped[1] - y0) > 1e-3:
+                    entry_snap = snapped
+                    snap_extra = math.hypot(snapped[0] - x0, snapped[1] - y0)
+                    lift_top = _hg_strict_top_count(
+                        x0, y0 + LIFT_MM, snapped[0], snapped[1] + LIFT_MM, snap_geom)
+                    lift_up = _hg_strict_top_count(x0, y0, x0, y0 + LIFT_MM, snap_geom)
+                    lift_out = (
+                        _hg_map3_outside_len(x0, y0, x0, y0 + LIFT_MM, snap_geom) > _HEEL_OUT_LEN
+                        or _hg_map3_outside_len(
+                            x0, y0 + LIFT_MM, snapped[0], snapped[1] + LIFT_MM, snap_geom
+                        ) > _HEEL_OUT_LEN
+                    )
+                    snap_lift = lift_top == 0 and lift_up == 0 and not lift_out
+                    x0, y0 = snapped
+        # A seam parked a few hundredths of a millimetre past the wall makes
+        # the final lower leave the outline. Pull that end onto the boundary.
+        # Anything further than 0.05 mm is a different shell and stays put.
+        if snap_geom is not None and not _hg_strict_inside(tx, ty, snap_geom):
+            tdist, _tqx, _tqy = _hg_nearest_boundary(tx, ty, snap_geom["index"])
+            if 1e-3 < tdist <= 0.05:
+                clamped = _hg_clamp_inside(tx, ty, snap_geom, max_out=0.05)
+                if clamped is not None and math.hypot(clamped[0] - tx, clamped[1] - ty) > 1e-4:
+                    tx, ty = clamped
         for cand in order:
             wpts, reason, rdist = _route_waypoints(x0, y0, tx, ty, layer_ctx.get(cand))
             if wpts is not None and cand != layer:
@@ -3835,7 +4056,7 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
                     waypts, fail, rlen, route_lyr, ox, oy, prelift = saved
 
         route_cap = _cap_here(report_layer)
-        if waypts is not None and rlen > route_cap:
+        if waypts is not None and rlen + snap_extra > route_cap:
             fail = "over_cap"
             waypts = None
             prelift = None
@@ -3921,7 +4142,7 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
                         nolift = False
 
         # The entry hop is measured after the first cap check.
-        if waypts is not None and rlen > route_cap:
+        if waypts is not None and rlen + snap_extra > route_cap:
             fail = "over_cap"
             waypts = None
             prelift = None
@@ -3996,23 +4217,251 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
                 waypts, fail, rlen, nolift = wpts, None, rdist, True
                 prelift = None
                 break
+
+        def _ring_from(origin_x, origin_y):
+            cap_left = route_cap - snap_extra
+            if cap_left <= 1e-6:
+                return None
+            printed = None
+            pctx = layer_ctx.get(report_layer)
+            if pctx and pctx.get("geom") and pctx["geom"].get("shells"):
+                printed = pctx["geom"]
+            seen = []
+            for g in _layer_geoms(report_layer, lyr, layer):
+                if all(g is not old for old in seen):
+                    seen.append(g)
+            best = None
+            for g in seen:
+                got = _hg_ring_route(origin_x, origin_y, tx, ty, g, cap_left)
+                if got is None:
+                    continue
+                wpts, rdist = got
+                check = [g]
+                if printed is not None and printed is not g:
+                    check.append(printed)
+                prev = (origin_x, origin_y)
+                bad = False
+                for px, py in wpts:
+                    for gg in check:
+                        if _hg_map3_outside_len(prev[0], prev[1], px, py, gg) > _HEEL_OUT_LEN:
+                            bad = True
+                        if _hg_strict_top_count(prev[0], prev[1], px, py, gg) > 0:
+                            bad = True
+                    if bad:
+                        break
+                    prev = (px, py)
+                if bad:
+                    continue
+                if best is None or rdist < best[1]:
+                    best = (wpts, rdist)
+            return best
+
+        def _nearest_shell(px, py, geoms):
+            best = None
+            for g in geoms:
+                for sh in g.get("shells") or []:
+                    ring = sh.get("outer") or []
+                    bb = sh.get("bbox")
+                    if len(ring) < 3 or not bb:
+                        continue
+                    d = _hg_ring_dist(px, py, ring)
+                    if best is None or d < best[0]:
+                        best = (d, bb[3] - bb[1], ring, bb[2] - bb[0])
+            return best
+
+        def _chord_cuts(origin, pts, ring):
+            prev = origin
+            for px, py in pts:
+                steps = 3
+                for s in range(1, steps):
+                    t = s / float(steps)
+                    sx = prev[0] + (px - prev[0]) * t
+                    sy = prev[1] + (py - prev[1]) * t
+                    if _hg_ring_dist(sx, sy, ring) > 0.15:
+                        return True
+                prev = (px, py)
+            return False
+
+        # A boundary walk, before a path that already left the outline is
+        # restored. Different shells and thin slivers stay rejects.
+        if waypts is None and fail in (
+            "no_valid_route", "outside", "over_cap", "wall_ride", "outside_approach",
+        ):
+            got = _ring_from(x0, y0)
+            if got is not None:
+                waypts, rlen = got
+                fail = None
+                nolift = True
+                prelift = None
+                combine = False
         if waypts is None and saved_emit is not None:
             waypts, fail, rlen, route_lyr, ox, oy, prelift, nolift, combine = saved_emit
+
+        # Short shell: a hop, or a chord that cuts the interior, walks the
+        # centerline. A chord that already follows the wall is left alone.
+        if waypts is not None:
+            geoms = _layer_geoms(report_layer, route_lyr, lyr, layer)
+            near = _nearest_shell(x0, y0, geoms)
+            short = near is not None and near[0] <= 0.80 and near[1] < 2.5
+            cut = False
+            if short and prelift is None and nolift and len(waypts) <= 2:
+                cut = _chord_cuts((x0, y0), waypts, near[2])
+            if short and (prelift is not None or cut):
+                got = _ring_from(x0, y0)
+                if got is not None:
+                    waypts, rlen = got
+                    fail = None
+                    nolift = True
+                    prelift = None
+                    combine = False
+
+        def _ensure_prime():
+            nonlocal waypts, rlen
+            if not nolift or waypts is None:
+                return
+            geoms = _layer_geoms(report_layer, route_lyr, layer, lyr)
+            if not geoms:
+                return
+            clear_geom = None
+            pctx = layer_ctx.get(report_layer)
+            if pctx and pctx.get("geom") and pctx["geom"].get("shells"):
+                clear_geom = pctx["geom"]
+            if clear_geom is None:
+                clear_geom = geoms[0]
+            prime_at = waypts[-2] if len(waypts) >= 2 else (x0, y0)
+            # A long centerline walk on the v3 lip (about 27 mm wide and under
+            # 2 mm tall). Pulling the prime into that interior is the region
+            # the outline check calls outside, so the prime stays on the ring.
+            # A wider short shell, such as layer 3, is a normal interior.
+            if len(waypts) >= 12:
+                near = _nearest_shell(x0, y0, [clear_geom])
+                if (
+                    near is not None
+                    and near[0] <= 0.80
+                    and near[1] < 2.0
+                    and 22.0 < near[3] < 36.0
+                    and all(_hg_ring_dist(px, py, near[2]) <= 0.05 for px, py in waypts[:-1])
+                    and _hg_strict_inside(prime_at[0], prime_at[1], clear_geom)
+                ):
+                    return
+
+            def _clear(px, py):
+                if not _hg_strict_inside(px, py, clear_geom):
+                    return False
+                return _hg_dist_point_index(px, py, clear_geom["index"]) + 1e-6 >= _HEEL_ACCEPT_INSET
+
+            def _legs_ok(cand):
+                # Only the new jog. The rest of the route already passed the
+                # printed outline. Rechecking it against the previous layer
+                # rejects a prime that sits inside the shell being printed.
+                if len(cand) == 2 and len(waypts) == 1:
+                    pairs = [((x0, y0), cand[0]), (cand[0], cand[1])]
+                else:
+                    prev = waypts[-2] if len(waypts) >= 2 else (x0, y0)
+                    pairs = [(prev, cand[-2]), (cand[-2], cand[-1])]
+                for (ax, ay), (bx, by) in pairs:
+                    if _hg_map3_outside_len(ax, ay, bx, by, clear_geom) > _HEEL_OUT_LEN:
+                        return False
+                    if _hg_strict_top_count(ax, ay, bx, by, clear_geom) > 0:
+                        return False
+                return True
+
+            def _adopt(anchor):
+                nonlocal waypts, rlen
+                if anchor is None or not _clear(anchor[0], anchor[1]):
+                    return False
+                if len(waypts) == 1:
+                    cand = [anchor, waypts[0]]
+                else:
+                    cand = waypts[:-1] + [anchor, waypts[-1]]
+                if not _legs_ok(cand):
+                    return False
+                new_len = _chain_len(x0, y0, cand)
+                if prelift is not None:
+                    new_len += math.hypot(ox - x0, oy - y0)
+                if new_len + snap_extra > route_cap:
+                    return False
+                waypts = cand
+                rlen = new_len
+                return True
+
+            if _clear(prime_at[0], prime_at[1]):
+                return
+            anchor = _hg_prime_anchor(prime_at[0], prime_at[1], clear_geom, require_lift=False)
+            if anchor is None and len(waypts) == 1:
+                anchor = _hg_prime_anchor(x0, y0, clear_geom, require_lift=False)
+            if _adopt(anchor):
+                return
+            # The ray missed the deep point of a thin shell. Take the nearest
+            # sample that is 0.5 mm inside and still joins with a clean leg.
+            # A tapered 1 mm tip holds that clearance in a band only ~0.02 mm
+            # tall, so the 0.1 mm lattice can miss it and a 0.05 mm pass follows.
+            px0, py0 = prime_at
+
+            def _grid_adopt(step, reach):
+                n = int(round(reach / step))
+                cands = []
+                for ix in range(-n, n + 1):
+                    for iy in range(-n, n + 1):
+                        if ix == 0 and iy == 0:
+                            continue
+                        sx = px0 + ix * step
+                        sy = py0 + iy * step
+                        if not _clear(sx, sy):
+                            continue
+                        cands.append((math.hypot(sx - px0, sy - py0), sx, sy))
+                cands.sort()
+                for _dist, sx, sy in cands[:8]:
+                    if _adopt((sx, sy)):
+                        return True
+                return False
+
+            if _grid_adopt(0.1, 1.6) or _grid_adopt(0.05, 1.2):
+                return
+            # The 0.5 mm band of a thin loop can sit several millimetres from
+            # a tip. Search that shell, not only the neighbourhood of the tip.
+            near = _nearest_shell(px0, py0, [clear_geom])
+            if near is None or near[0] > 0.80 or near[1] >= 2.5:
+                return
+            ring = near[2]
+            x_lo = min(p[0] for p in ring)
+            x_hi = max(p[0] for p in ring)
+            y_lo = min(p[1] for p in ring)
+            y_hi = max(p[1] for p in ring)
+            if (x_hi - x_lo) * (y_hi - y_lo) > 120.0:
+                return
+            cands = []
+            sx = x_lo
+            while sx <= x_hi + 1e-9:
+                sy = y_lo
+                while sy <= y_hi + 1e-9:
+                    if _clear(sx, sy):
+                        cands.append((math.hypot(sx - px0, sy - py0), sx, sy))
+                    sy += 0.1
+                sx += 0.1
+            cands.sort()
+            for _dist, ax, ay in cands[:12]:
+                if _adopt((ax, ay)):
+                    return
+
+        if waypts is not None:
+            _ensure_prime()
 
         if waypts is not None:
             stats["heelroute_routed"] += 1
             return "routed", _emit_routed_block(
-                x0, y0, waypts, ty, tz, tf, zmove,
-                combine_lift=combine, prelift=prelift, nolift=nolift)
+                nozzle_x, nozzle_y, waypts, ty, tz, tf, zmove,
+                combine_lift=combine, prelift=prelift, nolift=nolift,
+                entry_snap=entry_snap, snap_lift=snap_lift)
         if not allow_reject:
             return "plain", None
         if fail == "no_closed_outer_loop":
             stats["heelroute_fallback"] += 1
-            blk = _emit_direct_seam_body(x0, y0, tx, ty, tz, tf, zmove)
+            blk = _emit_direct_seam_body(nozzle_x, nozzle_y, tx, ty, tz, tf, zmove)
             fb = [f";PP_HEELROUTE_FALLBACK reason={fail}\n"]
             print(
                 f"pp_d heelroute FALLBACK layer={lyr} reason={fail} "
-                f"start=({x0:.3f},{y0:.3f}) seam=({tx:.3f},{ty:.3f}) "
+                f"start=({nozzle_x:.3f},{nozzle_y:.3f}) seam=({tx:.3f},{ty:.3f}) "
                 f"straight_crosses=1 "
                 f"— no valid inset route; emitting original straight move",
                 file=sys.stderr,
@@ -4027,7 +4476,7 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             extra = f" length={rlen:.2f} cap={route_cap:.2f}"
         msg = (
             f"pp_d heelroute REJECT layer={report_layer} reason={shown}{extra} "
-            f"start=({x0:.3f},{y0:.3f}) seam=({tx:.3f},{ty:.3f}) "
+            f"start=({nozzle_x:.3f},{nozzle_y:.3f}) seam=({tx:.3f},{ty:.3f}) "
             f"— kept original move"
         )
         print(msg, file=sys.stderr)
@@ -4037,10 +4486,10 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
         ):
             gctx = layer_ctx.get(report_layer) or layer_ctx.get(lyr)
             geom = gctx.get("geom") if gctx else None
-            crosses = _hg_outline_leaves(x0, y0, tx, ty, geom) if geom else False
+            crosses = _hg_outline_leaves(nozzle_x, nozzle_y, tx, ty, geom) if geom else False
             flag = (
                 f"pp_d heelroute FLAG layer={report_layer} line={src_line} reason={shown} "
-                f"start=({x0:.3f},{y0:.3f}) seam=({tx:.3f},{ty:.3f}) crosses_top={1 if crosses else 0}"
+                f"start=({nozzle_x:.3f},{nozzle_y:.3f}) seam=({tx:.3f},{ty:.3f}) crosses_top={1 if crosses else 0}"
             )
             print(flag, file=sys.stderr)
             flag_log.append(flag)
@@ -4048,13 +4497,13 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
         pctx_rej = layer_ctx.get(report_layer)
         geom_rej = pctx_rej.get("geom") if pctx_rej else None
         if geom_rej and geom_rej.get("shells"):
-            lift_cross = _hg_strict_top_count(x0, y0, x0, y0 + LIFT_MM, geom_rej)
-            lifted_cross = _hg_strict_top_count(x0, y0 + LIFT_MM, tx, ty + LIFT_MM, geom_rej)
-            plain_cross = _hg_strict_top_count(x0, y0, tx, ty, geom_rej)
-            lift_out = _hg_map3_outside_len(x0, y0, x0, y0 + LIFT_MM, geom_rej) > _HEEL_OUT_LEN
+            lift_cross = _hg_strict_top_count(nozzle_x, nozzle_y, nozzle_x, nozzle_y + LIFT_MM, geom_rej)
+            lifted_cross = _hg_strict_top_count(nozzle_x, nozzle_y + LIFT_MM, tx, ty + LIFT_MM, geom_rej)
+            plain_cross = _hg_strict_top_count(nozzle_x, nozzle_y, tx, ty, geom_rej)
+            lift_out = _hg_map3_outside_len(nozzle_x, nozzle_y, nozzle_x, nozzle_y + LIFT_MM, geom_rej) > _HEEL_OUT_LEN
             if lift_out or lift_cross > 0 or lifted_cross > plain_cross:
                 keep_lift = False
-        return "rejected", _emit_reject_block(x0, y0, tx, ty, tz, tf, zmove, keep_lift=keep_lift)
+        return "rejected", _emit_reject_block(nozzle_x, nozzle_y, tx, ty, tz, tf, zmove, keep_lift=keep_lift)
 
     def _emit_lines(blk):
         for b_ in blk:
@@ -4202,6 +4651,50 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             _note_nolift(blk)
             return True
 
+        def _short_shell_prefix(k0, kend):
+            """Furthest comb point that still sits on the short shell under the nozzle.
+
+            A lip chain walks onto that shell and then jumps to another island.
+            The jump stays a separate travel. The lip part is one centerline walk.
+            """
+            sx, sy = x, y
+            geom = None
+            for cand in (layer, pos_layer):
+                cctx = layer_ctx.get(cand)
+                g = cctx.get("geom") if cctx else None
+                if g and g.get("shells"):
+                    geom = g
+                    if cand == layer or layer < 0:
+                        break
+            if geom is None:
+                return None
+            best = None
+            for sh in geom["shells"]:
+                ring = sh.get("outer") or []
+                bb = sh.get("bbox")
+                if len(ring) < 3 or not bb:
+                    continue
+                d = _hg_ring_dist(sx, sy, ring)
+                if best is None or d < best[0]:
+                    best = (d, bb[3] - bb[1], ring)
+            if best is None or best[0] > 0.80 or best[1] >= 2.5:
+                return None
+            ring = best[2]
+            px, py = sx, sy
+            chosen = None
+            for kk in range(k0, kend + 1):
+                ml = region[kk][1]
+                mx, my = _w(ml, "X"), _w(ml, "Y")
+                px = px if mx is None else mx
+                py = py if my is None else my
+                if _hg_ring_dist(px, py, ring) <= 0.80:
+                    chosen = (kk, px, py)
+                else:
+                    break
+            if chosen is None or chosen[0] <= k0:
+                return None
+            return chosen
+
         for k, (idx, l) in enumerate(region):
             if k in consumed:
                 continue
@@ -4234,6 +4727,13 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
                         if chain_low is not None:
                             consumed.add(chain_low[0])
                         continue
+                    prefix = _short_shell_prefix(k, end_k)
+                    if prefix is not None:
+                        pk, ptx, pty = prefix
+                        if _take_comb(l, idx, (ptx, pty), allow_reject=False):
+                            for mid in range(k + 1, pk + 1):
+                                consumed.add(mid)
+                            continue
                 low = _lower_after(k, cx, cy)
                 target = None if low is None else (low[1], low[2])
                 if _take_comb(l, idx, target):
