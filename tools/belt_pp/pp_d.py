@@ -304,6 +304,9 @@ _HEEL_BOUND_EPS = 0.25
 # than 0.01 mm past that buffer is outside. The seam tip gets nothing else.
 _HEEL_OUT_BUFFER = 1e-3
 _HEEL_OUT_LEN = 0.01
+# Closing an open outer wall, or a sliver loop of a couple of mm², is not an
+# outline. A real shell on these parts is well above 8 mm².
+_HEEL_DEGEN_AREA = 8.0
 # A walk through a sliver thinner than this has no 0.5 mm inset. Reject it.
 _HEEL_MIN_WIDTH = 1.0
 _HG_CELL = 4.0
@@ -475,6 +478,69 @@ def _hg_shell_thick(outer, geom):
         if clears(mx + nx * eps, my + ny * eps):
             return True
     return False
+
+
+def _hg_outline_degenerate(loops):
+    """True when the outer wall is an open chain or a tiny closed sliver.
+
+    A closed shell of at least ``_HEEL_DEGEN_AREA`` is a real outline, even
+    if the layer also has an open bridge. No wall at all is not this case.
+    """
+    max_closed = 0.0
+    open_chain = False
+    any_loop = False
+    for pts, closed, _ww in loops:
+        if len(pts) < 2:
+            continue
+        any_loop = True
+        if closed and len(pts) >= 3:
+            max_closed = max(max_closed, abs(_hg_area(pts)))
+        else:
+            open_chain = True
+    if not any_loop or max_closed >= _HEEL_DEGEN_AREA:
+        return False
+    return open_chain or max_closed > 1e-6
+
+
+def _hg_bead_margin(px, py, segs):
+    """Signed distance to the extrusion beads. Negative is inside a bead.
+
+    ``segs`` are ``(x0, y0, x1, y1, width)`` centerlines. The margin is the
+    distance to the nearest centerline, minus half that bead's width.
+    """
+    best = None
+    for x0, y0, x1, y1, width in segs:
+        dx, dy = x1 - x0, y1 - y0
+        el2 = dx * dx + dy * dy
+        if el2 < 1e-18:
+            dist = math.hypot(px - x0, py - y0)
+        else:
+            t = max(0.0, min(1.0, ((px - x0) * dx + (py - y0) * dy) / el2))
+            dist = math.hypot(px - (x0 + t * dx), py - (y0 + t * dy))
+        margin = dist - 0.5 * max(width, 0.0)
+        if best is None or margin < best:
+            best = margin
+    return best if best is not None else 1e9
+
+
+def _hg_samples_in_beads(pts, segs, step=0.2):
+    """True when every sample of the polyline sits inside the bead capsules.
+
+    A margin larger than ``_HEEL_OUT_LEN`` is outside the extruded path.
+    An empty segment list cannot prove the path is inside.
+    """
+    if not segs or len(pts) < 2:
+        return False
+    for a, b in zip(pts, pts[1:]):
+        length = math.hypot(b[0] - a[0], b[1] - a[1])
+        n = max(1, int(math.ceil(length / step))) if length > 1e-9 else 1
+        for i in range(n + 1):
+            t = i / float(n)
+            px = a[0] + (b[0] - a[0]) * t
+            py = a[1] + (b[1] - a[1]) * t
+            if _hg_bead_margin(px, py, segs) > _HEEL_OUT_LEN:
+                return False
+    return True
 
 
 def _hg_shells_from_loops(loops):
@@ -3570,6 +3636,7 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
             c["geom"] = geom
             c["bbox"] = index["bbox"]
             c["heel_outline"] = _hg_heel_outline(c["bbox"])
+            c["degenerate_outline"] = _hg_outline_degenerate(outer_loops)
         return ctx
 
     lines = text.splitlines(keepends=True)
@@ -4447,13 +4514,78 @@ def collapse_seam_travels(text, TF, seam_map=None, heel_max_route=60.0):
         if waypts is not None:
             _ensure_prime()
 
+        # An open outer wall, or a sliver of a couple of mm², is not an
+        # outline. The search often used the previous layer's closed shell.
+        # Keep the route only when the emitted travels stay inside this
+        # layer's own beads and the prime is 0.5 mm inside that corridor.
+        pctx_deg = layer_ctx.get(report_layer)
+        if waypts is not None and pctx_deg and pctx_deg.get("degenerate_outline"):
+            bead_segs = [
+                (s[0], s[1], s[2], s[3], s[4]) for s in (pctx_deg.get("outer_segs") or [])
+            ]
+
+            def _deg_poly():
+                pts = [(nozzle_x, nozzle_y)]
+                cx, cy = nozzle_x, nozzle_y
+                if entry_snap is not None:
+                    sx, sy = entry_snap
+                    if snap_lift:
+                        pts.append((cx, cy + LIFT_MM))
+                        pts.append((sx, sy + LIFT_MM))
+                        pts.append((sx, sy))
+                    else:
+                        pts.append((sx, sy))
+                    cx, cy = sx, sy
+                if nolift:
+                    for wx, wy in waypts[:-1]:
+                        pts.append((wx, wy))
+                    wz = waypts[-1]
+                    pts.append((wz[0], wz[1]))
+                    prime = waypts[-2] if len(waypts) >= 2 else (cx, cy)
+                    return pts, prime
+                if prelift is not None:
+                    hx, hy = prelift
+                    pts.append((hx, hy))
+                    pts.append((hx, hy + LIFT_MM))
+                    lifted = (hx, hy + LIFT_MM)
+                elif not combine:
+                    pts.append((cx, cy + LIFT_MM))
+                    lifted = (cx, cy + LIFT_MM)
+                else:
+                    lifted = (cx, cy)
+                for wx, wy in waypts[:-1]:
+                    pts.append((wx, wy + LIFT_MM))
+                wz = waypts[-1]
+                pts.append((wz[0], wz[1] + LIFT_MM))
+                pts.append((wz[0], ty))
+                if len(waypts) >= 2:
+                    prime = (waypts[-2][0], waypts[-2][1] + LIFT_MM)
+                else:
+                    prime = lifted
+                return pts, prime
+
+            poly, prime_xy = _deg_poly()
+            prime_in = (
+                bool(bead_segs)
+                and _hg_bead_margin(prime_xy[0], prime_xy[1], bead_segs)
+                <= -_HEEL_ACCEPT_INSET + 1e-3
+            )
+            if not prime_in or not _hg_samples_in_beads(poly, bead_segs):
+                waypts = None
+                fail = "degenerate_outline"
+                nolift = False
+                prelift = None
+
         if waypts is not None:
             stats["heelroute_routed"] += 1
             return "routed", _emit_routed_block(
                 nozzle_x, nozzle_y, waypts, ty, tz, tf, zmove,
                 combine_lift=combine, prelift=prelift, nolift=nolift,
                 entry_snap=entry_snap, snap_lift=snap_lift)
-        if not allow_reject:
+        # A long comb keeps the slicer's own points when no inside path
+        # exists. An open outline is the exception: that path is not an
+        # outline, so the miss is still a logged reject with retract/prime.
+        if not allow_reject and fail != "degenerate_outline":
             return "plain", None
         if fail == "no_closed_outer_loop":
             stats["heelroute_fallback"] += 1
@@ -6303,6 +6435,49 @@ G1 X1 Y-1 E0.02
     assert 0 <= sg_rej < sg_ret < sg_seam < sg_prime, out_sg
     assert math.hypot(8.9 - 7.2, 0.0) < 3.0
     assert _extrusion_lines(short_gap) == _extrusion_lines(out_sg)
+
+    # Open chain, and a closed sliver of a couple of mm², are not outlines.
+    # A real shell stays an outline even when the layer also has an open bridge.
+    open_pts = [(30.0, 0.3), (8.0, 1.0), (18.0, 1.2), (28.0, 1.1)]
+    tiny_pts = [(0.0, 0.0), (2.0, 0.0), (1.0, 1.0)]
+    big_pts = [(0.0, 0.0), (40.0, 0.0), (40.0, 20.0), (0.0, 20.0)]
+    assert _hg_outline_degenerate([(open_pts, False, 0.7)])
+    assert abs(_hg_area(tiny_pts)) < _HEEL_DEGEN_AREA
+    assert _hg_outline_degenerate([(tiny_pts, True, 0.7)])
+    assert not _hg_outline_degenerate([(big_pts, True, 0.8), (open_pts, False, 0.4)])
+    assert not _hg_outline_degenerate([])
+    # The comb is longer than 12 mm, so a normal miss would stay the slicer's
+    # own points. The open wall still becomes a reject with retract and prime.
+    open_wall = (
+        ";LAYER_CHANGE\n"
+        "G1 X0 Y0 F6000\n"
+        ";TYPE:Outer wall\n"
+        ";WIDTH:0.8\n"
+        "G1 X40 Y0 E0.01\n"
+        "G1 X40 Y20 E0.01\n"
+        "G1 X0 Y20 E0.01\n"
+        "G1 X0 Y0 E0.01\n"
+        ";LAYER_CHANGE\n"
+        ";COMB_LIFT\n"
+        "G1 X10 Y0.1\n"
+        "G1 X30 Y0.3\n"
+        ";TYPE:Outer wall\n"
+        ";WIDTH:0.7\n"
+        "G1 X8.000 Y1.000 E0.01\n"
+        "G1 X18.000 Y1.200 E0.01\n"
+        "G1 X28.000 Y1.100 E0.01\n"
+    )
+    err_ow = io.StringIO()
+    with contextlib.redirect_stderr(err_ow):
+        out_ow, st_ow = collapse_seam_travels(open_wall, TF, {0: (20.0, 0.0), 1: (8.0, 1.0)})
+    assert st_ow["heelroute_routed"] == 0 and st_ow["heelroute_rejected"] >= 1, (st_ow, err_ow.getvalue())
+    assert "degenerate_outline" in err_ow.getvalue()
+    assert ";PP_HEELROUTE_REJECT" in out_ow and ";PP_HEELROUTE_NOLIFT" not in out_ow
+    ow_rej = out_ow.find(";PP_HEELROUTE_REJECT")
+    ow_ret = out_ow.find("G1 E-1.5 F1800", ow_rej)
+    ow_prime = out_ow.find("G1 E1.5 F1800", ow_ret)
+    assert 0 <= ow_rej < ow_ret < ow_prime, out_ow
+    assert _extrusion_lines(open_wall) == _extrusion_lines(out_ow)
 
     print(
         "heelroute tests ok",
