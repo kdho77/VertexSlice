@@ -25,13 +25,11 @@ COPY scripts/linux.d/ scripts/linux.d/
 RUN ./build_linux.sh -u \
     && ./build_linux.sh -dr
 
-# Slicer compile only; omit server/, validation/, tools/ from context.
+# Slicer compile; deps already built in orca-deps. Full tree copy here can bust this
+# stage on any source change, but orca-deps (~40 min) stays cached when only server/
+# validation/tools change (those are copied in the runtime stage only).
 FROM orca-deps AS orca-builder
-COPY LICENSE.txt ./
-COPY deps_src/ deps_src/
-COPY src/ src/
-COPY resources/ resources/
-COPY localization/ localization/
+COPY . /src
 RUN CMAKE_BUILD_PARALLEL_LEVEL=4 ./build_linux.sh -sr
 
 FROM ubuntu:24.04 AS runtime
