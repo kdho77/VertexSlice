@@ -2,7 +2,10 @@
 # Build: docker build -f Dockerfile.server -t vertexslice-server:proof .
 # Proof: docker run --rm vertexslice-server:proof /app/scripts/docker_headless_slice_proof.sh
 
-FROM ubuntu:24.04 AS orca-builder
+# Published image from the GHCR headless slicer workflow — cache/import anchor only.
+FROM ghcr.io/kdho77/vertexslice-server:headless AS ghcr_headless_prebuilt
+
+FROM ubuntu:24.04 AS orca-base
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LC_ALL=C.UTF-8
@@ -14,12 +17,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && printf '%s\n' 'force-confdef' 'force-confold' > /etc/dpkg/dpkg.cfg.d/docker-noninteractive
 
+# System packages + ./deps build (~40 min). Kept separate from slicer sources so
+# server/validation/tools changes do not invalidate this stage.
+FROM orca-base AS orca-deps
 WORKDIR /src
-COPY . /src
-
+COPY build_linux.sh version.inc CMakeLists.txt ./
+COPY cmake/ cmake/
+COPY deps/ deps/
+COPY scripts/linux.d/ scripts/linux.d/
 RUN ./build_linux.sh -u \
-    && ./build_linux.sh -dr \
-    && CMAKE_BUILD_PARALLEL_LEVEL=4 ./build_linux.sh -sr
+    && ./build_linux.sh -dr
+
+# Slicer compile only; omit server/, validation/, tools/ from context.
+FROM orca-deps AS orca-builder
+COPY deps_src/ deps_src/
+COPY src/ src/
+COPY resources/ resources/
+COPY localization/ localization/
+RUN CMAKE_BUILD_PARALLEL_LEVEL=4 ./build_linux.sh -sr
 
 FROM ubuntu:24.04 AS runtime
 
