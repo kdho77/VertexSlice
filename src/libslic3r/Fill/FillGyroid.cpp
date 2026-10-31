@@ -199,9 +199,13 @@ void FillGyroid::_fill_surface_single(
     }
 
 	if (! polylines.empty()) {
-		// connect lines
 		size_t polylines_out_first_idx = polylines_out.size();
-        chain_or_connect_infill(std::move(polylines), expolygon, polylines_out, this->spacing, params);
+        if (params.full_infill()) {
+            // Solid gyroid still anchors to the perimeter.
+            chain_or_connect_infill(std::move(polylines), expolygon, polylines_out, this->spacing, params);
+        } else {
+            append(polylines_out, chain_polylines(std::move(polylines)));
+        }
 
 	    // new paths must be rotated back
         if (std::abs(infill_angle) >= EPSILON) {

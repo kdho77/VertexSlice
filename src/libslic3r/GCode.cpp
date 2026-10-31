@@ -15,6 +15,7 @@
 #include "GCode/WipeTower.hpp"
 #include "ShortestPath.hpp"
 #include "Print.hpp"
+#include "BeltTransform.hpp"
 #include "Utils.hpp"
 #include "ClipperUtils.hpp"
 #include "libslic3r.h"
@@ -2351,15 +2352,37 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     // transform shear). Subtract this base so that Y_mach starts at 0 for the first
     // object layer, matching the prime line position at the belt surface after G28 Y.
     m_belt_z_base = 0.0;
+    BeltTransform::set_runtime_y_mach_offset(0.0);
     if (m_belt_inclined_gcode) {
         for (const PrintObject* obj : print.objects()) {
-            for (const Layer* layer : obj->layers()) {
-                if (!layer->empty()) {
-                    m_belt_z_base = layer->print_z;
-                    break;
-                }
+            if (!obj->layers().empty()) {
+                // Use the first slice plane (even if empty) so gantry Y matches Cura ref
+                // when overhang-only layers precede the first outer wall.
+                m_belt_z_base = obj->layers().front()->print_z;
+                break;
             }
-            if (m_belt_z_base > 0.0) break;
+        }
+
+        // Cura ref: first-layer gantry Y≈0.066 mm. OrthoCAD scans have Z_virt_min > layer0
+        // when trafo_centered only shifts Y_virt; trim Y_mach by the keel gap.
+        double z_virt_min = std::numeric_limits<double>::max();
+        const double belt_angle_deg = print.config().belt_angle.value;
+        const double belt_angle_rad = Geometry::deg2rad(belt_angle_deg);
+        for (const PrintObject* obj : print.objects()) {
+            if (!obj->model_object())
+                continue;
+            Transform3d t = obj->trafo();
+            BoundingBoxf3 world_bbox = obj->model_object()->raw_mesh_bounding_box().transformed(t);
+            t.pretranslate(Vec3d(0, -world_bbox.min.y(), -world_bbox.min.z()));
+            Transform3d belt_forward = BeltTransform::make_forward_transform(belt_angle_deg);
+            t = belt_forward * t;
+            BoundingBoxf3 virtual_bbox = obj->model_object()->raw_mesh_bounding_box().transformed(t);
+            z_virt_min = std::min(z_virt_min, virtual_bbox.min.z());
+        }
+        if (z_virt_min < std::numeric_limits<double>::max() && belt_angle_rad > 0.0) {
+            const double layer0_virt_z = print.config().initial_layer_print_height.value / std::cos(belt_angle_rad);
+            const double y_trim        = -(z_virt_min - layer0_virt_z) / std::sqrt(2.0);
+            BeltTransform::set_runtime_y_mach_offset(y_trim);
         }
     }
 
@@ -2671,8 +2694,11 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     // Emit machine envelope limits for the Marlin firmware.
     this->print_machine_envelope(file, print, initial_extruder_id);
 
-    // Disable fan.
-    if (m_config.auxiliary_fan.value && print.config().close_fan_the_first_x_layers.get_at(initial_extruder_id)) {
+    // Disable fan (skip when Apex/Cura PRINT_START bookend owns layer-0 fan lines in machine_start_gcode).
+    const bool cura_print_start_bookend =
+        print.config().machine_start_gcode.value.find("PRINT_START") != std::string::npos;
+    if (!cura_print_start_bookend && m_config.auxiliary_fan.value &&
+        print.config().close_fan_the_first_x_layers.get_at(initial_extruder_id)) {
         file.write(m_writer.set_fan(0));
         //BBS: disable additional fan
         file.write(m_writer.set_additional_fan(0));
@@ -3036,7 +3062,10 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     print.throw_if_canceled();
 
     // Set other general things.
-    file.write(this->preamble());
+    const bool skip_preamble_for_cura_bookend =
+        machine_start_gcode.find("PRINT_START") != std::string::npos;
+    if (!skip_preamble_for_cura_bookend)
+        file.write(this->preamble());
 
     // Calculate wiping points if needed
     DoExport::init_ooze_prevention(print, m_ooze_prevention);

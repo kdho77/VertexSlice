@@ -1,0 +1,27 @@
+{
+    "type": "filament",
+    "name": "VERTEX_APEX_CORE_90A",
+    "inherits": "VERTEX_APEX_CORE_95A @base",
+    "from": "system",
+    "setting_id": "OGVTX90A",
+    "filament_id": "OGVTX90A",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Vertex Apex V2 1.0 nozzle"
+    ],
+    "filament_notes": [
+        "UNTESTED BASELINE — expert delta vs Cura-matched 95A. Process: 0.42mm TPU Insole 90A @Vertex Apex V2."
+    ],
+    "filament_settings_id": [
+        "VERTEX_APEX_CORE_90A"
+    ],
+    "filament_max_volumetric_speed": [
+        "9"
+    ],
+    "filament_retraction_length": [
+        "0.65"
+    ],
+    "filament_start_gcode": [
+        "; UNTESTED BASELINE — VERTEX_APEX_CORE_90A"
+    ]
+}
