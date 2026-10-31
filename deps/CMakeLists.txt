@@ -311,7 +311,10 @@ include(Boost/Boost.cmake)
 
 # The order of includes respects the dependencies between libraries
 include(Cereal/Cereal.cmake)
-include(Qhull/Qhull.cmake)
+# Do not build or install qhull 8.0.1. libslic3r links bundled qhull 7.2.0
+# (deps_src/qhull). The 8.0.1 headers in this prefix used to win include
+# search over those bundled headers and corrupt QhullQh on the heap.
+# include(Qhull/Qhull.cmake)
 include(GLEW/GLEW.cmake)
 
 include(GLFW/GLFW.cmake)
@@ -411,7 +414,8 @@ if (MSVC)
     # Experimental
     #list(APPEND _dep_list "dep_qhull")
 else()
-    list(APPEND _dep_list "dep_Qhull")
+    # qhull 8.0.1 headers must not be installed. See the include() note above.
+    #list(APPEND _dep_list "dep_Qhull")
     # Not working, static build has different Eigen
     #list(APPEND _dep_list "dep_libigl")
 endif()

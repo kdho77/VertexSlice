@@ -19,24 +19,6 @@ from tools.belt_pp.pipeline import finalize_apex_light
 REPO = Path(__file__).resolve().parents[2]
 H_CURAE = REPO / "tools" / "belt_pp" / "h_curaE.py"
 
-# 4432a211e6 (PR #16 combing heap fix) matches ApexLight_90A_GOLDEN_2026-10-31.
-# def8eff480 does not. Resources are parent(parent(binary)) / "resources".
-DEFAULT_APEX_LIGHT_BIN = "/app/slicers/pr16/bin/orca-slicer-pr16"
-APEX_LIGHT_BIN_ENV = "ORCA_SLICER_BIN_APEX_LIGHT"
-
-
-def slicer_binary() -> str:
-    chosen = os.environ.get(APEX_LIGHT_BIN_ENV, "").strip()
-    return chosen or DEFAULT_APEX_LIGHT_BIN
-
-
-def resources_for_binary(binary: str) -> str:
-    path = Path(binary)
-    if path.exists():
-        path = path.resolve()
-    return str(path.parent.parent / "resources")
-
-
 # travelfix final_q / pr16 env16.sh. {$BON} is this process set.
 GOLDEN_E_PO = {
     "reduce_crossing_wall": "1",
@@ -84,9 +66,7 @@ def golden_env(
     if os.environ.get("VS_TOPTIDY") != "1":
         env.pop("VS_TOPTIDY", None)
     env["PYTHONPATH"] = str(REPO) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-    binary = slicer_binary()
-    env["ORCA_SLICER_BIN"] = binary
-    env["ORCA_RESOURCES"] = resources_for_binary(binary)
+    env.setdefault("ORCA_RESOURCES", os.environ.get("ORCA_RESOURCES", str(REPO / "resources")))
     return env
 
 

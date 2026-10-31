@@ -15,6 +15,18 @@
 #include <libqhullcpp/QhullFacetList.h>
 #include <libqhullcpp/QhullVertexSet.h>
 
+// The header that won the include path must be bundled qhull 7.2.0, the same
+// version linked as qhullstatic. qhull 8.0.1's QhullQh is larger; an inline
+// store then writes past the 7.2.0 object and corrupts the heap.
+#ifndef QHULL_CPP_VERSION
+#error "Included QhullQh.h is not bundled qhull 7.2.0 (QHULL_CPP_VERSION missing)."
+#endif
+static_assert(QHULL_CPP_VERSION == 70200,
+              "QhullQh header version does not match linked qhull 7.2.0");
+namespace {
+[[maybe_unused]] const void *qhull_qh_abi_keep = reinterpret_cast<const void *>(&qhull_qh_abi_v7_2_0);
+}
+
 #include <cmath>
 #include <deque>
 #include <queue>
@@ -1384,9 +1396,11 @@ indexed_triangle_set its_convex_hull(const std::vector<Vec3f> &pts)
     std::vector<Vec3i32>  dst_facets;
 
     if (! pts.empty()) {
-        // The qhull call:
+        // The qhull call. use_output_stream already starts false. Do not call
+        // disableOutputStream(): that inline store is the byte that walked off
+        // a QhullQh built from mismatched headers.
         orgQhull::Qhull qhull;
-        qhull.disableOutputStream(); // we want qhull to be quiet
+        (void)qhull_qh_abi_keep;
     #if ! REALfloat
         std::vector<realT> src_vertices;
     #endif

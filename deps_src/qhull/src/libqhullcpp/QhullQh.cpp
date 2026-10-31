@@ -235,3 +235,7 @@ void qh_fprintf(qhT *qh, FILE *fp, int msgcode, const char *fmt, ... ) {
     qhullQh->appendQhullMessage(newMessage);
     va_end(args);
 } /* qh_fprintf */
+
+// Exported only by this 7.2.0 static library. libslic3r references it so the
+// link fails when the included QhullQh.h is not the one this library compiled.
+extern "C" void qhull_qh_abi_v7_2_0() {}

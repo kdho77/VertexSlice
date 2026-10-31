@@ -16,8 +16,6 @@ on:
       - 'scripts/g2b_heelmod/**'
       - 'scripts/golden_gate.py'
       - 'scripts/golden_chain_proof.py'
-      - 'scripts/pin_orca_tree.py'
-      - 'scripts/docker_build_pinned_slicer.sh'
       - '.github/workflows/docker-server-proof.yml'
   push:
     branches:
@@ -40,8 +38,7 @@ jobs:
   docker_proof:
     name: Build image and run slice proof
     runs-on: ubuntu-latest
-    # deps once, then two OrcaSlicer compiles (def8eff480 and 4432a211e6).
-    timeout-minutes: 180
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v6
