@@ -16,6 +16,11 @@ from apex_belt_y_trim import (  # noqa: E402
     cura_matched_y_mach_offset_mm,
     predicted_first_layer_y_mm,
 )
+from apex_core import (  # noqa: E402
+    FILAMENT_OVERRIDES as CORE_FILAMENT_OVERRIDES,
+    PROCESS_OVERRIDES as CORE_PROCESS_OVERRIDES,
+    TARGET_FIRST_LAYER_Y_MM as APEX_CORE_TARGET_FIRST_LAYER_Y_MM,
+)
 from apex_gcode_bookends import MACHINE_END_GCODE  # noqa: E402
 from apex_insole_densities import KENDON_INFILL_DENSITY_PRESETS  # noqa: E402
 from apex_insole_tunables import (  # noqa: E402
@@ -26,7 +31,6 @@ from apex_light import (  # noqa: E402
     AUX_FAN_PERCENT,
     BELT_STEP_MM,
     DEFAULT_WALL_LOOPS,
-    E_PER_MM_INFILL,
     E_PER_MM_INNER,
     E_PER_MM_OUTER,
     E_PER_MM_TOL,
@@ -164,18 +168,36 @@ def test_process_overrides_match_cura() -> list[str]:
     return fails
 
 
+# Nominal sparse-infill E/mm of the locked ApexLight 10-31 golden chain
+# (ApexLight_90A_GOLDEN_2026-10-31, sha 3a0a54a2…4e67). The golden file is not
+# committed; this is the flow-formula rate of the infill ratio that box-matched
+# that file. Cura's 0.2054 is not the reference.
+GOLDEN_10_31_INFILL_E_PER_MM = 0.1910
+GOLDEN_INFILL_E_TOL_MM = 0.0005
+
+
 def test_e_per_mm_within_3pct() -> list[str]:
     fails: list[str] = []
-    targets = {
+    cura_targets = {
         "outer": (E_PER_MM_OUTER, float(PROCESS_OVERRIDES["outer_wall_flow_ratio"])),
         "inner": (E_PER_MM_INNER, float(PROCESS_OVERRIDES["inner_wall_flow_ratio"])),
-        "infill": (E_PER_MM_INFILL, float(PROCESS_OVERRIDES["sparse_infill_flow_ratio"])),
     }
-    for name, (target, feat) in targets.items():
+    for name, (target, feat) in cura_targets.items():
         got = e_per_mm(FLOW_RATIO, LINE_WIDTH_MM, LAYER_HEIGHT_MM, feat)
         err = abs(got - target) / target
         if err > E_PER_MM_TOL:
             fails.append(f"{name} E/mm {got:.4f} vs Cura {target} ({err:.1%} > {E_PER_MM_TOL:.0%})")
+    infill = e_per_mm(
+        FLOW_RATIO,
+        LINE_WIDTH_MM,
+        LAYER_HEIGHT_MM,
+        float(PROCESS_OVERRIDES["sparse_infill_flow_ratio"]),
+    )
+    if abs(infill - GOLDEN_10_31_INFILL_E_PER_MM) > GOLDEN_INFILL_E_TOL_MM:
+        fails.append(
+            f"infill E/mm {infill:.4f} vs 10-31 golden {GOLDEN_10_31_INFILL_E_PER_MM} "
+            f"(abs {abs(infill - GOLDEN_10_31_INFILL_E_PER_MM):.4f} > {GOLDEN_INFILL_E_TOL_MM})"
+        )
     return fails
 
 
@@ -236,14 +258,24 @@ def test_existing_materials_unchanged() -> list[str]:
     if not end.endswith("PRINT_END"):
         fails.append("shared PRINT_END call line changed")
     core = get_profile("apex-v2-insole-95a", material="apex_core")
-    if core is not None and core.process_overrides:
-        fails.append("apex_core gained process overrides")
+    if core is None:
+        fails.append("missing apex_core profile")
+    else:
+        if core.process_overrides != CORE_PROCESS_OVERRIDES:
+            fails.append(f"apex_core process overrides {core.process_overrides!r} != ported set")
+        if core.filament_overrides != CORE_FILAMENT_OVERRIDES:
+            fails.append(f"apex_core filament overrides {core.filament_overrides!r} != ported set")
     if abs(CORE_TARGET_FIRST_LAYER_Y_MM - 0.07) > 1e-9:
         fails.append(f"shared first-layer Y target {CORE_TARGET_FIRST_LAYER_Y_MM} != 0.07")
-    for mid in ("apex_core", "apex_forge", "apex_bounce"):
+    if abs(APEX_CORE_TARGET_FIRST_LAYER_Y_MM - 0.066) > 1e-9:
+        fails.append(f"ApexCore first-layer Y target {APEX_CORE_TARGET_FIRST_LAYER_Y_MM} != 0.066")
+    for mid in ("apex_forge", "apex_bounce"):
         spec = resolve_material(mid)
         if spec.target_first_layer_y_mm is not None:
             fails.append(f"{mid} should keep shared 0.07 first-layer Y, got {spec.target_first_layer_y_mm}")
+    core_spec = resolve_material("apex_core")
+    if abs((core_spec.target_first_layer_y_mm or 0) - 0.066) > 1e-9:
+        fails.append(f"apex_core first-layer Y {core_spec.target_first_layer_y_mm} != 0.066")
     return fails
 
 
