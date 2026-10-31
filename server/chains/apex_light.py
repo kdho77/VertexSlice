@@ -19,10 +19,23 @@ from tools.belt_pp.pipeline import finalize_apex_light
 REPO = Path(__file__).resolve().parents[2]
 H_CURAE = REPO / "tools" / "belt_pp" / "h_curaE.py"
 
-# travelfix final_q / pr16 env16.sh. {$BON} is these two process keys.
+# travelfix final_q / pr16 env16.sh. {$BON} is this process set.
 GOLDEN_E_PO = {
     "reduce_crossing_wall": "1",
     "avoid_crossing_wall_fallback": "1",
+    "top_shell_layers": "0",
+    "top_shell_thickness": "0",
+    "wall_loops": "2",
+    "wall_generator": "arachne",
+    "min_bead_width": "50%",
+    "min_feature_size": "25%",
+    "wall_transition_length": "100%",
+    "wall_distribution_count": "1",
+    "minimum_sparse_infill_area": "5",
+    "solid_infill_below_area": "2",
+    "ensure_vertical_shell_thickness": "none",
+    "filter_out_gap_fill": "9999",
+    "internal_solid_infill_flow_ratio": "1.45",
 }
 
 

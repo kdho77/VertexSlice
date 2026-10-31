@@ -99,6 +99,28 @@ class LightEnvTest(unittest.TestCase):
         self.assertNotIn("VS_BELTSLOW", env)
         self.assertNotIn("VS_TOPTIDY", env)
 
+    def test_golden_e_po_is_the_bon_set(self):
+        self.assertEqual(
+            GOLDEN_E_PO,
+            {
+                "reduce_crossing_wall": "1",
+                "avoid_crossing_wall_fallback": "1",
+                "top_shell_layers": "0",
+                "top_shell_thickness": "0",
+                "wall_loops": "2",
+                "wall_generator": "arachne",
+                "min_bead_width": "50%",
+                "min_feature_size": "25%",
+                "wall_transition_length": "100%",
+                "wall_distribution_count": "1",
+                "minimum_sparse_infill_area": "5",
+                "solid_infill_below_area": "2",
+                "ensure_vertical_shell_thickness": "none",
+                "filter_out_gap_fill": "9999",
+                "internal_solid_infill_flow_ratio": "1.45",
+            },
+        )
+
     def test_h_cura_split_is_one_cut(self):
         src = (REPO / "tools" / "belt_pp" / "h_curaD.py").read_text(encoding="utf-8")
         parts = src.split("spec=dataclasses.replace(spec,")
