@@ -36,6 +36,14 @@ def _slicer_binary() -> Path:
     raise FileNotFoundError("orca-slicer binary not found (set ORCA_SLICER_BIN)")
 
 
+def forced_belt_y_offset_mm() -> float | None:
+    """Box VS_FORCE_OFFSET. When set, the belt Y probe must not run."""
+    raw = os.environ.get("VS_FORCE_OFFSET", "").strip()
+    if not raw:
+        return None
+    return float(raw)
+
+
 def slice_stl(
     stl_path: Path,
     profile: SliceProfile,
@@ -48,13 +56,31 @@ def slice_stl(
     belt_insole_place: bool = False,
     x_center_mm: float | None = None,
     print_direction: str | None = None,
+    material: str | None = None,
 ) -> tuple[Path, dict]:
     """
     Run headless slice. Returns (gcode_path, stats dict with elapsed_s, peak_rss_kb).
+
+    ApexCore and ApexLight with an explicit ``material`` run the production
+    chain. Callers that omit ``material`` (h_curaE's inner slice) stay on the
+    single orca-slicer path so the chain cannot recurse.
     """
     stl_path = Path(stl_path).resolve()
     if not stl_path.is_file():
         raise FileNotFoundError(stl_path)
+
+    if material in ("apex_core", "apex_light"):
+        from server.chains import run_material_chain
+
+        return run_material_chain(
+            material,
+            stl_path,
+            profile,
+            work_dir,
+            timeout_s,
+            process_overrides,
+            print_direction,
+        )
 
     placement_stats: dict = {}
     slice_stl_path = stl_path
@@ -208,32 +234,40 @@ def slice_stl(
         return found[0], proc
 
     if belt_ini.is_file():
-        # Measured first-layer Y trim (replaces the h=0.2 residual constants).
-        # y_mach_offset adds 1:1 to every gantry Y (BeltTransform::inverse_transform_point),
-        # but the C++ clamps Y_mach >= 0, so probe with a large positive offset where
-        # nothing clamps, measure the first printed layer's extrusion Y min, then
-        # re-slice with the exact offset that lands it on the material target.
-        from apex_belt_y_trim import (  # noqa: E402
-            Y_PROBE_OFFSET_MM,
-            TARGET_FIRST_LAYER_Y_MM,
-            measured_y_mach_offset_mm,
-        )
-        from apex_first_layer_y import first_layer_extrusion_y_bounds  # noqa: E402
+        forced = forced_belt_y_offset_mm()
+        if forced is not None:
+            # Golden ApexLight uses VS_FORCE_OFFSET=-1.151. A probe slice would
+            # move the first layer off the locked print.
+            belt_ini.write_text(f"y_mach_offset = {forced:.6f}\n", encoding="utf-8")
+            placement_stats["belt_y_mach_offset_mm"] = forced
+            placement_stats["belt_y_offset_forced"] = True
+        else:
+            # Measured first-layer Y trim (replaces the h=0.2 residual constants).
+            # y_mach_offset adds 1:1 to every gantry Y (BeltTransform::inverse_transform_point),
+            # but the C++ clamps Y_mach >= 0, so probe with a large positive offset where
+            # nothing clamps, measure the first printed layer's extrusion Y min, then
+            # re-slice with the exact offset that lands it on the material target.
+            from apex_belt_y_trim import (  # noqa: E402
+                Y_PROBE_OFFSET_MM,
+                TARGET_FIRST_LAYER_Y_MM,
+                measured_y_mach_offset_mm,
+            )
+            from apex_first_layer_y import first_layer_extrusion_y_bounds  # noqa: E402
 
-        target_y = getattr(profile, "target_first_layer_y_mm", None)
-        target_y = TARGET_FIRST_LAYER_Y_MM if target_y is None else target_y
-        belt_ini.write_text(f"y_mach_offset = {Y_PROBE_OFFSET_MM:.6f}\n", encoding="utf-8")
-        probe_gcode, _ = _run_once()
-        probe_y_min, _ = first_layer_extrusion_y_bounds(
-            probe_gcode.read_text(encoding="utf-8", errors="replace")
-        )
-        if probe_y_min is None:
-            raise RuntimeError("belt Y probe: no first-layer extrusion found")
-        offset = measured_y_mach_offset_mm(probe_y_min, Y_PROBE_OFFSET_MM, target_y)
-        belt_ini.write_text(f"y_mach_offset = {offset:.6f}\n", encoding="utf-8")
-        placement_stats["belt_y_probe_first_layer_y_mm"] = probe_y_min
-        placement_stats["belt_y_mach_offset_geometric_mm"] = placement_stats.get("belt_y_mach_offset_mm")
-        placement_stats["belt_y_mach_offset_mm"] = offset
+            target_y = getattr(profile, "target_first_layer_y_mm", None)
+            target_y = TARGET_FIRST_LAYER_Y_MM if target_y is None else target_y
+            belt_ini.write_text(f"y_mach_offset = {Y_PROBE_OFFSET_MM:.6f}\n", encoding="utf-8")
+            probe_gcode, _ = _run_once()
+            probe_y_min, _ = first_layer_extrusion_y_bounds(
+                probe_gcode.read_text(encoding="utf-8", errors="replace")
+            )
+            if probe_y_min is None:
+                raise RuntimeError("belt Y probe: no first-layer extrusion found")
+            offset = measured_y_mach_offset_mm(probe_y_min, Y_PROBE_OFFSET_MM, target_y)
+            belt_ini.write_text(f"y_mach_offset = {offset:.6f}\n", encoding="utf-8")
+            placement_stats["belt_y_probe_first_layer_y_mm"] = probe_y_min
+            placement_stats["belt_y_mach_offset_geometric_mm"] = placement_stats.get("belt_y_mach_offset_mm")
+            placement_stats["belt_y_mach_offset_mm"] = offset
 
     gcode_path, proc = _run_once()
     elapsed = time.perf_counter() - t0

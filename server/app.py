@@ -159,6 +159,7 @@ async def slice_endpoint(
             process_overrides=overrides,
             belt_insole_place=belt_insole_place,
             print_direction=overrides.get("print_direction"),
+            material=material_spec.material_id,
         )
         headers = {
             "X-Slice-Seconds": str(stats.get("elapsed_s", "")),
@@ -166,6 +167,8 @@ async def slice_endpoint(
             "X-Profile-Id": profile_id,
             "X-Material": material_spec.material_id,
         }
+        if stats.get("chain"):
+            headers["X-Chain"] = str(stats["chain"])
         if overrides.get("wall_loops") is not None:
             headers["X-Wall-Loops"] = str(overrides["wall_loops"])
         if overrides.get("sparse_infill_density"):

@@ -12,6 +12,10 @@ on:
       - 'scripts/docker_headless_slice_proof.sh'
       - 'validation/**'
       - 'resources/profiles/IdeaFormer/**'
+      - 'tools/belt_pp/**'
+      - 'scripts/g2b_heelmod/**'
+      - 'scripts/golden_gate.py'
+      - 'scripts/golden_chain_proof.py'
       - '.github/workflows/docker-server-proof.yml'
   push:
     branches:
@@ -71,6 +75,29 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Golden chain gate
+        run: |
+          set +e
+          mount=()
+          if [ -n "${VS_GOLDEN_DIR:-}" ]; then
+            mount=(-e VS_GOLDEN_DIR=/goldens -v "${VS_GOLDEN_DIR}:/goldens:ro")
+          fi
+          docker run --rm -e APEX_MIN_LAYER_TIME=4 "${mount[@]}" \
+            vertexslice-server:proof \
+            python3 /app/scripts/golden_chain_proof.py
+          status=$?
+          set -e
+          if [ "$status" -eq 1 ]; then
+            echo "golden_gate diff_count != 0"
+            exit 1
+          fi
+          if [ "$status" -eq 2 ]; then
+            echo "LOCKED goldens were not fetched into this job (they are not committed)."
+            echo "Missing input is not a diff. A mounted VS_GOLDEN_DIR that diffs fails this job."
+            exit 0
+          fi
+          exit "$status"
+
   validation_unit:
     name: Validation scripts (no binary)
     runs-on: ubuntu-latest
@@ -91,3 +118,4 @@ jobs:
           python3 validation/tests/test_apex_v2_gcode_bookends.py
           python3 validation/tests/test_first_layer_y.py
           python3 validation/tests/test_print_direction_tunables.py
+          python3 -m unittest tests.test_server_full_chain tests.test_golden_gate -v

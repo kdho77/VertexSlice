@@ -33,6 +33,7 @@ ENV LIBGL_ALWAYS_SOFTWARE=1
 ENV ORCA_RESOURCES=/app/resources
 ENV ORCA_SLICER_BIN=/app/bin/orca-slicer
 ENV VERTEXSLICE_API_KEY=dev-change-me
+ENV APEX_MIN_LAYER_TIME=4
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv time \
@@ -45,6 +46,10 @@ COPY --from=orca-builder /src/build/src/Release/orca-slicer /app/bin/orca-slicer
 COPY --from=orca-builder /src/resources /app/resources
 COPY server /app/server
 COPY validation /app/validation
+COPY tools /app/tools
+COPY scripts/g2b_heelmod /app/scripts/g2b_heelmod
+COPY scripts/golden_gate.py /app/scripts/golden_gate.py
+COPY scripts/golden_chain_proof.py /app/scripts/golden_chain_proof.py
 COPY scripts/docker_headless_slice_proof.sh /app/scripts/docker_headless_slice_proof.sh
 
 RUN chmod +x /app/bin/orca-slicer /app/scripts/docker_headless_slice_proof.sh \

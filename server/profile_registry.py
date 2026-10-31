@@ -25,7 +25,6 @@ from validation.apex_core import (  # noqa: E402
     PROCESS_OVERRIDES as APEX_CORE_PROCESS_OVERRIDES,
     TARGET_FIRST_LAYER_Y_MM as APEX_CORE_TARGET_FIRST_LAYER_Y_MM,
 )
-from validation.apex_light_postprocess import postprocess_apex_light  # noqa: E402
 PROFILES = REPO_ROOT / "resources" / "profiles" / "IdeaFormer"
 MACHINE = PROFILES / "machine" / "Vertex Apex V2 1.0 nozzle.json"
 FILAMENT_95A = PROFILES / "filament" / "VERTEX_APEX_CORE_95A.json"
@@ -85,7 +84,6 @@ _MATERIALS: dict[str, MaterialSpec] = {
         machine_overrides=dict(APEX_LIGHT_MACHINE_OVERRIDES),
         default_wall_loops=APEX_LIGHT_WALL_LOOPS,
         target_first_layer_y_mm=APEX_LIGHT_TARGET_FIRST_LAYER_Y_MM,
-        gcode_postprocess=postprocess_apex_light,
     ),
 }
 
