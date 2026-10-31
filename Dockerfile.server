@@ -1,0 +1,82 @@
+# VertexSlice headless slicer + HTTP API (Railway-ready). Not deployed by this repo.
+# Build: docker build -f Dockerfile.server -t vertexslice-server:proof .
+# Proof: docker run --rm vertexslice-server:proof /app/scripts/docker_headless_slice_proof.sh
+
+FROM ubuntu:24.04 AS orca-base
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LC_ALL=C.UTF-8
+ENV SKIP_RAM_CHECK=1
+# CLI slicing still links libslic3r_gui (PartPlate); do not set SLIC3R_GUI=OFF.
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates sudo git \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf '%s\n' 'force-confdef' 'force-confold' > /etc/dpkg/dpkg.cfg.d/docker-noninteractive
+
+# System packages + ./deps build (~40 min). Kept separate from slicer sources so
+# server/validation/tools changes do not invalidate this stage.
+FROM orca-base AS orca-deps
+WORKDIR /src
+COPY build_linux.sh version.inc CMakeLists.txt ./
+COPY cmake/ cmake/
+COPY deps/ deps/
+COPY scripts/linux.d/ scripts/linux.d/
+RUN ./build_linux.sh -u \
+    && ./build_linux.sh -dr
+
+# Slicer compile; deps already built in orca-deps. Full tree copy here can bust this
+# stage on any source change, but orca-deps (~40 min) stays cached when only server/
+# validation/tools change (those are copied in the runtime stage only).
+FROM orca-deps AS orca-builder
+COPY . /src
+RUN CMAKE_BUILD_PARALLEL_LEVEL=4 ./build_linux.sh -sr
+
+FROM ubuntu:24.04 AS runtime
+
+ARG SKIP_DOCKER_SLICE_PROOF=0
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8080
+ENV QT_QPA_PLATFORM=offscreen
+ENV LIBGL_ALWAYS_SOFTWARE=1
+ENV ORCA_RESOURCES=/app/resources
+ENV ORCA_SLICER_BIN=/app/bin/orca-slicer
+ENV VERTEXSLICE_API_KEY=dev-change-me
+ENV APEX_MIN_LAYER_TIME=4
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv time \
+    libstdc++6 libglib2.0-0 libgomp1 libcurl4 libssl3 libfuse2 \
+    libgtk-3-0 libwebkit2gtk-4.1-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=orca-builder /src/build/src/Release/orca-slicer /app/bin/orca-slicer
+COPY --from=orca-builder /src/resources /app/resources
+COPY server /app/server
+COPY validation /app/validation
+COPY tools /app/tools
+COPY scripts/g2b_heelmod /app/scripts/g2b_heelmod
+COPY scripts/golden_gate.py /app/scripts/golden_gate.py
+COPY scripts/golden_chain_proof.py /app/scripts/golden_chain_proof.py
+COPY scripts/docker_headless_slice_proof.sh /app/scripts/docker_headless_slice_proof.sh
+
+RUN chmod +x /app/bin/orca-slicer /app/scripts/docker_headless_slice_proof.sh \
+    && python3 -m venv /app/venv \
+    && /app/venv/bin/pip install --no-cache-dir -r /app/server/requirements.txt
+
+ENV PATH="/app/venv/bin:${PATH}"
+ENV PYTHONPATH="/app"
+ENV VERTEXSLICE_PROOF_GCODE_DIR=/app/proof_gcode
+
+RUN if [ "$SKIP_DOCKER_SLICE_PROOF" = "0" ]; then \
+      mkdir -p /app/proof_gcode \
+      && /app/scripts/docker_headless_slice_proof.sh; \
+    else \
+      echo "SKIP_DOCKER_SLICE_PROOF=1 — slice proof deferred to CI smoke / runtime"; \
+    fi
+
+EXPOSE 8080
+CMD ["sh", "-c", "uvicorn server.app:app --host 0.0.0.0 --port ${PORT:-8080}"]

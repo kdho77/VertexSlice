@@ -1209,12 +1209,15 @@ std::string GCodeWriter::set_fan(unsigned int speed) const
     return GCodeWriter::set_fan(this->config.gcode_flavor, speed);
 }
 
-//BBS: set additional fan speed for BBS machine only
-std::string GCodeWriter::set_additional_fan(unsigned int speed)
+std::string GCodeWriter::set_additional_fan(const GCodeFlavor gcode_flavor, unsigned int speed)
 {
     std::ostringstream gcode;
 
-    gcode << "M106 " << "P2 " << "S" << (int)(255.0 * speed / 100.0);
+    // Bambu chamber fan uses P2; Vertex Apex / Cura insole ref uses P1 (see validation/reference_gcode/apex_cura_insole_ref.gcode).
+    if (gcode_flavor == gcfKlipper)
+        gcode << "M106 P2 S" << (int)(255.0 * speed / 100.0);
+    else
+        gcode << "M106 P1 S" << (int)(255.0 * speed / 100.0);
     if (GCodeWriter::full_gcode_comment) {
         if (speed == 0)
             gcode << " ; disable additional fan ";
@@ -1223,6 +1226,11 @@ std::string GCodeWriter::set_additional_fan(unsigned int speed)
     }
     gcode << "\n";
     return gcode.str();
+}
+
+std::string GCodeWriter::set_additional_fan(unsigned int speed) const
+{
+    return GCodeWriter::set_additional_fan(this->config.gcode_flavor, speed);
 }
 
 std::string GCodeWriter::set_exhaust_fan( int speed,bool add_eol)

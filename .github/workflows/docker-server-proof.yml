@@ -1,0 +1,140 @@
+# Build Dockerfile.server and run insole slice proof vs Cura reference G-code.
+# Railway config is present but this workflow does not deploy.
+name: Docker server proof
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'Dockerfile.server'
+      - 'server/**'
+      - 'scripts/docker_headless_slice_proof.sh'
+      - 'validation/**'
+      - 'resources/profiles/IdeaFormer/**'
+      - 'tools/belt_pp/**'
+      - 'scripts/g2b_heelmod/**'
+      - 'scripts/golden_gate.py'
+      - 'scripts/golden_chain_proof.py'
+      - '.github/workflows/docker-server-proof.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'Dockerfile.server'
+      - 'server/**'
+
+concurrency:
+  group: docker-server-proof-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+  packages: read
+
+env:
+  REGISTRY: ghcr.io
+  HEADLESS_IMAGE: ghcr.io/kdho77/vertexslice-server:headless
+
+jobs:
+  # This is the in-image slice proof. Earlier passing/failing runs on this
+  # draft PR were pull_request synchronize; do not draft-skip it (006ae211
+  # gated other expensive jobs). workflow_dispatch also stays enabled.
+  docker_proof:
+    name: Build image and run slice proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          lfs: 'true'
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull published headless image (cache seed)
+        continue-on-error: true
+        run: docker pull "${{ env.HEADLESS_IMAGE }}"
+
+      - name: Build server image (proof runs in Dockerfile RUN)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.server
+          tags: vertexslice-server:proof
+          load: true
+          push: false
+          cache-from: |
+            type=gha,scope=vertexslice-server-headless
+            type=registry,ref=${{ env.HEADLESS_IMAGE }}
+          cache-to: type=gha,mode=max,scope=vertexslice-server-headless
+
+      - name: Re-run proof script (capture JSON for logs)
+        run: |
+          docker run --rm \
+            -e VERTEXSLICE_API_KEY=ci-proof \
+            vertexslice-server:proof \
+            /app/scripts/docker_headless_slice_proof.sh | tee docker-proof.json
+          docker image inspect vertexslice-server:proof --format 'image_size_bytes={{.Size}}'
+
+      - name: Upload proof report
+        uses: actions/upload-artifact@v5
+        with:
+          name: docker-server-proof
+          path: docker-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Golden chain gate
+        run: |
+          set +e
+          mount=()
+          if [ -n "${VS_GOLDEN_DIR:-}" ]; then
+            mount=(-e VS_GOLDEN_DIR=/goldens -v "${VS_GOLDEN_DIR}:/goldens:ro")
+          fi
+          docker run --rm -e APEX_MIN_LAYER_TIME=4 "${mount[@]}" \
+            vertexslice-server:proof \
+            python3 /app/scripts/golden_chain_proof.py
+          status=$?
+          set -e
+          if [ "$status" -eq 1 ]; then
+            echo "golden_gate diff_count != 0"
+            exit 1
+          fi
+          if [ "$status" -eq 2 ]; then
+            echo "LOCKED goldens were not fetched into this job (they are not committed)."
+            echo "Missing input is not a diff. A mounted VS_GOLDEN_DIR that diffs fails this job."
+            exit 0
+          fi
+          exit "$status"
+
+  validation_unit:
+    name: Validation scripts (no binary)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          lfs: 'true'
+      - name: Registry + Cura ref tests
+        run: |
+          python3 -m pip install -q -r server/requirements.txt httpx
+          python3 validation/tests/test_server_registry.py
+          python3 validation/tests/test_server_slice_overrides.py
+          python3 validation/tests/test_materials.py
+          python3 validation/tests/test_apex_light.py
+          python3 validation/tests/test_apex_v2_insole_densities.py
+          python3 validation/tests/test_apex_v2_cura_match.py
+          python3 validation/tests/test_apex_v2_slice.py
+          python3 validation/tests/test_apex_v2_gcode_bookends.py
+          python3 validation/tests/test_first_layer_y.py
+          python3 validation/tests/test_print_direction_tunables.py
+          python3 -m unittest tests.test_server_full_chain tests.test_golden_gate -v

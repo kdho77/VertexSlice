@@ -7,6 +7,10 @@
         {
             "name": "IdeaFormer IR3 V2",
             "sub_path": "machine/IdeaFormer IR3 V2.json"
+        },
+        {
+            "name": "Vertex Apex V2",
+            "sub_path": "machine/Vertex Apex V2.json"
         }
     ],
     "machine_list": [
@@ -21,6 +25,14 @@
         {
             "name": "IdeaFormer IR3 V2 0.4 nozzle",
             "sub_path": "machine/IdeaFormer IR3 V2 0.4 nozzle.json"
+        },
+        {
+            "name": "fdm_vertex_apex_common",
+            "sub_path": "machine/fdm_vertex_apex_common.json"
+        },
+        {
+            "name": "Vertex Apex V2 1.0 nozzle",
+            "sub_path": "machine/Vertex Apex V2 1.0 nozzle.json"
         }
     ],
     "process_list": [
@@ -29,8 +41,32 @@
             "sub_path": "process/fdm_process_common.json"
         },
         {
+            "name": "fdm_process_apex_insole_common",
+            "sub_path": "process/fdm_process_apex_insole_common.json"
+        },
+        {
             "name": "0.20mm Standard @IdeaFormer IR3 V2",
             "sub_path": "process/0.20mm Standard @IdeaFormer IR3 V2.json"
+        },
+        {
+            "name": "0.42mm TPU Insole @Vertex Apex V2",
+            "sub_path": "process/0.42mm TPU Insole @Vertex Apex V2.json"
+        },
+        {
+            "name": "0.42mm TPU Insole Extra Soft @Vertex Apex V2",
+            "sub_path": "process/0.42mm TPU Insole Extra Soft @Vertex Apex V2.json"
+        },
+        {
+            "name": "0.42mm TPU Insole Medium @Vertex Apex V2",
+            "sub_path": "process/0.42mm TPU Insole Medium @Vertex Apex V2.json"
+        },
+        {
+            "name": "0.42mm TPU Insole Hard @Vertex Apex V2",
+            "sub_path": "process/0.42mm TPU Insole Hard @Vertex Apex V2.json"
+        },
+        {
+            "name": "0.42mm TPU Insole Extra Hard @Vertex Apex V2",
+            "sub_path": "process/0.42mm TPU Insole Extra Hard @Vertex Apex V2.json"
         }
     ],
     "filament_list": [
@@ -45,6 +81,10 @@
         {
             "name": "fdm_filament_petg",
             "sub_path": "filament/fdm_filament_petg.json"
+        },
+        {
+            "name": "fdm_filament_tpu",
+            "sub_path": "filament/fdm_filament_tpu.json"
         },
         {
             "name": "eSun PLA White @IdeaFormer IR3 V2",
@@ -65,6 +105,46 @@
         {
             "name": "Generic PLA High Speed @IdeaFormer IR3 V2",
             "sub_path": "filament/Generic PLA High Speed @IdeaFormer IR3 V2.json"
+        },
+        {
+            "name": "VERTEX_APEX_CORE_95A @base",
+            "sub_path": "filament/VERTEX_APEX_CORE_95A @base.json"
+        },
+        {
+            "name": "VERTEX_APEX_CORE_95A",
+            "sub_path": "filament/VERTEX_APEX_CORE_95A.json"
+        },
+        {
+            "name": "ApexCore",
+            "sub_path": "filament/ApexCore.json"
+        },
+        {
+            "name": "ApexForge",
+            "sub_path": "filament/ApexForge.json"
+        },
+        {
+            "name": "ApexBounce",
+            "sub_path": "filament/ApexBounce.json"
+        },
+        {
+            "name": "ApexLight",
+            "sub_path": "filament/ApexLight.json"
+        },
+        {
+            "name": "VERTEX_APEX_CORE_85A",
+            "sub_path": "filament/VERTEX_APEX_CORE_85A.json"
+        },
+        {
+            "name": "VERTEX_APEX_CORE_90A",
+            "sub_path": "filament/VERTEX_APEX_CORE_90A.json"
+        },
+        {
+            "name": "VERTEX_APEX_CORE_98A",
+            "sub_path": "filament/VERTEX_APEX_CORE_98A.json"
+        },
+        {
+            "name": "VERTEX_APEX_CORE_75D",
+            "sub_path": "filament/VERTEX_APEX_CORE_75D.json"
         }
     ]
 }
