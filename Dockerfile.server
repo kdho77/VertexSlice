@@ -1,12 +1,23 @@
+# syntax=docker/dockerfile:1
 # VertexSlice headless slicer + HTTP API (Railway-ready). Not deployed by this repo.
 # Build: docker build -f Dockerfile.server -t vertexslice-server:proof .
 # Proof: docker run --rm vertexslice-server:proof /app/scripts/docker_headless_slice_proof.sh
+#
+# Two OrcaBelt binaries share one deps stage. No single commit matches both
+# 10-31 goldens:
+#   def8eff480e3c9baa3560ec44d0aaaee419f1a9e -> ApexCore (orca-slicer-def8eff480)
+#   4432a211e62e18487f67ee3f837091c539f0c4f0 -> ApexLight (orca-slicer-pr16)
+# 4432a211e6 aborts on the ApexCore g2b chain (glibc "corrupted double-linked
+# list", exit -6). That crash is a follow-up; this image does not patch it.
+# Each install prefix is bin/ + resources/ so Orca's parent(parent(binary))
+# lookup loads the resources from that same commit.
 
-FROM ubuntu:24.04 AS orca-builder
+FROM ubuntu:24.04 AS deps
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LC_ALL=C.UTF-8
 ENV SKIP_RAM_CHECK=1
+ENV GIT_TERMINAL_PROMPT=0
 # CLI slicing still links libslic3r_gui (PartPlate); do not set SLIC3R_GUI=OFF.
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,8 +29,26 @@ WORKDIR /src
 COPY . /src
 
 RUN ./build_linux.sh -u \
-    && ./build_linux.sh -dr \
-    && CMAKE_BUILD_PARALLEL_LEVEL=4 ./build_linux.sh -sr
+    && ./build_linux.sh -dr
+
+FROM deps AS slicer-pr16
+
+ARG PR16_COMMIT=4432a211e62e18487f67ee3f837091c539f0c4f0
+ENV CMAKE_BUILD_PARALLEL_LEVEL=4
+
+RUN ./scripts/docker_build_pinned_slicer.sh \
+    "${PR16_COMMIT}" /opt/orca-pr16 orca-slicer-pr16
+
+FROM slicer-pr16 AS slicer-core
+
+ARG CORE_COMMIT=def8eff480e3c9baa3560ec44d0aaaee419f1a9e
+
+RUN ./scripts/docker_build_pinned_slicer.sh \
+    "${CORE_COMMIT}" /opt/orca-def8eff480 orca-slicer-def8eff480 \
+    && if cmp -s /opt/orca-pr16/bin/orca-slicer-pr16 /opt/orca-def8eff480/bin/orca-slicer-def8eff480; then \
+         echo "pinned slicer binaries are identical; def8eff480 did not rebuild" >&2; \
+         exit 1; \
+       fi
 
 FROM ubuntu:24.04 AS runtime
 
@@ -30,8 +59,10 @@ ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
 ENV QT_QPA_PLATFORM=offscreen
 ENV LIBGL_ALWAYS_SOFTWARE=1
-ENV ORCA_RESOURCES=/app/resources
-ENV ORCA_SLICER_BIN=/app/bin/orca-slicer
+ENV ORCA_RESOURCES=/app/slicers/pr16/resources
+ENV ORCA_SLICER_BIN=/app/slicers/pr16/bin/orca-slicer-pr16
+ENV ORCA_SLICER_BIN_APEX_CORE=/app/slicers/def8eff480/bin/orca-slicer-def8eff480
+ENV ORCA_SLICER_BIN_APEX_LIGHT=/app/slicers/pr16/bin/orca-slicer-pr16
 ENV VERTEXSLICE_API_KEY=dev-change-me
 ENV APEX_MIN_LAYER_TIME=4
 
@@ -42,8 +73,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=orca-builder /src/build/src/Release/orca-slicer /app/bin/orca-slicer
-COPY --from=orca-builder /src/resources /app/resources
+COPY --from=slicer-pr16 /opt/orca-pr16 /app/slicers/pr16
+COPY --from=slicer-core /opt/orca-def8eff480 /app/slicers/def8eff480
 COPY server /app/server
 COPY validation /app/validation
 COPY tools /app/tools
@@ -52,7 +83,11 @@ COPY scripts/golden_gate.py /app/scripts/golden_gate.py
 COPY scripts/golden_chain_proof.py /app/scripts/golden_chain_proof.py
 COPY scripts/docker_headless_slice_proof.sh /app/scripts/docker_headless_slice_proof.sh
 
-RUN chmod +x /app/bin/orca-slicer /app/scripts/docker_headless_slice_proof.sh \
+RUN mkdir -p /app/bin \
+    && ln -sfn ../slicers/pr16/bin/orca-slicer-pr16 /app/bin/orca-slicer \
+    && chmod +x /app/slicers/pr16/bin/orca-slicer-pr16 \
+        /app/slicers/def8eff480/bin/orca-slicer-def8eff480 \
+        /app/scripts/docker_headless_slice_proof.sh \
     && python3 -m venv /app/venv \
     && /app/venv/bin/pip install --no-cache-dir -r /app/server/requirements.txt
 

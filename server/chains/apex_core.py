@@ -13,6 +13,24 @@ from server.chains import CHAIN_APEX_CORE
 REPO = Path(__file__).resolve().parents[2]
 G2B = REPO / "scripts" / "g2b_heelmod"
 
+# def8eff480 matches ApexCore_95A_GOLDEN_2026-10-31. 4432a211e6 aborts on this
+# chain (corrupted double-linked list). Orca loads resources from
+# parent(parent(binary)) / "resources", so the binary lives in that prefix's bin/.
+DEFAULT_APEX_CORE_BIN = "/app/slicers/def8eff480/bin/orca-slicer-def8eff480"
+APEX_CORE_BIN_ENV = "ORCA_SLICER_BIN_APEX_CORE"
+
+
+def slicer_binary() -> str:
+    chosen = os.environ.get(APEX_CORE_BIN_ENV, "").strip()
+    return chosen or DEFAULT_APEX_CORE_BIN
+
+
+def resources_for_binary(binary: str) -> str:
+    path = Path(binary)
+    if path.exists():
+        path = path.resolve()
+    return str(path.parent.parent / "resources")
+
 
 def stage_commands(work: Path, stl: Path, final: Path, golden: Path | None = None) -> list[list[str]]:
     py = sys.executable
@@ -35,7 +53,9 @@ def _env() -> dict[str, str]:
     env = os.environ.copy()
     env.setdefault("APEX_MIN_LAYER_TIME", "4")
     env["PYTHONPATH"] = str(REPO) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-    env.setdefault("ORCA_RESOURCES", os.environ.get("ORCA_RESOURCES", str(REPO / "resources")))
+    binary = slicer_binary()
+    env["ORCA_SLICER_BIN"] = binary
+    env["ORCA_RESOURCES"] = resources_for_binary(binary)
     return env
 
 

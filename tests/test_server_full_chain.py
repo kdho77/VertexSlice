@@ -21,8 +21,11 @@ sys.path.insert(0, str(REPO / "tools" / "belt_pp"))
 
 import check_gcode  # noqa: E402
 import efix  # noqa: E402
+from server.chains import apex_core  # noqa: E402
 from server.chains.apex_core import stage_commands  # noqa: E402
+from server.chains import apex_light  # noqa: E402
 from server.chains.apex_light import GOLDEN_E_PO, golden_env  # noqa: E402
+from scripts.pin_orca_tree import sync_pin  # noqa: E402
 from server.profile_registry import get_profile  # noqa: E402
 import server.slice_engine as slice_engine  # noqa: E402
 
@@ -195,6 +198,154 @@ class DispatchTest(unittest.TestCase):
                 os.environ.pop("VS_FORCE_OFFSET", None)
             else:
                 os.environ["VS_FORCE_OFFSET"] = old
+
+
+class ChainBinaryMapTest(unittest.TestCase):
+    def _isolated(self, extra: dict[str, str] | None = None):
+        env = {
+            "ORCA_SLICER_BIN": "/app/bin/orca-slicer",
+            "ORCA_RESOURCES": "/app/resources",
+        }
+        if extra:
+            env.update(extra)
+        return mock.patch.dict(os.environ, env, clear=False)
+
+    def _clear_overrides(self):
+        os.environ.pop("ORCA_SLICER_BIN_APEX_CORE", None)
+        os.environ.pop("ORCA_SLICER_BIN_APEX_LIGHT", None)
+
+    def test_defaults_map_each_chain_to_its_commit(self):
+        with self._isolated():
+            self._clear_overrides()
+            core = apex_core._env()
+            light = golden_env(Path("/in.stl"))
+        self.assertEqual(core["ORCA_SLICER_BIN"], "/app/slicers/def8eff480/bin/orca-slicer-def8eff480")
+        self.assertEqual(core["ORCA_RESOURCES"], "/app/slicers/def8eff480/resources")
+        self.assertEqual(light["ORCA_SLICER_BIN"], "/app/slicers/pr16/bin/orca-slicer-pr16")
+        self.assertEqual(light["ORCA_RESOURCES"], "/app/slicers/pr16/resources")
+        self.assertNotEqual(core["ORCA_SLICER_BIN"], light["ORCA_SLICER_BIN"])
+        self.assertNotEqual(core["ORCA_SLICER_BIN"], "/app/bin/orca-slicer")
+        self.assertNotEqual(light["ORCA_SLICER_BIN"], "/app/bin/orca-slicer")
+
+    def test_per_chain_env_overrides_the_binary_and_its_resources(self):
+        with self._isolated(
+            {
+                "ORCA_SLICER_BIN_APEX_CORE": "/opt/core/bin/orca-slicer-def8eff480",
+                "ORCA_SLICER_BIN_APEX_LIGHT": "/opt/light/bin/orca-slicer-pr16",
+            }
+        ):
+            core = apex_core._env()
+            light = golden_env(Path("/in.stl"))
+        self.assertEqual(core["ORCA_SLICER_BIN"], "/opt/core/bin/orca-slicer-def8eff480")
+        self.assertEqual(core["ORCA_RESOURCES"], "/opt/core/resources")
+        self.assertEqual(light["ORCA_SLICER_BIN"], "/opt/light/bin/orca-slicer-pr16")
+        self.assertEqual(light["ORCA_RESOURCES"], "/opt/light/resources")
+
+    def test_blank_override_uses_the_image_default(self):
+        with self._isolated(
+            {
+                "ORCA_SLICER_BIN_APEX_CORE": "  ",
+                "ORCA_SLICER_BIN_APEX_LIGHT": "",
+            }
+        ):
+            core = apex_core._env()
+            light = golden_env(Path("/in.stl"))
+        self.assertEqual(core["ORCA_SLICER_BIN"], apex_core.DEFAULT_APEX_CORE_BIN)
+        self.assertEqual(light["ORCA_SLICER_BIN"], apex_light.DEFAULT_APEX_LIGHT_BIN)
+
+    def test_dockerfile_ships_those_binaries_and_env(self):
+        text = (REPO / "Dockerfile.server").read_text(encoding="utf-8")
+        self.assertIn("def8eff480e3c9baa3560ec44d0aaaee419f1a9e", text)
+        self.assertIn("4432a211e62e18487f67ee3f837091c539f0c4f0", text)
+        self.assertIn("ORCA_SLICER_BIN_APEX_CORE=/app/slicers/def8eff480/bin/orca-slicer-def8eff480", text)
+        self.assertIn("ORCA_SLICER_BIN_APEX_LIGHT=/app/slicers/pr16/bin/orca-slicer-pr16", text)
+        self.assertIn(apex_core.DEFAULT_APEX_CORE_BIN, text)
+        self.assertIn(apex_light.DEFAULT_APEX_LIGHT_BIN, text)
+        self.assertIn("AS deps", text)
+        self.assertIn("FROM deps AS slicer-pr16", text)
+        self.assertIn("FROM slicer-pr16 AS slicer-core", text)
+
+    def test_run_apex_core_passes_its_binary(self):
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as td:
+            work = Path(td)
+            stl = work / "raw.stl"
+            tri = struct.pack("<12fH", 0, 0, 1, 0, 0, 0, 10, 0, 1, 0, 20, 2, 0)
+            stl.write_bytes(b"\0" * 80 + struct.pack("<I", 1) + tri)
+            seen: dict = {}
+
+            def fake_run(cmd, **kwargs):
+                seen["env"] = kwargs["env"]
+                name = Path(cmd[1]).name
+                if name == "slice_apexcore_g2b.py":
+                    Path(cmd[5]).write_text("; raw\n", encoding="utf-8")
+                elif name == "topfix_apexcore.py":
+                    Path(cmd[3]).write_text("; final\n", encoding="utf-8")
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            with self._isolated({"ORCA_SLICER_BIN_APEX_CORE": "/opt/core/bin/orca-slicer-def8eff480"}):
+                with mock.patch("server.chains.apex_core.subprocess.run", fake_run):
+                    _path, stats = apex_core.run_apex_core(stl, work_dir=work / "out")
+            self.assertEqual(seen["env"]["ORCA_SLICER_BIN"], "/opt/core/bin/orca-slicer-def8eff480")
+            self.assertEqual(seen["env"]["ORCA_RESOURCES"], "/opt/core/resources")
+            self.assertEqual(stats["binary"], "/opt/core/bin/orca-slicer-def8eff480")
+
+    def test_run_apex_light_passes_its_binary(self):
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as td:
+            stl = Path(td) / "in.stl"
+            stl.write_text("solid x\nendsolid x\n", encoding="utf-8")
+            seen: dict = {}
+
+            def fake_run(cmd, **kwargs):
+                seen["env"] = kwargs["env"]
+                Path(cmd[-1]).write_text("; gcode\n", encoding="utf-8")
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            with self._isolated({"ORCA_SLICER_BIN_APEX_LIGHT": "/opt/light/bin/orca-slicer-pr16"}):
+                with mock.patch("server.chains.apex_light.subprocess.run", fake_run):
+                    _path, stats = apex_light.run_apex_light(stl, work_dir=Path(td) / "out")
+            self.assertEqual(seen["env"]["ORCA_SLICER_BIN"], "/opt/light/bin/orca-slicer-pr16")
+            self.assertEqual(seen["env"]["ORCA_RESOURCES"], "/opt/light/resources")
+            self.assertEqual(stats["binary"], "/opt/light/bin/orca-slicer-pr16")
+
+
+class PinOrcaTreeTest(unittest.TestCase):
+    def test_sync_updates_only_changed_files_and_keeps_deps(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            pin = root / "pin"
+            dest = root / "dest"
+            for base in (pin, dest):
+                (base / "src").mkdir(parents=True)
+                (base / "resources" / "profiles").mkdir(parents=True)
+                (base / "cmake").mkdir(parents=True)
+                (base / "deps" / "build").mkdir(parents=True)
+                (base / "src" / "keep.cpp").write_text("same\n", encoding="utf-8")
+                (base / "src" / "change.cpp").write_text("old\n", encoding="utf-8")
+                (base / "resources" / "profiles" / "a.json").write_text("{}\n", encoding="utf-8")
+                (base / "cmake" / "t.cmake").write_text("t\n", encoding="utf-8")
+                (base / "CMakeLists.txt").write_text("cmake\n", encoding="utf-8")
+                (base / "version.inc").write_text("v\n", encoding="utf-8")
+                (base / "build_linux.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            (dest / "deps" / "build" / "lib.a").write_text("deps-bytes", encoding="utf-8")
+            (dest / "src" / "extra.cpp").write_text("gone\n", encoding="utf-8")
+            keep = dest / "src" / "keep.cpp"
+            before = keep.stat().st_mtime_ns
+            (pin / "src" / "change.cpp").write_text("new\n", encoding="utf-8")
+            (pin / "resources" / "profiles" / "b.json").write_text("{}\n", encoding="utf-8")
+
+            changed = sync_pin(pin, dest)
+
+            self.assertGreater(changed, 0)
+            self.assertEqual(keep.stat().st_mtime_ns, before)
+            self.assertEqual((dest / "src" / "change.cpp").read_text(encoding="utf-8"), "new\n")
+            self.assertFalse((dest / "src" / "extra.cpp").exists())
+            self.assertTrue((dest / "resources" / "profiles" / "b.json").is_file())
+            self.assertEqual((dest / "deps" / "build" / "lib.a").read_text(encoding="utf-8"), "deps-bytes")
+            self.assertEqual(sync_pin(pin, dest), 0)
 
 
 class LockedFileTest(unittest.TestCase):
