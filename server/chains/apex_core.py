@@ -39,6 +39,15 @@ def _env() -> dict[str, str]:
     return env
 
 
+def prepare_belt_stl(stl_path: Path) -> tuple[Path, dict]:
+    """Box prep before slice_apexcore_g2b: belt270, X center 140, toe-first."""
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from validation.stl_preprocess import prepare_orthocad_insole_stl
+
+    return prepare_orthocad_insole_stl(Path(stl_path), x_center_mm=140, print_direction="toe_first")
+
+
 def run_apex_core(
     stl_path: Path,
     work_dir: Path | None = None,
@@ -48,10 +57,11 @@ def run_apex_core(
     owned = work_dir is None
     work = Path(work_dir) if work_dir is not None else Path(tempfile.mkdtemp(prefix="apex_core_chain_"))
     work.mkdir(parents=True, exist_ok=True)
+    prepped, prep_meta = prepare_belt_stl(stl_path)
     final = work / "apex_core.gcode"
     golden = os.environ.get("VS_GCODE_GOLDEN")
     golden_path = Path(golden) if golden else None
-    commands = stage_commands(work, stl_path, final, golden_path)
+    commands = stage_commands(work, prepped, final, golden_path)
     env = _env()
     t0 = time.perf_counter()
     # The slicer is the long stage. Later stages are pure Python.
@@ -76,6 +86,9 @@ def run_apex_core(
         "elapsed_s": round(time.perf_counter() - t0, 3),
         "apex_min_layer_time": env.get("APEX_MIN_LAYER_TIME", "4"),
         "binary": env.get("ORCA_SLICER_BIN", ""),
+        "preprocessed_stl": prep_meta.get("preprocessed_stl"),
+        "rotation_z_deg": prep_meta.get("rotation_z_deg"),
+        "x_center_mm": prep_meta.get("x_center_mm"),
     }
     if owned:
         stats["work_dir"] = str(work)

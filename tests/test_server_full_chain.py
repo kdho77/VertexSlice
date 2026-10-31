@@ -5,9 +5,12 @@ import hashlib
 import json
 import math
 import os
+import struct
 import sys
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
@@ -102,6 +105,27 @@ class LightEnvTest(unittest.TestCase):
         self.assertEqual(len(parts), 2)
         compile(parts[0], "h_curaD_head", "exec")
 
+    def test_box_h_cura_d_head(self):
+        src = (REPO / "tools" / "belt_pp" / "h_curaD.py").read_text(encoding="utf-8")
+        head = src.split("spec=dataclasses.replace(spec,")[0]
+        self.assertNotIn("/app", head)
+        self.assertNotIn("/workspace/pr20chk", head)
+        for needle in (
+            "SET_PRESSURE_ADVANCE ADVANCE=0.05",
+            "def strip_micro_layers",
+            "'filter_out_gap_fill':'9999'",
+            "'wall_generator':'arachne'",
+            "'min_bead_width':'50%'",
+            "'wall_transition_length':'100%'",
+            "'reduce_crossing_wall':'1'",
+            "'max_travel_detour_distance':'0'",
+            "pp_c.postprocess_C(strip_micro_layers(t),PP)",
+            '_old=\'elif l.startswith(";LAYER_CHANGE"):\\n            role = ""\\n            layer += 1\'',
+            '\'elif l.startswith(";LAYER_CHANGE"):\\n            layer += 1\'',
+            "FLY.first_layer_extrusion_y_bounds=lambda t,*a,**k:_fly(strip_micro_layers(t),*a,**k)",
+        ):
+            self.assertIn(needle, head)
+
 
 class DispatchTest(unittest.TestCase):
     def test_explicit_material_uses_chain(self):
@@ -155,6 +179,86 @@ class LockedFileTest(unittest.TestCase):
     def test_pp_d_bytes(self):
         digest = hashlib.sha256((REPO / "tools" / "belt_pp" / "pp_d.py").read_bytes()).hexdigest()
         self.assertEqual(digest, PP_D_SHA256)
+
+
+class ApexCorePrepTest(unittest.TestCase):
+    def test_belt270_before_slice(self):
+        import subprocess
+
+        from server.chains.apex_core import run_apex_core
+
+        with tempfile.TemporaryDirectory() as td:
+            work = Path(td)
+            stl = work / "raw.stl"
+            tri = struct.pack("<12fH", 0, 0, 1, 0, 0, 0, 10, 0, 1, 0, 20, 2, 0)
+            stl.write_bytes(b"\0" * 80 + struct.pack("<I", 1) + tri)
+            seen: dict = {}
+
+            def fake_run(cmd, **_kwargs):
+                name = Path(cmd[1]).name
+                if name == "slice_apexcore_g2b.py":
+                    seen["stl"] = Path(cmd[4])
+                    Path(cmd[5]).write_text("; raw\n", encoding="utf-8")
+                elif name == "topfix_apexcore.py":
+                    Path(cmd[3]).write_text("; final\n", encoding="utf-8")
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            with mock.patch("server.chains.apex_core.subprocess.run", fake_run):
+                _path, stats = run_apex_core(stl, work_dir=work / "out")
+            prepped = seen["stl"]
+            self.assertTrue(prepped.is_file())
+            self.assertNotEqual(prepped.resolve(), stl.resolve())
+            self.assertIn("belt270", prepped.name)
+            self.assertEqual(stats["rotation_z_deg"], 270)
+            self.assertEqual(stats["x_center_mm"], 140)
+
+
+class HttpProofClientTest(unittest.TestCase):
+    def test_posts_v1_slice(self):
+        import scripts.golden_chain_proof as proof
+
+        captured: dict = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(length)
+                captured["path"] = self.path
+                captured["body"] = body
+                payload = b"; gcode\n"
+                self.send_response(200)
+                self.send_header("X-Chain", "apex_core-g2b-v1")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, _fmt, *_args):
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            port = server.server_address[1]
+            with tempfile.TemporaryDirectory() as td:
+                stl = Path(td) / "in.stl"
+                stl.write_bytes(b"solid-bytes")
+                dest = Path(td) / "out.gcode"
+                chain = proof.post_slice(f"http://127.0.0.1:{port}", "apex_core", stl, dest)
+                gcode_text = dest.read_text(encoding="utf-8")
+            self.assertEqual(captured["path"], "/v1/slice")
+            self.assertIn(b'name="material"', captured["body"])
+            self.assertIn(b"apex_core", captured["body"])
+            self.assertIn(b'name="profile_id"', captured["body"])
+            self.assertIn(b"apex-v2-insole-medium", captured["body"])
+            self.assertIn(b'name="print_direction"', captured["body"])
+            self.assertIn(b"toe_first", captured["body"])
+            self.assertIn(b"solid-bytes", captured["body"])
+            self.assertEqual(gcode_text, "; gcode\n")
+            self.assertEqual(chain, "apex_core-g2b-v1")
+        finally:
+            server.shutdown()
+            server.server_close()
 
 
 class ProofMissingInputTest(unittest.TestCase):

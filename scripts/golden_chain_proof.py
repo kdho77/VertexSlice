@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Slice both production chains and golden_gate them against the LOCKED files.
+"""POST both production chains to /v1/slice and golden_gate the LOCKED files.
 
 Goldens and the input STLs are fetched, not committed.
 
@@ -20,8 +20,13 @@ from __future__ import annotations
 
 import hashlib
 import os
+import socket
+import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -59,32 +64,127 @@ def _sha(path: Path) -> str:
     return h.hexdigest()
 
 
-def _one(material: str, stl: Path, golden: Path, expect: str) -> int:
+def _multipart(stl: Path, material: str) -> tuple[bytes, str]:
+    boundary = "----vertexslicegolden"
+    chunks: list[bytes] = []
+
+    def field(name: str, value: str) -> None:
+        chunks.append(
+            (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+                f"{value}\r\n"
+            ).encode()
+        )
+
+    field("profile_id", "apex-v2-insole-medium")
+    field("material", material)
+    field("print_direction", "toe_first")
+    chunks.append(
+        (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="model"; filename="{stl.name}"\r\n'
+            f"Content-Type: application/octet-stream\r\n\r\n"
+        ).encode()
+    )
+    chunks.append(stl.read_bytes())
+    chunks.append(f"\r\n--{boundary}--\r\n".encode())
+    return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
+
+
+def post_slice(base_url: str, material: str, stl: Path, dest: Path) -> str:
+    """POST /v1/slice and write the response body. Returns the X-Chain header."""
+    body, content_type = _multipart(stl, material)
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/v1/slice",
+        data=body,
+        headers={
+            "Content-Type": content_type,
+            "X-API-Key": os.environ.get("VERTEXSLICE_API_KEY", "dev-change-me"),
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=2400) as resp:
+            dest.write_bytes(resp.read())
+            return resp.headers.get("X-Chain", "")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[-2000:]
+        raise RuntimeError(f"/v1/slice {material} HTTP {exc.code}: {detail}") from exc
+
+
+def _free_port() -> int:
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = int(sock.getsockname()[1])
+    sock.close()
+    return port
+
+
+class SliceServer:
+    """One uvicorn process. The proof posts to POST /v1/slice."""
+
+    def __init__(self) -> None:
+        self.port = _free_port()
+        env = os.environ.copy()
+        env.setdefault("APEX_MIN_LAYER_TIME", "4")
+        env.setdefault("VERTEXSLICE_API_KEY", "dev-change-me")
+        self._log = tempfile.NamedTemporaryFile(prefix="golden_http_", suffix=".log", delete=False)
+        self._proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "server.app:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(self.port),
+            ],
+            cwd=str(REPO),
+            env=env,
+            stdout=self._log,
+            stderr=subprocess.STDOUT,
+        )
+
+    def wait_ready(self, timeout_s: float = 30) -> None:
+        deadline = time.monotonic() + timeout_s
+        url = f"http://127.0.0.1:{self.port}/health"
+        while time.monotonic() < deadline:
+            if self._proc.poll() is not None:
+                self._log.flush()
+                last = Path(self._log.name).read_text(encoding="utf-8", errors="replace")[-2000:]
+                raise RuntimeError(f"uvicorn exited {self._proc.returncode}: {last}")
+            try:
+                with urllib.request.urlopen(url, timeout=1) as resp:
+                    if resp.status == 200:
+                        return
+            except (urllib.error.URLError, TimeoutError, ConnectionError):
+                time.sleep(0.1)
+        raise RuntimeError("uvicorn /health did not become ready")
+
+    def slice(self, material: str, stl: Path, dest: Path) -> str:
+        return post_slice(f"http://127.0.0.1:{self.port}", material, stl, dest)
+
+    def close(self) -> None:
+        if self._proc.poll() is None:
+            self._proc.terminate()
+            try:
+                self._proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+
+
+def _one(server: SliceServer, material: str, stl: Path, golden: Path, expect: str) -> int:
     digest = _sha(golden)
     if digest != expect:
         print(f"{material} golden sha256 {digest} != {expect}", file=sys.stderr)
         return 1
-    from server.chains import run_material_chain
-    from server.profile_registry import get_profile
-
-    profile = get_profile("apex-v2-insole-medium", material=material)
-    if profile is None:
-        print("missing profile", file=sys.stderr)
-        return 1
-    os.environ["APEX_MIN_LAYER_TIME"] = os.environ.get("APEX_MIN_LAYER_TIME", "4")
-    os.environ["VS_GCODE_GOLDEN"] = str(golden)
     with tempfile.TemporaryDirectory(prefix=f"golden_{material}_") as td:
-        gcode, stats = run_material_chain(
-            material,
-            stl,
-            profile,
-            work_dir=Path(td),
-            timeout_s=2400,
-            process_overrides=None,
-            print_direction="toe_first",
-        )
+        gcode = Path(td) / "slice.gcode"
+        chain = server.slice(material, stl, gcode)
         result = compare_paths(gcode, golden)
-    print(material, "chain", stats.get("chain"))
+    print(material, "chain", chain)
     print(format_report(result))
     return 0 if result.ok else 1
 
@@ -99,9 +199,18 @@ def main() -> int:
             file=sys.stderr,
         )
         return 2
-    rc = _one("apex_core", core[0], core[1], CORE_SHA)
-    rc |= _one("apex_light", light[0], light[1], LIGHT_SHA)
-    return rc
+    os.environ["APEX_MIN_LAYER_TIME"] = os.environ.get("APEX_MIN_LAYER_TIME", "4")
+    # check_gcode compares CONFIG_BLOCK when this is set in the server process.
+    # ApexLight ignores it. Point it at the core golden before uvicorn starts.
+    os.environ["VS_GCODE_GOLDEN"] = str(core[1])
+    server = SliceServer()
+    try:
+        server.wait_ready()
+        rc = _one(server, "apex_core", core[0], core[1], CORE_SHA)
+        rc |= _one(server, "apex_light", light[0], light[1], LIGHT_SHA)
+        return rc
+    finally:
+        server.close()
 
 
 if __name__ == "__main__":
