@@ -27,6 +27,7 @@ RUN ./build_linux.sh -u \
 
 # Slicer compile only; omit server/, validation/, tools/ from context.
 FROM orca-deps AS orca-builder
+COPY LICENSE.txt ./
 COPY deps_src/ deps_src/
 COPY src/ src/
 COPY resources/ resources/
