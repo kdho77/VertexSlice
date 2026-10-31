@@ -6163,7 +6163,12 @@ int CLI::run(int argc, char **argv)
                                     outfile = print_fff->export_gcode(outfile, gcode_result, nullptr);
                                     time_using_cache = time_using_cache + ((long long)Slic3r::Utils::get_current_time_utc() - temp_time);
                                     BOOST_LOG_TRIVIAL(info) << "export_gcode finished: time_using_cache update to " << time_using_cache << " secs.";
-                                    if (gcode_result && gcode_result->gcode_check_result.error_code) {
+                                    const std::string &machine_start_gcode =
+                                        new_print_config.opt_string("machine_start_gcode", true);
+                                    const bool apex_cura_bookend =
+                                        machine_start_gcode.find("PRINT_START") != std::string::npos;
+                                    if (gcode_result && gcode_result->gcode_check_result.error_code && !no_check &&
+                                        !apex_cura_bookend) {
                                         //found gcode error
                                         if ((gcode_result->gcode_check_result.error_code & 0b11100)>0)
                                             BOOST_LOG_TRIVIAL(error) << "plate " << index + 1 << ": found gcode in unprintable area of the printers! gcode_result->gcode_check_result.error_code = "

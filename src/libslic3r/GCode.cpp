@@ -15,6 +15,7 @@
 #include "GCode/WipeTower.hpp"
 #include "ShortestPath.hpp"
 #include "Print.hpp"
+#include "BeltTransform.hpp"
 #include "Utils.hpp"
 #include "ClipperUtils.hpp"
 #include "libslic3r.h"
@@ -2351,15 +2352,37 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     // transform shear). Subtract this base so that Y_mach starts at 0 for the first
     // object layer, matching the prime line position at the belt surface after G28 Y.
     m_belt_z_base = 0.0;
+    BeltTransform::set_runtime_y_mach_offset(0.0);
     if (m_belt_inclined_gcode) {
         for (const PrintObject* obj : print.objects()) {
-            for (const Layer* layer : obj->layers()) {
-                if (!layer->empty()) {
-                    m_belt_z_base = layer->print_z;
-                    break;
-                }
+            if (!obj->layers().empty()) {
+                // Use the first slice plane (even if empty) so gantry Y matches Cura ref
+                // when overhang-only layers precede the first outer wall.
+                m_belt_z_base = obj->layers().front()->print_z;
+                break;
             }
-            if (m_belt_z_base > 0.0) break;
+        }
+
+        // Cura ref: first-layer gantry Y≈0.066 mm. OrthoCAD scans have Z_virt_min > layer0
+        // when trafo_centered only shifts Y_virt; trim Y_mach by the keel gap.
+        double z_virt_min = std::numeric_limits<double>::max();
+        const double belt_angle_deg = print.config().belt_angle.value;
+        const double belt_angle_rad = Geometry::deg2rad(belt_angle_deg);
+        for (const PrintObject* obj : print.objects()) {
+            if (!obj->model_object())
+                continue;
+            Transform3d t = obj->trafo();
+            BoundingBoxf3 world_bbox = obj->model_object()->raw_mesh_bounding_box().transformed(t);
+            t.pretranslate(Vec3d(0, -world_bbox.min.y(), -world_bbox.min.z()));
+            Transform3d belt_forward = BeltTransform::make_forward_transform(belt_angle_deg);
+            t = belt_forward * t;
+            BoundingBoxf3 virtual_bbox = obj->model_object()->raw_mesh_bounding_box().transformed(t);
+            z_virt_min = std::min(z_virt_min, virtual_bbox.min.z());
+        }
+        if (z_virt_min < std::numeric_limits<double>::max() && belt_angle_rad > 0.0) {
+            const double layer0_virt_z = print.config().initial_layer_print_height.value / std::cos(belt_angle_rad);
+            const double y_trim        = -(z_virt_min - layer0_virt_z) / std::sqrt(2.0);
+            BeltTransform::set_runtime_y_mach_offset(y_trim);
         }
     }
 
@@ -2671,8 +2694,11 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     // Emit machine envelope limits for the Marlin firmware.
     this->print_machine_envelope(file, print, initial_extruder_id);
 
-    // Disable fan.
-    if (m_config.auxiliary_fan.value && print.config().close_fan_the_first_x_layers.get_at(initial_extruder_id)) {
+    // Disable fan (skip when Apex/Cura PRINT_START bookend owns layer-0 fan lines in machine_start_gcode).
+    const bool cura_print_start_bookend =
+        print.config().machine_start_gcode.value.find("PRINT_START") != std::string::npos;
+    if (!cura_print_start_bookend && m_config.auxiliary_fan.value &&
+        print.config().close_fan_the_first_x_layers.get_at(initial_extruder_id)) {
         file.write(m_writer.set_fan(0));
         //BBS: disable additional fan
         file.write(m_writer.set_additional_fan(0));
@@ -3036,7 +3062,10 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
     print.throw_if_canceled();
 
     // Set other general things.
-    file.write(this->preamble());
+    const bool skip_preamble_for_cura_bookend =
+        machine_start_gcode.find("PRINT_START") != std::string::npos;
+    if (!skip_preamble_for_cura_bookend)
+        file.write(this->preamble());
 
     // Calculate wiping points if needed
     DoExport::init_ooze_prevention(print, m_ooze_prevention);
@@ -5377,7 +5406,8 @@ void GCode::append_full_config(const Print &print, std::string &str)
         "printhost_cafile"sv,
         "printhost_user"sv,
         "printhost_password"sv,
-        "printhost_port"sv
+        "printhost_port"sv,
+        "avoid_crossing_wall_fallback"sv
     });
     auto is_banned = [](const std::string &key) {
         return banned_keys.find(key) != banned_keys.end();
@@ -7185,6 +7215,46 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
     // if needed, write the gcode_label_objects_end then gcode_label_objects_start
     m_writer.add_object_change_labels(gcode);
 
+    // Island hops have no inside path. Retract (when the filament has a retract length) and
+    // lift on the belt normal / Z so the straight move does not ride the wall on the surface.
+    // ApexLight sets z_hop to 0, which would skip the lift; use the 0.4 mm default for this
+    // travel only and restore it. Flag off never sets the request, so this block emits nothing.
+    double comb_hop_gcode = 0.;
+    bool   comb_lift_owned = false;
+    if (m_avoid_crossing_perimeters.consume_island_lift() && m_writer.filament() != nullptr && m_writer.get_zhop() == 0.) {
+        // Retract only when the filament has a length. ApexLight is 0; a forced retract
+        // would change the recipe. Kendon still requires a retract whenever a lift happens
+        // and the configured length is non-zero.
+        if (m_writer.filament()->retraction_length() > 0.)
+            gcode += m_writer.retract();
+        // Index the vector directly. get_at() on an empty vector returns front() and is
+        // undefined, and a reference into values does not survive a later reallocation.
+        // Do not clear() the vector afterwards: the next travel's need_wipe() calls
+        // get_at() and would read the freed buffer.
+        auto &zhop = m_writer.config.z_hop.values;
+        const size_t hop_idx = size_t(m_writer.filament()->id());
+        const size_t old_size = zhop.size();
+        if (zhop.size() <= hop_idx)
+            zhop.resize(hop_idx + 1, 0.);
+        const double saved_hop = zhop[hop_idx];
+        if (!(saved_hop > 0.))
+            zhop[hop_idx] = 0.4;
+        gcode += m_writer.eager_lift(LiftType::NormalLift);
+        zhop[hop_idx] = saved_hop;
+        // Drop a temporary tail used only so this filament id had a slot. Keep a
+        // vector that started empty: clearing it makes the next get_at() undefined.
+        if (old_size > 0 && zhop.size() != old_size)
+            zhop.resize(old_size);
+        const double lifted = m_writer.get_zhop();
+        if (lifted > 0.) {
+            comb_lift_owned = true;
+            // Belt Y-hop is hop/√2 in gcode space so Y_mach increases by z_hop and Z_mach stays put.
+            comb_hop_gcode = m_belt_inclined_gcode ? lifted / 1.41421356 : lifted;
+            // Exact marker so a lifted XY move is not counted as a surface travel in the wall band.
+            gcode += ";COMB_LIFT\n";
+        }
+    }
+
     // use G1 because we rely on paths being straight (G0 may make round paths)
     if (travel.size() >= 2) {
         // ORCA_BELT: Belt travel strategy.
@@ -7197,6 +7267,10 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
                 const auto& dest2d = this->point_to_gcode(travel.points[i]);
                 double inclined_z = compute_belt_inclined_z(dest2d, m_nominal_z);
                 Vec3d dest3d(dest2d(0), dest2d(1), inclined_z);
+                if (comb_hop_gcode != 0.) {
+                    dest3d(1) += comb_hop_gcode;
+                    dest3d(2) += comb_hop_gcode;
+                }
                 if (m_need_change_layer_lift_z) {
                     // First travel of layer: combined XYZ sets belt position
                     gcode += m_writer.travel_to_xyz(dest3d, comment);
@@ -7218,6 +7292,8 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
                 // No extra movements emitted by avoid_crossing_perimeters, simply move to the end point with z change
                 const auto& dest2d = this->point_to_gcode(travel.points.back());
                 double base_z = z == DBL_MAX ? m_nominal_z : z;
+                if (comb_hop_gcode != 0.)
+                    base_z += comb_hop_gcode;
                 Vec3d dest3d(dest2d(0), dest2d(1), base_z);
                 gcode += m_writer.travel_to_xyz(dest3d, comment, m_need_change_layer_lift_z);
                 m_need_change_layer_lift_z = false;
@@ -7229,14 +7305,14 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
                         // Lift to normal z at beginning
                         Vec3d dest3d(this->point_to_gcode(travel.points[i])(0),
                                      this->point_to_gcode(travel.points[i])(1),
-                                     m_nominal_z);
+                                     m_nominal_z + comb_hop_gcode);
                         gcode += m_writer.travel_to_xyz(dest3d, comment, m_need_change_layer_lift_z);
                         m_need_change_layer_lift_z = false;
                     } else if (z != DBL_MAX && i == travel.size() - 1) {
                         // Apply z_ratio for the very last point
                         Vec3d dest3d(this->point_to_gcode(travel.points[i])(0),
                                      this->point_to_gcode(travel.points[i])(1),
-                                     z);
+                                     z + comb_hop_gcode);
                         gcode += m_writer.travel_to_xyz(dest3d, comment);
                     } else {
                         // For all points in between, no z change
@@ -7245,6 +7321,8 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
                 }
             }
         }
+        if (comb_lift_owned)
+            gcode += m_writer.unlift();
         this->set_last_pos(travel.points.back());
     }
 
