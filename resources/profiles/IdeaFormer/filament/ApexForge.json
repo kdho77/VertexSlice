@@ -1,0 +1,29 @@
+{
+    "type": "filament",
+    "name": "ApexForge",
+    "inherits": "VERTEX_APEX_CORE_95A",
+    "from": "system",
+    "setting_id": "OGAPXFRG",
+    "instantiation": "true",
+    "compatible_printers": [
+        "Vertex Apex V2 1.0 nozzle"
+    ],
+    "filament_notes": [
+        "ApexForge — VERTEX_APEX_CORE_95A with nozzle 245 C (first layer too), bed off."
+    ],
+    "filament_settings_id": [
+        "ApexForge"
+    ],
+    "nozzle_temperature": [
+        "245"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "245"
+    ],
+    "nozzle_temperature_range_low": [
+        "240"
+    ],
+    "nozzle_temperature_range_high": [
+        "250"
+    ]
+}

@@ -5,6 +5,9 @@
 #include "../ExPolygon.hpp"
 #include "../EdgeGrid.hpp"
 
+#include <string>
+#include <vector>
+
 namespace Slic3r {
 
 // Forward declarations.
@@ -33,6 +36,56 @@ public:
     }
 
     Polyline    travel_to(const GCode& gcodegen, const Point& point, bool* could_be_wipe_disabled);
+
+    // One travel that could not stay inside the inner wall, or a routed travel whose
+    // detour exceeded the 20 mm cap (routed == true, reason == "cap").
+    // lifted: the straight XY move is kept and the caller retracts and lifts.
+    struct CombLogEntry {
+        std::string reason;
+        int         layer_id  = -1;
+        double      from_x    = 0.;
+        double      from_y    = 0.;
+        double      to_x      = 0.;
+        double      to_y      = 0.;
+        double      detour_mm = 0.;
+        bool        routed    = false;
+        bool        lifted    = false;
+    };
+
+    ~AvoidCrossingPerimeters();
+
+    // Innermost loops shrunk by inner_shrink, with the Arachne/open-path outline fallback
+    // and the same top-surface cut-out as get_boundary(). Lengths are scaled coordinates.
+    static ExPolygons build_comb_region(const ExPolygons &innermost_loops,
+                                        double            inner_shrink_scaled,
+                                        const ExPolygons &open_fallback_lslices,
+                                        double            outline_shrink_scaled,
+                                        bool              fill_open_islands,
+                                        const ExPolygons &top_surfaces,
+                                        double            top_cut_shrink_scaled);
+
+    // Flag off: returns `original` unchanged and writes nothing.
+    // Flag on: route inside `comb` when the path lies in `safe` (the outer wall minus the
+    // 0.5 mm band). A path that misses that region, or has no inside route, sets
+    // island_lift_pending() and keeps the straight XY move so the caller can retract and lift.
+    // A detour over 20 mm is used only when it stays inside `safe`; otherwise it is lifted and
+    // reported. `safe == nullptr` checks against `comb`. `layer` may be null.
+    Polyline apply_comb_fallback(bool              enabled,
+                                 const ExPolygons &comb,
+                                 const Polyline   &original,
+                                 int               layer_id,
+                                 const Layer      *layer,
+                                 const ExPolygons *safe = nullptr);
+
+    const std::vector<CombLogEntry> &comb_log() const { return m_comb_log; }
+    bool island_lift_pending() const { return m_island_lift; }
+    // Returns true once when the last fallback asked for a retract + lift, then clears the flag.
+    bool consume_island_lift()
+    {
+        const bool lift = m_island_lift;
+        m_island_lift   = false;
+        return lift;
+    }
 
     struct Boundary {
         // Collection of boundaries used for detection of crossing perimeters for travels
@@ -68,6 +121,23 @@ private:
     Boundary m_internal;
     // Store all needed data for travels outside object
     Boundary m_external;
+
+    // Innermost-wall region used by the combing fallback. Built lazily on the first
+    // flagged travel of the layer. Empty when the flag is off.
+    ExPolygons               m_comb;
+    // Outer wall inset by 0.5 mm. Routed travels must lie in here. Empty until the flag is on.
+    ExPolygons               m_safe;
+    std::vector<BoundingBox> m_comb_bboxes;
+    EdgeGrid::Grid           m_grid_comb;
+    Boundary                 m_comb_boundary;
+    bool                     m_comb_init { false };
+    std::vector<CombLogEntry> m_comb_log;
+    bool                     m_comb_summary_emitted { false };
+    // Straight XY move between disconnected comb islands. Caller emits retract + lift.
+    bool                     m_island_lift { false };
+
+    void ensure_comb(const Layer &layer);
+    void emit_comb_log(const CombLogEntry &entry);
 };
 
 } // namespace Slic3r

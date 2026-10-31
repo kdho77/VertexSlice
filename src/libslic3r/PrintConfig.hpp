@@ -110,6 +110,13 @@ enum class WallSequence {
     Count,
 };
 
+// Vertex Apex insole belt advance (OrthoCAD preprocess uses same values).
+enum class ApexInsolePrintDirection {
+    ToeFirst,
+    HeelFirst,
+    Count,
+};
+
 // Orca
 enum class WallDirection
 {
@@ -1105,6 +1112,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat, inner_wall_speed))
     // Total number of perimeters.
     ((ConfigOptionInt, wall_loops))
+    ((ConfigOptionEnum<ApexInsolePrintDirection>, print_direction))
     ((ConfigOptionBool, alternate_extra_wall))
     ((ConfigOptionFloat, minimum_sparse_infill_area))
     ((ConfigOptionInt, solid_infill_filament))
@@ -1395,6 +1403,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     //BBS
     ((ConfigOptionInts,               additional_cooling_fan_speed))
     ((ConfigOptionBool,               reduce_crossing_wall))
+    ((ConfigOptionBool,               avoid_crossing_wall_fallback))
     ((ConfigOptionFloatOrPercent,     max_travel_detour_distance))
     ((ConfigOptionPoints,             printable_area))
     ((ConfigOptionPointsGroups,       extruder_printable_area))
