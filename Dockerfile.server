@@ -2,9 +2,6 @@
 # Build: docker build -f Dockerfile.server -t vertexslice-server:proof .
 # Proof: docker run --rm vertexslice-server:proof /app/scripts/docker_headless_slice_proof.sh
 
-# Published image from the GHCR headless slicer workflow — cache/import anchor only.
-FROM ghcr.io/kdho77/vertexslice-server:headless AS ghcr_headless_prebuilt
-
 FROM ubuntu:24.04 AS orca-base
 
 ENV DEBIAN_FRONTEND=noninteractive
