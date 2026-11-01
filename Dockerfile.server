@@ -1,6 +1,8 @@
 # VertexSlice headless slicer + HTTP API (Railway-ready). Not deployed by this repo.
 # Build: docker build -f Dockerfile.server -t vertexslice-server:proof .
 # Proof: docker run --rm vertexslice-server:proof /app/scripts/docker_headless_slice_proof.sh
+# One orca-slicer, built from this tree. Bundled qhull 7.2.0 headers must win
+# over any qhull 8.0.1 headers; do not install a second slicer binary.
 
 FROM ubuntu:24.04 AS orca-builder
 
@@ -33,6 +35,7 @@ ENV LIBGL_ALWAYS_SOFTWARE=1
 ENV ORCA_RESOURCES=/app/resources
 ENV ORCA_SLICER_BIN=/app/bin/orca-slicer
 ENV VERTEXSLICE_API_KEY=dev-change-me
+ENV APEX_MIN_LAYER_TIME=4
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv time \
@@ -45,6 +48,10 @@ COPY --from=orca-builder /src/build/src/Release/orca-slicer /app/bin/orca-slicer
 COPY --from=orca-builder /src/resources /app/resources
 COPY server /app/server
 COPY validation /app/validation
+COPY tools /app/tools
+COPY scripts/g2b_heelmod /app/scripts/g2b_heelmod
+COPY scripts/golden_gate.py /app/scripts/golden_gate.py
+COPY scripts/golden_chain_proof.py /app/scripts/golden_chain_proof.py
 COPY scripts/docker_headless_slice_proof.sh /app/scripts/docker_headless_slice_proof.sh
 
 RUN chmod +x /app/bin/orca-slicer /app/scripts/docker_headless_slice_proof.sh \

@@ -147,8 +147,12 @@ if(UNIX)
 endif(UNIX)
 ##################################################
 
-# LIBDIR is defined in the main xs CMake file:
-target_include_directories(${qhull_STATIC} SYSTEM BEFORE PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# LIBDIR is defined in the main xs CMake file.
+# Not SYSTEM. -isystem is searched after every -I, so a SYSTEM include loses to
+# the qhull 8.0.1 headers the deps prefix installs with -I. libslic3r then
+# compiles QhullQh from 8.0.1 while this target still links bundled 7.2.0.
+# BEFORE keeps this 7.2.0 src/ directory ahead of those -I paths.
+target_include_directories(${qhull_STATIC} BEFORE PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(qhull INTERFACE ${qhull_STATIC})
 
 endif()
