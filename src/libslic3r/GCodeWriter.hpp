@@ -111,8 +111,9 @@ public:
     // To be called by the main thread. It always emits the G-code, it does not remember the previous state.
     // Keeping the state is left to the CoolingBuffer, which runs asynchronously on another thread.
     std::string set_fan(unsigned int speed) const;
-    //BBS: set additional fan speed for BBS machine only
-    static std::string set_additional_fan(unsigned int speed);
+    // Auxiliary / chamber fan (Bambu: P2; Marlin Apex/Cura ref: P1).
+    static std::string set_additional_fan(GCodeFlavor gcode_flavor, unsigned int speed);
+    std::string        set_additional_fan(unsigned int speed) const;
     static std::string set_exhaust_fan(int speed,bool add_eol);
     //BBS
     void set_object_start_str(std::string start_string) { m_gcode_label_objects_start = start_string; }

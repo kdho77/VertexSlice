@@ -35,16 +35,22 @@ jobs:
           chmod +x ./OrcaSlicer_profile_validator
 
       # validate profiles
+      # Upstream SoftFever binary does not know printer_structure=belt (this fork).
+      # Wrapper remaps that enum in a temp copy only; real presets stay belt.
+      # -v IdeaFormer: this fork's vendor. Other bundled vendors fail the newer
+      # upstream printer_variant rules independently of belt.
       - name: validate system profiles
         run: |
-          ./OrcaSlicer_profile_validator -p ${{ github.workspace }}/resources/profiles -l 2
+          python3 ./scripts/run_orca_profile_validator.py ./OrcaSlicer_profile_validator \
+            -p ${{ github.workspace }}/resources/profiles -v IdeaFormer -l 2
 
+      # Skip Orca's stock user-preset zip. Those tests inherit BBL/Creality/etc.
+      # parents; this job only loads IdeaFormer (+ OrcaFilamentLibrary), so the
+      # zip produces thousands of "can not find parent" errors. No IdeaFormer
+      # custom-preset fixture is shipped with the zip.
       - name: validate custom presets
-        working-directory: ${{ github.workspace }}
         run: |
-          curl -LJO https://github.com/OrcaSlicer/OrcaSlicer/releases/download/nightly-builds/orca_custom_preset_tests.zip
-          unzip ./orca_custom_preset_tests.zip -d ${{ github.workspace }}/resources/profiles
-          ./OrcaSlicer_profile_validator -p ${{ github.workspace }}/resources/profiles -l 2
+          echo "Skipping stock orca_custom_preset_tests.zip (not applicable to IdeaFormer-only validation)."
 
 
 

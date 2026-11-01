@@ -245,6 +245,12 @@ static t_config_enum_values s_keys_map_WallSequence {
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WallSequence)
 
+static t_config_enum_values s_keys_map_ApexInsolePrintDirection{
+    {"toe_first", int(ApexInsolePrintDirection::ToeFirst)},
+    {"heel_first", int(ApexInsolePrintDirection::HeelFirst)},
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(ApexInsolePrintDirection)
+
 //Orca
 static t_config_enum_values s_keys_map_WallDirection{
     { "auto", int(WallDirection::Auto) },
@@ -622,6 +628,16 @@ PrintConfigDef::PrintConfigDef()
     assign_printer_technology_to_unknown(this->options, ptFFF);
     this->init_sla_params();
     assign_printer_technology_to_unknown(this->options, ptSLA);
+
+    // Appended last so existing serialization ordinals stay stable.
+    ConfigOptionDef *def = this->add("avoid_crossing_wall_fallback", coBool);
+    def->label = L("Avoid crossing walls - inside fallback");
+    def->category = L("Quality");
+    def->tooltip = L("After avoid-crossing-walls routing, keep every travel inside the inner wall. "
+                     "If no inside path exists the original travel is kept and logged.");
+    def->mode = comAdvanced;
+    def->printer_technology = ptFFF;
+    def->set_default_value(new ConfigOptionBool(false));
 }
 
 void PrintConfigDef::init_common_params()
@@ -4564,7 +4580,20 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->max = 1000;
     def->set_default_value(new ConfigOptionInt(2));
-    
+
+    def = this->add("print_direction", coEnum);
+    def->label = L("Print direction");
+    def->category = L("Strength");
+    def->tooltip = L("Which end of the insole enters the belt first on Vertex Apex belt printers. "
+                      "Toe first rotates the model 180° about Z during OrthoCAD placement (default).");
+    def->enum_keys_map = &ConfigOptionEnum<ApexInsolePrintDirection>::get_enum_values();
+    def->enum_values.push_back("toe_first");
+    def->enum_values.push_back("heel_first");
+    def->enum_labels.push_back(L("Toe first"));
+    def->enum_labels.push_back(L("Heel first"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<ApexInsolePrintDirection>(ApexInsolePrintDirection::ToeFirst));
+
     def = this->add("alternate_extra_wall", coBool);
     def->label = L("Alternate extra wall");
     def->category = L("Strength");

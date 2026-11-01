@@ -1,0 +1,89 @@
+{
+    "type": "filament",
+    "name": "VERTEX_APEX_CORE_95A @base",
+    "inherits": "fdm_filament_tpu",
+    "from": "system",
+    "filament_id": "OGVTX95A",
+    "instantiation": "false",
+    "filament_type": [
+        "TPU"
+    ],
+    "filament_vendor": [
+        "Vertex"
+    ],
+    "filament_diameter": [
+        "1.75"
+    ],
+    "filament_density": [
+        "1.20"
+    ],
+    "filament_flow_ratio": [
+        "1.03"
+    ],
+    "filament_max_volumetric_speed": [
+        "35"
+    ],
+    "nozzle_temperature": [
+        "225"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "225"
+    ],
+    "nozzle_temperature_range_low": [
+        "220"
+    ],
+    "nozzle_temperature_range_high": [
+        "230"
+    ],
+    "hot_plate_temp": [
+        "0"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "0"
+    ],
+    "cool_plate_temp": [
+        "0"
+    ],
+    "cool_plate_temp_initial_layer": [
+        "0"
+    ],
+    "textured_plate_temp": [
+        "0"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "0"
+    ],
+    "eng_plate_temp": [
+        "0"
+    ],
+    "eng_plate_temp_initial_layer": [
+        "0"
+    ],
+    "fan_min_speed": [
+        "50"
+    ],
+    "fan_max_speed": [
+        "50"
+    ],
+    "additional_cooling_fan_speed": [
+        "25"
+    ],
+    "close_fan_the_first_x_layers": [
+        "0"
+    ],
+    "full_fan_speed_layer": [
+        "1"
+    ],
+    "filament_retraction_length": [
+        "1.5"
+    ],
+    "filament_retraction_speed": [
+        "30"
+    ],
+    "filament_deretraction_speed": [
+        "30"
+    ],
+    "filament_z_hop": [
+        "0"
+    ]
+}

@@ -9,6 +9,11 @@
 #ifndef QHULLQH_H
 #define QHULLQH_H
 
+// Bundled qhull C++ interface (7.2.0). libslic3r static_asserts this so the
+// qhull 8.0.1 headers from the deps prefix cannot be the ones that are included.
+#define QHULL_CPP_VERSION 70200
+extern "C" void qhull_qh_abi_v7_2_0();
+
 #include "libqhull_r/qhull_ra.h"
 
 #include <string>
