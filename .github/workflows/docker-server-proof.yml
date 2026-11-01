@@ -38,7 +38,7 @@ jobs:
   docker_proof:
     name: Build image and run slice proof
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -47,6 +47,11 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker system prune -af || true
 
       - name: Build server image (proof runs in Dockerfile RUN)
         uses: docker/build-push-action@v6
@@ -58,6 +63,20 @@ jobs:
           push: false
           cache-from: type=gha,scope=vertexslice-server-headless
           cache-to: type=gha,mode=max,scope=vertexslice-server-headless
+
+      - name: Extract orca-slicer from image
+        run: |
+          cid=$(docker create vertexslice-server:proof)
+          docker cp "$cid:/app/bin/orca-slicer" ./orca-slicer
+          docker rm "$cid"
+          sha256sum orca-slicer | tee orca-slicer.sha256
+
+      - name: Upload orca-slicer binary
+        uses: actions/upload-artifact@v5
+        with:
+          name: orca-slicer-${{ github.sha }}
+          path: orca-slicer
+          retention-days: 7
 
       - name: Re-run proof script (capture JSON for logs)
         run: |
