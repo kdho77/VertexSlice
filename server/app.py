@@ -12,13 +12,15 @@ from fastapi.responses import PlainTextResponse
 
 from server.profile_registry import (
     DEFAULT_MATERIAL_ID,
+    applied_infill_density,
     get_profile,
     list_materials,
     list_profiles,
     resolve_material,
 )
-from server.slice_engine import slice_stl
+from server.slice_engine import SliceTimeoutError, slice_stl
 from server.slice_overrides import parse_slice_overrides
+from validation.apex_insole_densities import KENDON_INFILL_DENSITY_PRESETS
 from validation.apex_insole_tunables import (
     DEFAULT_PRINT_DIRECTION,
     DEFAULT_WALL_LOOPS,
@@ -29,6 +31,10 @@ from validation.apex_insole_tunables import (
     WALL_LOOPS_MIN,
     validate_print_direction,
 )
+
+# Railway's edge closed /v1/slice at 270s (HTTP 499) on deployment 2f4c2050.
+# Stop early enough to return this error on the still-open connection.
+SLICE_GATEWAY_TIMEOUT_S = 260
 
 API_KEY = os.environ.get("VERTEXSLICE_API_KEY", "dev-change-me")
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
@@ -81,11 +87,11 @@ def profiles(_: None = Depends(require_api_key)):
                 "max": INFILL_DENSITY_PCT_MAX,
                 "user_modifiable": True,
                 "hardness_preset_defaults": {
-                    "extra_soft": 14,
-                    "soft": 20,
-                    "medium": 26,
-                    "hard": 32,
-                    "extra_hard": 38,
+                    "extra_soft": KENDON_INFILL_DENSITY_PRESETS["Extra Soft"],
+                    "soft": KENDON_INFILL_DENSITY_PRESETS["Soft"],
+                    "medium": KENDON_INFILL_DENSITY_PRESETS["Medium"],
+                    "hard": KENDON_INFILL_DENSITY_PRESETS["Hard"],
+                    "extra_hard": KENDON_INFILL_DENSITY_PRESETS["Extra Hard"],
                 },
             },
             "print_direction": {
@@ -147,20 +153,25 @@ async def slice_endpoint(
         try:
             overrides = parse_slice_overrides(wall_loops, infill_density, print_direction)
             overrides["print_direction"] = validate_print_direction(print_direction)
+            overrides["sparse_infill_density"] = applied_infill_density(profile.profile_id, infill_density)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if "wall_loops" not in overrides and material_spec.default_wall_loops is not None:
             overrides["wall_loops"] = material_spec.default_wall_loops
 
-        gcode_path, stats = slice_stl(
-            dest,
-            profile,
-            work_dir=tmpdir / "out",
-            process_overrides=overrides,
-            belt_insole_place=belt_insole_place,
-            print_direction=overrides.get("print_direction"),
-            material=material_spec.material_id,
-        )
+        try:
+            gcode_path, stats = slice_stl(
+                dest,
+                profile,
+                work_dir=tmpdir / "out",
+                timeout_s=SLICE_GATEWAY_TIMEOUT_S,
+                process_overrides=overrides,
+                belt_insole_place=belt_insole_place,
+                print_direction=overrides.get("print_direction"),
+                material=material_spec.material_id,
+            )
+        except SliceTimeoutError as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
         headers = {
             "X-Slice-Seconds": str(stats.get("elapsed_s", "")),
             "X-Peak-RSS-KB": str(stats.get("peak_rss_kb") or ""),

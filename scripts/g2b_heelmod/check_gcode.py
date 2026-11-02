@@ -35,6 +35,11 @@ def _setting(block: list[str], key: str) -> str | None:
     return None
 
 
+def _is_infill_density_line(line: str) -> bool:
+    body = line[1:].strip() if line.startswith(";") else line.strip()
+    return body.split("=", 1)[0].strip() == "sparse_infill_density"
+
+
 def check(text: str, golden_text: str | None = None) -> None:
     block = config_block(text)
     if not block:
@@ -50,14 +55,18 @@ def check(text: str, golden_text: str | None = None) -> None:
         )
     if golden_text is not None:
         golden_block = config_block(golden_text)
-        if block != golden_block:
-            for i, (left, right) in enumerate(zip(block, golden_block)):
-                if left != right:
-                    raise SystemExit(
-                        f"check_gcode: CONFIG_BLOCK line {i + 1} differs: {left!r} != {right!r}"
-                    )
+        if len(block) != len(golden_block):
             raise SystemExit(
                 f"check_gcode: CONFIG_BLOCK length {len(block)} != golden {len(golden_block)}"
+            )
+        for i, (left, right) in enumerate(zip(block, golden_block)):
+            if left == right:
+                continue
+            # Hardness may change this one key. Every other golden key must match.
+            if _is_infill_density_line(left) and _is_infill_density_line(right):
+                continue
+            raise SystemExit(
+                f"check_gcode: CONFIG_BLOCK line {i + 1} differs: {left!r} != {right!r}"
             )
 
 

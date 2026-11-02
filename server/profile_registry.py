@@ -125,17 +125,17 @@ _REGISTRY: dict[str, SliceProfile] = {
     "apex-v2-insole-95a": _entry(
         "apex-v2-insole-95a",
         "0.42mm TPU Insole @Vertex Apex V2.json",
-        "Kendon Soft 20% — VERTEX_APEX_CORE_95A (Cura-validated baseline)",
+        "Kendon Soft 22% — VERTEX_APEX_CORE_95A (Cura-validated baseline)",
     ),
     "apex-v2-insole-soft": _entry(
         "apex-v2-insole-soft",
         "0.42mm TPU Insole @Vertex Apex V2.json",
-        "Kendon Soft 20% — VERTEX_APEX_CORE_95A",
+        "Kendon Soft 22% — VERTEX_APEX_CORE_95A",
     ),
     "apex-v2-insole-extra-soft": _entry(
         "apex-v2-insole-extra-soft",
         "0.42mm TPU Insole Extra Soft @Vertex Apex V2.json",
-        "Kendon Extra Soft 14% — VERTEX_APEX_CORE_95A",
+        "Kendon Extra Soft 16% — VERTEX_APEX_CORE_95A",
     ),
     "apex-v2-insole-medium": _entry(
         "apex-v2-insole-medium",
@@ -179,6 +179,24 @@ def list_materials() -> list[dict]:
     ]
 
 
+def default_infill_percent(profile_id: str) -> int:
+    """Gyroid sparse infill for a hardness profile. Unknown ids use Soft."""
+    return _PROFILE_DEFAULT_INFILL_PCT.get(
+        profile_id.strip().lower(), KENDON_INFILL_DENSITY_PRESETS["Soft"]
+    )
+
+
+def applied_infill_density(profile_id: str, requested: str | float | int | None) -> str:
+    """Explicit infill wins. Otherwise the hardness preset (Extra Soft 16 … Extra Hard 38)."""
+    from server.slice_overrides import parse_slice_overrides
+    from validation.apex_insole_tunables import format_infill_density
+
+    parsed = parse_slice_overrides(None, requested, None)
+    if "sparse_infill_density" in parsed:
+        return parsed["sparse_infill_density"]
+    return format_infill_density(default_infill_percent(profile_id))
+
+
 def get_profile(profile_id: str, material: str | None = None) -> SliceProfile | None:
     p = _REGISTRY.get(profile_id.strip().lower())
     if p is None:
@@ -205,9 +223,7 @@ def list_profiles() -> list[dict]:
             "filament": str(p.filament.relative_to(REPO_ROOT)),
             "defaults": {
                 "wall_loops": DEFAULT_WALL_LOOPS,
-                "infill_density_percent": _PROFILE_DEFAULT_INFILL_PCT.get(
-                    p.profile_id, KENDON_INFILL_DENSITY_PRESETS["Soft"]
-                ),
+                "infill_density_percent": default_infill_percent(p.profile_id),
                 "print_direction": DEFAULT_PRINT_DIRECTION,
             },
             "user_modifiable": ["wall_loops", "infill_density_percent", "print_direction"],

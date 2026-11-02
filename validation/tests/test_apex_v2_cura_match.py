@@ -102,7 +102,7 @@ def test_flattened_preset_matches_ref() -> list[str]:
         "travel_speed": ("200", ref.travel_mm_s),
         "wall_loops": ("1", ref.wall_loops_owner),
         "infill_direction": ("0", ref.infill_direction_deg),
-        "sparse_infill_density": ("20%", ref.infill_density_percent),
+        "sparse_infill_density": ("22%", ref.infill_density_percent),
         "sparse_infill_pattern": (KENDON_DEFAULT_SPARSE_INFILL_PATTERN, KENDON_DEFAULT_SPARSE_INFILL_PATTERN),
     }
     for key, (exp, _) in checks.items():

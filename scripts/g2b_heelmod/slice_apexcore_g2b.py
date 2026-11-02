@@ -182,6 +182,13 @@ def prepare(work: Path, material: str) -> tuple[dict, dict, dict, float]:
 
     _write_setting(filament, "slow_down_layer_time", min_layer)
     _write_setting(process, "slow_down_layer_time", min_layer)
+    # Hardness changes this key only, after the locked-profile check.
+    raw_infill = os.environ.get("VS_SPARSE_INFILL_DENSITY", "").strip()
+    if raw_infill:
+        pct = int(round(float(raw_infill.rstrip("%"))))
+        _write_setting(process, "sparse_infill_density", f"{pct}%")
+        if _scalar(process.get("sparse_infill_pattern")) != "gyroid":
+            raise SystemExit(f"sparse infill pattern {process.get('sparse_infill_pattern')!r}")
     return machine, process, filament, y_offset
 
 

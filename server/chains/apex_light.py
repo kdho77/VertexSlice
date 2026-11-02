@@ -86,16 +86,29 @@ def run_apex_light(
     if process_overrides and process_overrides.get("wall_loops") is not None:
         walls = int(process_overrides["wall_loops"])
     env = golden_env(stl_path, print_direction=print_direction, wall_loops=walls)
+    density = (process_overrides or {}).get("sparse_infill_density")
+    if density is not None and str(density).strip() != "":
+        env["VS_SPARSE_INFILL_DENSITY"] = str(density)
     t0 = time.perf_counter()
-    proc = subprocess.run(
-        [sys.executable, str(H_CURAE), str(out)],
-        capture_output=True,
-        text=True,
-        timeout=max(timeout_s, 2400),
-        env=env,
-        cwd=str(REPO),
-        errors="replace",
-    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(H_CURAE), str(out)],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            env=env,
+            cwd=str(REPO),
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired as exc:
+        from server.slice_engine import SliceTimeoutError
+
+        raise SliceTimeoutError(
+            f"Slice exceeded {timeout_s}s and was stopped before the 270s proxy cutoff. "
+            "ApexLight right-foot requests were still inside the slicer when that cutoff "
+            "closed the connection (HTTP 499), so the client got no G-code. "
+            "No G-code was produced."
+        ) from exc
     if proc.returncode != 0:
         tail = (proc.stdout + proc.stderr)[-4000:]
         raise RuntimeError(f"apex_light h_curaE failed: {tail}")

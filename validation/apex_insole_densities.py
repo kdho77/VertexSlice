@@ -5,8 +5,8 @@ from __future__ import annotations
 KENDON_DEFAULT_SPARSE_INFILL_PATTERN = "gyroid"
 
 KENDON_INFILL_DENSITY_PRESETS: dict[str, int] = {
-    "Extra Soft": 14,
-    "Soft": 20,
+    "Extra Soft": 16,
+    "Soft": 22,
     "Medium": 26,
     "Hard": 32,
     "Extra Hard": 38,

@@ -21,7 +21,12 @@ def run_material_chain(
     if material == "apex_core":
         from server.chains.apex_core import run_apex_core
 
-        return run_apex_core(stl_path, work_dir=work_dir, timeout_s=timeout_s)
+        return run_apex_core(
+            stl_path,
+            work_dir=work_dir,
+            timeout_s=timeout_s,
+            process_overrides=process_overrides,
+        )
     if material == "apex_light":
         from server.chains.apex_light import run_apex_light
 
