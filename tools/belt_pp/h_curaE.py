@@ -63,7 +63,9 @@ else:
     PR._MATERIALS['apex_core']=spec
     prof=PR.get_profile('apex-v2-insole-medium',material='apex_core')
 DIR=os.environ.get('VS_DIR','toe_first')
-ov=parse_slice_overrides(None,'26',DIR); ov['print_direction']=DIR; ov['wall_loops']=1 if os.environ.get('VS_DBASE')=='1' else int(os.environ.get('VS_WALLS') or 3)
+# Hardness is this one key. Unset keeps the locked medium 26% golden.
+_infill=os.environ.get('VS_SPARSE_INFILL_DENSITY') or '26'
+ov=parse_slice_overrides(None,_infill,DIR); ov['print_direction']=DIR; ov['wall_loops']=1 if os.environ.get('VS_DBASE')=='1' else int(os.environ.get('VS_WALLS') or 3)
 td=Path(tempfile.mkdtemp())
 g,st=slice_stl(Path(os.environ['VS_STL']),prof,work_dir=td/'out',process_overrides=ov,belt_insole_place=True,print_direction=DIR)
 shutil.copy(g,out); print(json.dumps({k:st.get(k) for k in ['elapsed_s','belt_y_mach_offset_mm','initial_layer_print_height_mm','layer_height_mm','target_first_layer_y_mm']}))

@@ -84,6 +84,23 @@ class CheckGcodeTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             check_gcode.check(_block(layer_time="4"), _block(layer_time="8"))
 
+    def test_config_block_allows_only_infill_density(self):
+        golden = _block() + "; sparse_infill_density = 26%\n"
+        # _block already closed the config. Build both blocks directly.
+        def block(density: str, extra: str = "") -> str:
+            return (
+                "; CONFIG_BLOCK_START\n"
+                "; print_direction = toe_first\n"
+                "; slow_down_layer_time = 4\n"
+                f"; sparse_infill_density = {density}\n"
+                f"{extra}"
+                "; CONFIG_BLOCK_END\n"
+            )
+
+        check_gcode.check(block("22%"), block("26%"))
+        with self.assertRaises(SystemExit):
+            check_gcode.check(block("22%", "; layer_height = 0.42\n"), block("26%"))
+
 
 class LightEnvTest(unittest.TestCase):
     def test_golden_defaults(self):

@@ -14,6 +14,10 @@ sys.path.insert(0, str(REPO_ROOT / "validation"))
 from orca_profile_flatten import flatten_profile  # noqa: E402
 
 from server.profile_registry import SliceProfile
+
+
+class SliceTimeoutError(RuntimeError):
+    """The slice was stopped so the client can hear about it before the edge proxy drops the connection."""
 from server.slice_overrides import apply_json_overrides, apply_machine_overrides, apply_process_overrides
 from validation.stl_bed_fit import bounds_after_z_rotation  # noqa: E402
 from validation.stl_preprocess import prepare_belt_stl, prepare_orthocad_insole_stl  # noqa: E402

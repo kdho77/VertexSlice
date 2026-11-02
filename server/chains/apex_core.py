@@ -52,6 +52,7 @@ def run_apex_core(
     stl_path: Path,
     work_dir: Path | None = None,
     timeout_s: int = 2400,
+    process_overrides: dict | None = None,
 ) -> tuple[Path, dict]:
     stl_path = Path(stl_path)
     owned = work_dir is None
@@ -63,19 +64,34 @@ def run_apex_core(
     golden_path = Path(golden) if golden else None
     commands = stage_commands(work, prepped, final, golden_path)
     env = _env()
+    density = (process_overrides or {}).get("sparse_infill_density")
+    if density is not None and str(density).strip() != "":
+        # One key. slice_apexcore_g2b applies it after the locked-profile check.
+        env["VS_SPARSE_INFILL_DENSITY"] = str(density)
     t0 = time.perf_counter()
     # The slicer is the long stage. Later stages are pure Python.
-    timeouts = [max(timeout_s, 2400), 120, 120, 120, 60]
+    # Caller timeout is honored (the HTTP handler stays under the 270s proxy cutoff).
+    timeouts = [timeout_s, 120, 120, 120, 60]
     for cmd, limit in zip(commands, timeouts):
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=limit,
-            env=env,
-            cwd=str(REPO),
-            errors="replace",
-        )
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=limit,
+                env=env,
+                cwd=str(REPO),
+                errors="replace",
+            )
+        except subprocess.TimeoutExpired as exc:
+            from server.slice_engine import SliceTimeoutError
+
+            raise SliceTimeoutError(
+                f"Slice exceeded {limit}s and was stopped before the 270s proxy cutoff. "
+                "ApexLight right-foot requests were still inside the slicer when that cutoff "
+                "closed the connection (HTTP 499), so the client got no G-code. "
+                "No G-code was produced."
+            ) from exc
         if proc.returncode != 0:
             tail = (proc.stdout + proc.stderr)[-4000:]
             raise RuntimeError(f"apex_core stage failed ({Path(cmd[1]).name}): {tail}")
