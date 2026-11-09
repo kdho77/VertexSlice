@@ -320,5 +320,257 @@ class ChainPassThroughTest(unittest.TestCase):
 import unittest.mock  # noqa: E402
 
 
+# Absolute print speeds the Core g2b profile sets, and the 0.8× Bounce values.
+CORE_PRINT_SPEEDS = {
+    "outer_wall_speed": "26",
+    "inner_wall_speed": "42",
+    "sparse_infill_speed": "26",
+    "internal_solid_infill_speed": "26",
+    "top_surface_speed": "26",
+    "initial_layer_speed": "10",
+    "initial_layer_infill_speed": "60",
+    "gap_infill_speed": "26",
+    "bridge_speed": "25",
+    "ironing_speed": "20",
+    "skirt_speed": "50",
+    "support_speed": "40",
+    "support_interface_speed": "80",
+}
+BOUNCE_PRINT_SPEEDS = {
+    "outer_wall_speed": "20.8",
+    "inner_wall_speed": "33.6",
+    "sparse_infill_speed": "20.8",
+    "internal_solid_infill_speed": "20.8",
+    "top_surface_speed": "20.8",
+    "initial_layer_speed": "8",
+    "initial_layer_infill_speed": "48",
+    "gap_infill_speed": "20.8",
+    "bridge_speed": "20",
+    "ironing_speed": "16",
+    "skirt_speed": "40",
+    "support_speed": "32",
+    "support_interface_speed": "64",
+}
+# Left alone: travel, percentage speeds, accel, retract, fan, flow, line width.
+UNSCALED = {
+    "travel_speed": "212",
+    "travel_speed_z": "0",
+    "initial_layer_travel_speed": "100%",
+    "internal_bridge_speed": "150%",
+    "small_perimeter_speed": "50%",
+    "scarf_joint_speed": "100%",
+    "wipe_speed": "60%",
+    "overhang_1_4_speed": "0",
+    "overhang_4_4_speed": "0",
+    "default_acceleration": "8000",
+    "outer_wall_acceleration": "8000",
+    "sparse_infill_acceleration": "8000",
+    "travel_acceleration": "10000",
+    "bridge_acceleration": "50%",
+    "retraction_speed": "30",
+    "deretraction_speed": "30",
+    "filament_retraction_speed": "30",
+    "filament_deretraction_speed": "30",
+    "fan_min_speed": "50",
+    "fan_max_speed": "50",
+    "additional_cooling_fan_speed": "25",
+    "slow_down_min_speed": "10",
+    "outer_wall_flow_ratio": "1.0142",
+    "sparse_infill_flow_ratio": "1.0138",
+    "line_width": "1",
+    "initial_layer_line_width": "1",
+    "outer_wall_line_width": "1",
+    "inner_wall_line_width": "1",
+    "sparse_infill_line_width": "1",
+    "internal_solid_infill_line_width": "1",
+    "top_surface_line_width": "1",
+    "sparse_infill_pattern": "gyroid",
+    "nozzle_temperature_range_low": "220",
+    "nozzle_temperature_range_high": "230",
+}
+
+
+class BounceCloneTest(unittest.TestCase):
+    def test_hard_gyroid_and_scaled_speeds(self):
+        import slice_apexcore_g2b as core
+        from server.chains.apex_core import bounce_after_lock
+        from apex_material_temps import render_expected_start_gcode
+
+        saved = {
+            "VS_SPARSE_INFILL_DENSITY": os.environ.get("VS_SPARSE_INFILL_DENSITY"),
+            "VS_AFTER_LOCK_JSON": os.environ.get("VS_AFTER_LOCK_JSON"),
+        }
+        try:
+            os.environ["VS_SPARSE_INFILL_DENSITY"] = "32%"
+            os.environ.pop("VS_AFTER_LOCK_JSON", None)
+            with tempfile.TemporaryDirectory() as td:
+                core_m, core_p, core_f, _ = core.prepare(Path(td), "core")
+            core_snap = _snapshot(core_m, core_p, core_f)
+            os.environ["VS_AFTER_LOCK_JSON"] = json.dumps(bounce_after_lock())
+            with tempfile.TemporaryDirectory() as td:
+                bounce_m, bounce_p, bounce_f, _ = core.prepare(Path(td), "core")
+            bounce_snap = _snapshot(bounce_m, bounce_p, bounce_f)
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        for key, expect in CORE_PRINT_SPEEDS.items():
+            self.assertEqual(core_snap[f"process.{key}"], expect, msg=key)
+        for key, expect in BOUNCE_PRINT_SPEEDS.items():
+            self.assertEqual(bounce_snap[f"process.{key}"], expect, msg=key)
+        for key, expect in UNSCALED.items():
+            self.assertEqual(core_snap.get(f"process.{key}") or core_snap.get(f"filament.{key}") or core_snap.get(f"machine.{key}"), expect, msg=f"core {key}")
+            self.assertEqual(
+                bounce_snap.get(f"process.{key}") or bounce_snap.get(f"filament.{key}") or bounce_snap.get(f"machine.{key}"),
+                expect,
+                msg=f"bounce {key}",
+            )
+
+        self.assertEqual(core_snap["filament.nozzle_temperature"], "225")
+        self.assertEqual(core_snap["filament.nozzle_temperature_initial_layer"], "225")
+        self.assertEqual(core_snap["process.first_layer_temperature"], "260")
+        self.assertEqual(core_snap["filament.cool_plate_temp"], "0")
+        self.assertEqual(core_snap["filament.cool_plate_temp_initial_layer"], "0")
+        self.assertEqual(bounce_snap["filament.nozzle_temperature"], "220")
+        self.assertEqual(bounce_snap["filament.nozzle_temperature_initial_layer"], "220")
+        self.assertEqual(bounce_snap["process.first_layer_temperature"], "220")
+        for bed_key in (
+            "cool_plate_temp",
+            "cool_plate_temp_initial_layer",
+            "hot_plate_temp",
+            "hot_plate_temp_initial_layer",
+            "eng_plate_temp",
+            "eng_plate_temp_initial_layer",
+            "textured_plate_temp",
+            "textured_plate_temp_initial_layer",
+        ):
+            self.assertEqual(bounce_snap[f"filament.{bed_key}"], "70", msg=bed_key)
+        for bed_key in (
+            "first_layer_bed_temperature",
+            "supertack_plate_temp",
+            "supertack_plate_temp_initial_layer",
+            "textured_cool_plate_temp",
+            "textured_cool_plate_temp_initial_layer",
+        ):
+            self.assertEqual(bounce_snap[f"process.{bed_key}"], "70", msg=bed_key)
+
+        self.assertEqual(bounce_snap["process.sparse_infill_density"], "32%")
+        self.assertEqual(bounce_snap["process.sparse_infill_pattern"], "gyroid")
+        self.assertEqual(float(bounce_snap["process.sparse_infill_line_width"]), 1.0)
+        self.assertEqual(float(bounce_snap["process.line_width"]), 1.0)
+        self.assertEqual(bounce_snap["process.wall_loops"], core_snap["process.wall_loops"])
+
+        changed = {
+            key: (core_snap.get(key), bounce_snap.get(key))
+            for key in set(core_snap) | set(bounce_snap)
+            if core_snap.get(key) != bounce_snap.get(key)
+        }
+        expected_changed = {f"process.{key}" for key in BOUNCE_PRINT_SPEEDS}
+        expected_changed.add("filament.nozzle_temperature")
+        expected_changed.add("filament.nozzle_temperature_initial_layer")
+        expected_changed.add("process.first_layer_temperature")
+        expected_changed.update(
+            f"filament.{key}"
+            for key in (
+                "cool_plate_temp",
+                "cool_plate_temp_initial_layer",
+                "hot_plate_temp",
+                "hot_plate_temp_initial_layer",
+                "eng_plate_temp",
+                "eng_plate_temp_initial_layer",
+                "textured_plate_temp",
+                "textured_plate_temp_initial_layer",
+            )
+        )
+        expected_changed.update(
+            f"process.{key}"
+            for key in (
+                "first_layer_bed_temperature",
+                "supertack_plate_temp",
+                "supertack_plate_temp_initial_layer",
+                "textured_cool_plate_temp",
+                "textured_cool_plate_temp_initial_layer",
+            )
+        )
+        self.assertEqual(set(changed), expected_changed, msg=f"unexpected profile diff {changed}")
+
+        start = bounce_m["machine_start_gcode"]
+        rendered = render_expected_start_gcode(start, 220, 70, _scalar(bounce_m.get("gcode_flavor")))
+        self.assertIn("PRINT_START\n", rendered)
+        self.assertIn("M104 S220", rendered)
+        self.assertIn("M109 S220", rendered)
+        self.assertIn("M190 S70", rendered)
+        self.assertNotIn("M104 S225", rendered)
+        self.assertNotIn("M190 S0", rendered)
+        self.assertNotIn("M190 S60", rendered)
+
+    def test_bounce_gcode_header_from_fake_slicer(self):
+        import slice_apexcore_g2b as core
+        from server.chains.apex_core import bounce_after_lock
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fake = root / "orca-slicer"
+            _fake_slicer(fake)
+            stl = root / "foot.stl"
+            _box_stl(stl)
+            saved_bin = os.environ.get("ORCA_SLICER_BIN")
+            saved_density = os.environ.get("VS_SPARSE_INFILL_DENSITY")
+            saved_lock = os.environ.get("VS_AFTER_LOCK_JSON")
+            os.environ["ORCA_SLICER_BIN"] = str(fake)
+            os.environ["VS_SPARSE_INFILL_DENSITY"] = "32%"
+            os.environ["VS_AFTER_LOCK_JSON"] = json.dumps(bounce_after_lock())
+            try:
+                dest = root / "bounce.gcode"
+                proc = subprocess.run(
+                    [
+                        sys.executable,
+                        str(REPO / "scripts/g2b_heelmod/slice_apexcore_g2b.py"),
+                        "core",
+                        str(root / "work"),
+                        str(stl),
+                        str(dest),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(REPO),
+                    env=os.environ.copy(),
+                    timeout=120,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr[-2000:] + proc.stdout[-2000:])
+                cfg = _config(dest.read_text())
+            finally:
+                if saved_bin is None:
+                    os.environ.pop("ORCA_SLICER_BIN", None)
+                else:
+                    os.environ["ORCA_SLICER_BIN"] = saved_bin
+                if saved_density is None:
+                    os.environ.pop("VS_SPARSE_INFILL_DENSITY", None)
+                else:
+                    os.environ["VS_SPARSE_INFILL_DENSITY"] = saved_density
+                if saved_lock is None:
+                    os.environ.pop("VS_AFTER_LOCK_JSON", None)
+                else:
+                    os.environ["VS_AFTER_LOCK_JSON"] = saved_lock
+
+        self.assertEqual(cfg.get("sparse_infill_density"), "32%")
+        self.assertEqual(cfg.get("sparse_infill_pattern"), "gyroid")
+        self.assertEqual(float(cfg.get("sparse_infill_line_width", "0")), 1.0)
+        self.assertEqual(float(cfg.get("line_width", "0")), 1.0)
+        self.assertEqual(cfg.get("nozzle_temperature"), "220")
+        self.assertEqual(cfg.get("nozzle_temperature_initial_layer"), "220")
+        self.assertEqual(cfg.get("cool_plate_temp_initial_layer"), "70")
+        self.assertEqual(cfg.get("hot_plate_temp_initial_layer"), "70")
+        self.assertEqual(cfg.get("first_layer_bed_temperature"), "70")
+        self.assertEqual(cfg.get("travel_speed"), "212")
+        for key, expect in BOUNCE_PRINT_SPEEDS.items():
+            self.assertEqual(cfg.get(key), expect, msg=key)
+        # Same argv the chain uses. Importing prepare must still be the Core material.
+        self.assertTrue(callable(core.prepare))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -186,6 +186,35 @@ class DispatchTest(unittest.TestCase):
             self.assertEqual(path, out)
             self.assertEqual(stats["chain"], "apex_core-g2b-v1")
 
+    def test_bounce_uses_core_chain(self):
+        profile = get_profile("apex-v2-insole-hard", material="apex_bounce")
+        self.assertIsNotNone(profile)
+        with tempfile.TemporaryDirectory() as td:
+            stl = Path(td) / "in.stl"
+            stl.write_bytes(b"solid x\nendsolid x\n")
+            out = Path(td) / "out.gcode"
+            out.write_text("; chain\n", encoding="utf-8")
+
+            def fake(material, stl_path, prof, work_dir, timeout_s, process_overrides, print_direction):
+                self.assertEqual(material, "apex_bounce")
+                self.assertEqual(stl_path, stl.resolve())
+                return out, {"chain": "apex_core-g2b-v1", "elapsed_s": 0.0}
+
+            with mock.patch("server.chains.run_material_chain", fake):
+                path, stats = slice_engine.slice_stl(stl, profile, material="apex_bounce")
+            self.assertEqual(path, out)
+            self.assertEqual(stats["chain"], "apex_core-g2b-v1")
+
+    def test_forge_stays_off_the_production_chain(self):
+        profile = get_profile("apex-v2-insole-medium", material="apex_forge")
+
+        def boom(*_a, **_k):
+            raise AssertionError("apex_forge must stay on the single-slice path")
+
+        with mock.patch("server.chains.run_material_chain", boom):
+            with self.assertRaises(FileNotFoundError):
+                slice_engine.slice_stl(Path("/no/such/model.stl"), profile, material="apex_forge")
+
     def test_omitted_material_does_not_dispatch(self):
         profile = get_profile("apex-v2-insole-medium", material="apex_light")
 
@@ -212,6 +241,91 @@ class DispatchTest(unittest.TestCase):
                 os.environ.pop("VS_FORCE_OFFSET", None)
             else:
                 os.environ["VS_FORCE_OFFSET"] = old
+
+
+class BounceChainEnvTest(unittest.TestCase):
+    def test_core_does_not_receive_bounce_overrides(self):
+        import subprocess
+
+        from server.chains.apex_core import run_apex_core
+
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen["env"] = kwargs.get("env", {})
+            name = Path(cmd[1]).name
+            if name == "slice_apexcore_g2b.py":
+                Path(cmd[5]).write_text("; raw\n", encoding="utf-8")
+            elif name == "topfix_apexcore.py":
+                Path(cmd[3]).write_text(
+                    "; CONFIG_BLOCK_START\n; print_direction = toe_first\n"
+                    "; slow_down_layer_time = 4\n; CONFIG_BLOCK_END\n",
+                    encoding="utf-8",
+                )
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        with tempfile.TemporaryDirectory() as td:
+            stl = Path(td) / "in.stl"
+            tri = struct.pack("<12fH", 0, 0, 1, 0, 0, 0, 10, 0, 1, 0, 20, 2, 0)
+            stl.write_bytes(b"\0" * 80 + struct.pack("<I", 1) + tri)
+            os.environ["VS_AFTER_LOCK_JSON"] = "{\"set\":{}}"
+            try:
+                with mock.patch("server.chains.apex_core.subprocess.run", fake_run):
+                    run_apex_core(stl, work_dir=Path(td) / "out", process_overrides={"sparse_infill_density": "32%"})
+            finally:
+                os.environ.pop("VS_AFTER_LOCK_JSON", None)
+        self.assertNotIn("VS_AFTER_LOCK_JSON", seen["env"])
+        self.assertEqual(seen["env"].get("VS_SPARSE_INFILL_DENSITY"), "32%")
+
+    def test_bounce_passes_after_lock_on_the_core_argv(self):
+        import subprocess
+
+        from server.chains import run_material_chain
+        from server.chains.apex_core import bounce_after_lock
+        from server.profile_registry import get_profile as registry_get_profile
+
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            name = Path(cmd[1]).name
+            if name == "slice_apexcore_g2b.py":
+                seen["material_arg"] = cmd[2]
+                seen["env"] = kwargs.get("env", {})
+                Path(cmd[5]).write_text("; raw\n", encoding="utf-8")
+            elif name == "check_gcode.py":
+                seen["check"] = cmd
+            elif name == "topfix_apexcore.py":
+                Path(cmd[3]).write_text(
+                    "; CONFIG_BLOCK_START\n; print_direction = toe_first\n"
+                    "; slow_down_layer_time = 4\n; CONFIG_BLOCK_END\n",
+                    encoding="utf-8",
+                )
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        profile = registry_get_profile("apex-v2-insole-hard", material="apex_bounce")
+        os.environ["VS_GCODE_GOLDEN"] = "/tmp/core-golden.gcode"
+        with tempfile.TemporaryDirectory() as td:
+            stl = Path(td) / "in.stl"
+            tri = struct.pack("<12fH", 0, 0, 1, 0, 0, 0, 10, 0, 1, 0, 20, 2, 0)
+            stl.write_bytes(b"\0" * 80 + struct.pack("<I", 1) + tri)
+            try:
+                with mock.patch("server.chains.apex_core.subprocess.run", fake_run):
+                    _path, stats = run_material_chain(
+                        "apex_bounce",
+                        stl,
+                        profile,
+                        Path(td) / "out",
+                        30,
+                        {"sparse_infill_density": "32%"},
+                        "toe_first",
+                    )
+            finally:
+                os.environ.pop("VS_GCODE_GOLDEN", None)
+        self.assertEqual(seen["material_arg"], "core")
+        self.assertEqual(stats["chain"], "apex_core-g2b-v1")
+        self.assertEqual(len(seen["check"]), 3)
+        self.assertEqual(seen["env"].get("VS_SPARSE_INFILL_DENSITY"), "32%")
+        self.assertEqual(json.loads(seen["env"]["VS_AFTER_LOCK_JSON"]), bounce_after_lock())
 
 
 class LockedFileTest(unittest.TestCase):
