@@ -125,7 +125,7 @@ async def slice_endpoint(
     ),
     material: str | None = Form(
         default=None,
-        description="Filament: apex_core (default), apex_forge, apex_bounce, apex_light",
+        description="Filament: apex_core (default), apex_forge, apex_bounce, apex_light, apex_vylon",
     ),
     _: None = Depends(require_api_key),
 ):

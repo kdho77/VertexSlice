@@ -85,6 +85,16 @@ _MATERIALS: dict[str, MaterialSpec] = {
         default_wall_loops=APEX_LIGHT_WALL_LOOPS,
         target_first_layer_y_mm=APEX_LIGHT_TARGET_FIRST_LAYER_Y_MM,
     ),
+    # ApexForge clone. Bed 60 °C lives on the filament; wall loops 6 are applied
+    # by the slice request when the caller omits wall_loops. No Core/Light chain.
+    "apex_vylon": MaterialSpec(
+        material_id="apex_vylon",
+        display_name="ApexVylon",
+        filament=PROFILES / "filament" / "ApexVylon.json",
+        nozzle_c=245,
+        bed_c=60,
+        default_wall_loops=6,
+    ),
 }
 
 
