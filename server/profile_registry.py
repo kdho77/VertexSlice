@@ -125,17 +125,17 @@ _REGISTRY: dict[str, SliceProfile] = {
     "apex-v2-insole-95a": _entry(
         "apex-v2-insole-95a",
         "0.42mm TPU Insole @Vertex Apex V2.json",
-        "Kendon Soft 22% — VERTEX_APEX_CORE_95A (Cura-validated baseline)",
+        "Kendon Soft 20% — VERTEX_APEX_CORE_95A (Cura-validated baseline)",
     ),
     "apex-v2-insole-soft": _entry(
         "apex-v2-insole-soft",
         "0.42mm TPU Insole @Vertex Apex V2.json",
-        "Kendon Soft 22% — VERTEX_APEX_CORE_95A",
+        "Kendon Soft 20% — VERTEX_APEX_CORE_95A",
     ),
     "apex-v2-insole-extra-soft": _entry(
         "apex-v2-insole-extra-soft",
         "0.42mm TPU Insole Extra Soft @Vertex Apex V2.json",
-        "Kendon Extra Soft 16% — VERTEX_APEX_CORE_95A",
+        "Kendon Extra Soft 14% — VERTEX_APEX_CORE_95A",
     ),
     "apex-v2-insole-medium": _entry(
         "apex-v2-insole-medium",
@@ -187,7 +187,7 @@ def default_infill_percent(profile_id: str) -> int:
 
 
 def applied_infill_density(profile_id: str, requested: str | float | int | None) -> str:
-    """Explicit infill wins. Otherwise the hardness preset (Extra Soft 16 … Extra Hard 38)."""
+    """Explicit infill wins. Otherwise the hardness preset (Extra Soft 14 … Extra Hard 38)."""
     from server.slice_overrides import parse_slice_overrides
     from validation.apex_insole_tunables import format_infill_density
 
