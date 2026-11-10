@@ -25,8 +25,8 @@ from server.slice_engine import SliceTimeoutError  # noqa: E402
 from validation.apex_insole_densities import KENDON_INFILL_DENSITY_PRESETS  # noqa: E402
 
 HARDNESS = {
-    "extra_soft": ("apex-v2-insole-extra-soft", 16),
-    "soft": ("apex-v2-insole-soft", 22),
+    "extra_soft": ("apex-v2-insole-extra-soft", 14),
+    "soft": ("apex-v2-insole-soft", 20),
     "medium": ("apex-v2-insole-medium", 26),
     "hard": ("apex-v2-insole-hard", 32),
     "extra_hard": ("apex-v2-insole-extra-hard", 38),
@@ -119,14 +119,14 @@ class HardnessMapTest(unittest.TestCase):
     def test_preset_numbers(self):
         self.assertEqual(
             KENDON_INFILL_DENSITY_PRESETS,
-            {"Extra Soft": 16, "Soft": 22, "Medium": 26, "Hard": 32, "Extra Hard": 38},
+            {"Extra Soft": 14, "Soft": 20, "Medium": 26, "Hard": 32, "Extra Hard": 38},
         )
 
     def test_profile_default_and_explicit_override(self):
         for _name, (pid, pct) in HARDNESS.items():
             self.assertEqual(applied_infill_density(pid, None), f"{pct}%")
         # 95a at 32 is an explicit override on the soft profile.
-        self.assertEqual(applied_infill_density("apex-v2-insole-95a", None), "22%")
+        self.assertEqual(applied_infill_density("apex-v2-insole-95a", None), "20%")
         self.assertEqual(applied_infill_density("apex-v2-insole-95a", "32"), "32%")
         self.assertEqual(applied_infill_density("apex-v2-insole-soft", "32%"), "32%")
 

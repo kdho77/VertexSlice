@@ -37,7 +37,7 @@ class CuraRefMetrics:
     infill_direction_deg: float = 0.0
     infill_density_note: str = (
         "Cura ref gcode used rectilinear at 20% for speed/temp validation. "
-        "The Soft hardness preset is gyroid at 22%."
+        "The Soft hardness preset is gyroid at 20%."
     )
     infill_density_percent: float = 20.0
 
