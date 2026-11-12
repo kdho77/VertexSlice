@@ -40,6 +40,12 @@ def _slicer_binary() -> Path:
     raise FileNotFoundError("orca-slicer binary not found (set ORCA_SLICER_BIN)")
 
 
+def _is_3mf_upload(path: Path) -> bool:
+    from server.threemf_modifiers import is_3mf_file
+
+    return is_3mf_file(path)
+
+
 def forced_belt_y_offset_mm() -> float | None:
     """Box VS_FORCE_OFFSET. When set, the belt Y probe must not run."""
     raw = os.environ.get("VS_FORCE_OFFSET", "").strip()
@@ -91,7 +97,33 @@ def slice_stl(
     belt_orient_disabled = False
     belt_trim_stl: Path | None = None
     belt_print_direction: str | None = None
-    if belt_insole_place:
+    if _is_3mf_upload(stl_path):
+        from server.threemf_modifiers import prepare_belt_3mf
+
+        from apex_bed_placement import APEX_INSOLE_X_CENTER_MM  # noqa: E402
+        from apex_insole_tunables import DEFAULT_PRINT_DIRECTION, validate_print_direction  # noqa: E402
+
+        direction = validate_print_direction(print_direction or DEFAULT_PRINT_DIRECTION)
+        xc = x_center_mm if x_center_mm is not None else APEX_INSOLE_X_CENTER_MM
+        slice_stl_path, prep_meta = prepare_belt_3mf(
+            stl_path,
+            dest_dir=work_dir,
+            print_direction=direction,
+            x_center_mm=xc,
+            bed_width_x_mm=bed_width_x_mm,
+            place=bool(belt_insole_place),
+        )
+        if belt_insole_place:
+            # Placement is baked into the build item. --rotate / --arrange would
+            # move the solid and leave the modifier volumes behind.
+            rotate_z = None
+            arrange = False
+            belt_orient_disabled = True
+            placed_stl = prep_meta.get("placed_main_stl")
+            belt_trim_stl = Path(placed_stl) if placed_stl else None
+            belt_print_direction = direction
+        placement_stats.update(prep_meta)
+    elif belt_insole_place:
         from apex_bed_placement import APEX_INSOLE_X_CENTER_MM  # noqa: E402
         from apex_insole_tunables import DEFAULT_PRINT_DIRECTION, orthocad_base_rotation_z_deg, validate_print_direction  # noqa: E402
 

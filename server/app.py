@@ -20,6 +20,7 @@ from server.profile_registry import (
 )
 from server.slice_engine import SliceTimeoutError, slice_stl
 from server.slice_overrides import parse_slice_overrides
+from server.threemf_modifiers import ModifierRegionsNotApplied, ThreemfError
 from validation.apex_insole_densities import KENDON_INFILL_DENSITY_PRESETS
 from validation.apex_insole_tunables import (
     DEFAULT_PRINT_DIRECTION,
@@ -170,6 +171,10 @@ async def slice_endpoint(
                 print_direction=overrides.get("print_direction"),
                 material=material_spec.material_id,
             )
+        except ModifierRegionsNotApplied as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ThreemfError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except SliceTimeoutError as exc:
             raise HTTPException(status_code=504, detail=str(exc)) from exc
         headers = {
@@ -186,6 +191,8 @@ async def slice_endpoint(
             headers["X-Infill-Density"] = overrides["sparse_infill_density"]
         if overrides.get("print_direction"):
             headers["X-Print-Direction"] = overrides["print_direction"]
+        if stats.get("regions_applied") is not None:
+            headers["X-VertexSlice-Regions"] = str(stats["regions_applied"])
         return PlainTextResponse(
             content=gcode_path.read_text(encoding="utf-8", errors="replace"),
             media_type="text/plain",
