@@ -169,6 +169,74 @@ def write_modifier_3mf(
         zout.writestr("Metadata/model_settings.config", settings)
 
 
+def write_inline_orthocad_3mf(
+    path: Path,
+    *,
+    main: tuple[float, float, float, float, float, float] = (0, 0, 0, 36, 70, 16),
+    modifier: tuple[float, float, float, float, float, float] = (0, 40, -1, 36, 68, 18),
+    density: str = "20%",
+) -> None:
+    """Single-file pack matching OrthoCAD export-3mf.ts: meshes in 3dmodel.model, no p:path."""
+    main_v, main_f = _box(*main)
+    mod_v, mod_f = _box(*modifier)
+    root = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<model unit="millimeter" xml:lang="en-US" '
+        'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" '
+        'xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06">\n'
+        ' <metadata name="Application">OrthoCAD</metadata>\n'
+        " <resources>\n"
+        f'{_mesh_body(2, main_v, main_f)}\n'
+        f'{_mesh_body(3, mod_v, mod_f)}\n'
+        '  <object id="1" type="model">\n'
+        "   <components>\n"
+        '    <component objectid="2" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>\n'
+        '    <component objectid="3" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>\n'
+        "   </components>\n"
+        "  </object>\n"
+        " </resources>\n"
+        ' <build><item objectid="1" transform="1 0 0 0 1 0 0 0 1 0 0 0" printable="1"/></build>\n'
+        "</model>\n"
+    )
+    settings = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<config>\n"
+        ' <object id="1">\n'
+        '  <metadata type="object" key="name" value="orthotic"/>\n'
+        '  <part id="2" subtype="normal_part">\n'
+        '   <metadata type="volume" key="name" value="shell"/>\n'
+        "  </part>\n"
+        '  <part id="3" subtype="modifier_part">\n'
+        '   <metadata type="volume" key="name" value="met_pad"/>\n'
+        f'   <metadata type="volume" key="sparse_infill_density" value="{density}"/>\n'
+        '   <metadata type="volume" key="sparse_infill_pattern" value="gyroid"/>\n'
+        '   <metadata type="volume" key="sparse_infill_line_width" value="1.0"/>\n'
+        '   <metadata type="volume" key="regionId" value="met_pad"/>\n'
+        '   <metadata type="volume" key="hardnessClass" value="Soft"/>\n'
+        "  </part>\n"
+        " </object>\n"
+        "</config>\n"
+    )
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
+        ' <Relationship Target="/3D/3dmodel.model" Id="rel-model" '
+        'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>\n'
+        "</Relationships>\n"
+    )
+    types = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n'
+        ' <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>\n'
+        "</Types>\n"
+    )
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+        zout.writestr("[Content_Types].xml", types)
+        zout.writestr("_rels/.rels", rels)
+        zout.writestr("3D/3dmodel.model", root)
+        zout.writestr("Metadata/model_settings.config", settings)
+
+
 def _mesh_body(object_id: int, verts, faces) -> str:
     vxml = "\n".join(f'     <vertex x="{x}" y="{y}" z="{z}"/>' for x, y, z in verts)
     txml = "\n".join(f'     <triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in faces)
@@ -459,7 +527,12 @@ class HttpTest(unittest.TestCase):
         bad = folder / "bad.3mf"
         good = folder / "good.3mf"
         write_modifier_3mf(bad, density="22%")
-        write_modifier_3mf(good, density="20%")
+        write_modifier_3mf(
+            good,
+            main=(0, 0, 0, 36, 70, 16),
+            modifier=(0, 40, -1, 36, 68, 18),
+            density="20%",
+        )
         try:
             client = TestClient(app)
             rejected = client.post(
@@ -470,14 +543,39 @@ class HttpTest(unittest.TestCase):
             self.assertEqual(rejected.status_code, 422)
             self.assertIn("22%", rejected.json()["detail"])
 
+            from server.region_infill import CORE_Y_MACH_OFFSET_MM
+            from tests.test_region_infill import _xs, parallel_gcode
+
+            _placed, meta = prepare_belt_3mf(good, dest_dir=folder / "placed")
+            part = meta["placed_main_bounds"]
+            region = meta["placed_modifiers"][0]
+            base = {
+                "xmin": part["xmin"],
+                "xmax": region["xmin"] - 1,
+                "ymin": part["ymin"],
+                "ymax": part["ymax"],
+                "zmin": part["zmin"],
+                "zmax": part["zmax"],
+            }
+            matched = parallel_gcode(
+                y_off=CORE_Y_MACH_OFFSET_MM,
+                xs=_xs(base, 4.0, 3.0) + _xs(region, 5.2, 3.0),
+                mz0=4,
+                mz1=12,
+                model_y=12,
+            )
+            flat = parallel_gcode(
+                y_off=CORE_Y_MACH_OFFSET_MM,
+                xs=_xs(base, 4.0, 3.0) + _xs(region, 4.0, 3.0),
+                mz0=4,
+                mz1=12,
+                model_y=12,
+            )
+
             def fake_slice(*_args, **_kwargs):
                 gcode = folder / "out.gcode"
-                gcode.write_text("; sliced\n", encoding="utf-8")
-                return gcode, {
-                    "elapsed_s": 1.0,
-                    "regions_applied": 1,
-                    "chain": "apex_core-g2b-v1",
-                }
+                gcode.write_text(matched, encoding="utf-8")
+                return gcode, {"elapsed_s": 1.0, "chain": "apex_core-g2b-v1"}
 
             with mock.patch("server.app.slice_stl", fake_slice):
                 accepted = client.post(
@@ -487,7 +585,22 @@ class HttpTest(unittest.TestCase):
                 )
             self.assertEqual(accepted.status_code, 200, accepted.text)
             self.assertEqual(accepted.headers["x-vertexslice-regions"], "1")
-            self.assertEqual(accepted.text, "; sliced\n")
+            self.assertEqual(accepted.headers["x-vertexslice-regions-verified"], "1")
+
+            def fake_flat(*_args, **_kwargs):
+                gcode = folder / "flat.gcode"
+                gcode.write_text(flat, encoding="utf-8")
+                return gcode, {"elapsed_s": 1.0, "chain": "apex_core-g2b-v1"}
+
+            with mock.patch("server.app.slice_stl", fake_flat):
+                missed = client.post(
+                    "/v1/slice",
+                    data={"profile_id": "apex-v2-insole-95a", "material": "apex_core", "infill_density": "26"},
+                    files={"model": ("model.3mf", good.read_bytes(), "model/3mf")},
+                )
+            self.assertEqual(missed.status_code, 422, missed.text)
+            self.assertIn("measured", missed.json()["detail"])
+            self.assertEqual(missed.headers["x-vertexslice-regions-verified"], "0")
 
             def fake_stl(*_args, **_kwargs):
                 gcode = folder / "stl.gcode"
