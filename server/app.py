@@ -20,7 +20,7 @@ from server.profile_registry import (
 )
 from server.slice_engine import SliceTimeoutError, slice_stl
 from server.slice_overrides import parse_slice_overrides
-from server.threemf_modifiers import ModifierRegionsNotApplied, ThreemfError
+from server.threemf_modifiers import ModifierRegionsNotApplied, ThreemfError, is_3mf_file
 from validation.apex_insole_densities import KENDON_INFILL_DENSITY_PRESETS
 from validation.apex_insole_tunables import (
     DEFAULT_PRINT_DIRECTION,
@@ -177,6 +177,31 @@ async def slice_endpoint(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except SliceTimeoutError as exc:
             raise HTTPException(status_code=504, detail=str(exc)) from exc
+        gcode_text = gcode_path.read_text(encoding="utf-8", errors="replace")
+        region_report = None
+        if is_3mf_file(dest, filename=model.filename):
+            from server.region_infill import format_region_failure, verify_sliced_regions
+
+            global_pct = float(str(overrides["sparse_infill_density"]).rstrip("%"))
+            region_report = verify_sliced_regions(
+                dest,
+                gcode_text,
+                material=material_spec.material_id,
+                global_density_pct=global_pct,
+                print_direction=str(overrides.get("print_direction") or DEFAULT_PRINT_DIRECTION),
+                belt_insole_place=belt_insole_place,
+                y_offset_fallback=stats.get("belt_y_mach_offset_mm"),
+            )
+            if region_report["prepared"] and region_report["verified"] < region_report["prepared"]:
+                raise HTTPException(
+                    status_code=422,
+                    detail=format_region_failure(region_report),
+                    headers={
+                        "X-VertexSlice-Regions": str(region_report["verified"]),
+                        "X-VertexSlice-Regions-Verified": str(region_report["verified"]),
+                        "X-VertexSlice-Regions-Prepared": str(region_report["prepared"]),
+                    },
+                )
         headers = {
             "X-Slice-Seconds": str(stats.get("elapsed_s", "")),
             "X-Peak-RSS-KB": str(stats.get("peak_rss_kb") or ""),
@@ -191,10 +216,12 @@ async def slice_endpoint(
             headers["X-Infill-Density"] = overrides["sparse_infill_density"]
         if overrides.get("print_direction"):
             headers["X-Print-Direction"] = overrides["print_direction"]
-        if stats.get("regions_applied") is not None:
-            headers["X-VertexSlice-Regions"] = str(stats["regions_applied"])
+        if region_report is not None:
+            headers["X-VertexSlice-Regions"] = str(region_report["verified"])
+            headers["X-VertexSlice-Regions-Verified"] = str(region_report["verified"])
+            headers["X-VertexSlice-Regions-Prepared"] = str(region_report["prepared"])
         return PlainTextResponse(
-            content=gcode_path.read_text(encoding="utf-8", errors="replace"),
+            content=gcode_text,
             media_type="text/plain",
             headers=headers,
         )

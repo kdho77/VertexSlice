@@ -40,7 +40,7 @@ Set service variables:
 Health: `GET /health`  
 Slice: `POST /v1/slice` (`multipart/form-data`: `profile_id`, `model` file, optional `wall_loops`, `infill_density`, `print_direction`, `belt_insole_place` default true, optional `material`)
 
-`model` is `model.stl` when the design has no hardness regions (same request as before). When OrthoCAD has regional hardness, `model` is `model.3mf` (`model/3mf`, or a ZIP body): one main solid plus each region as an Orca `modifier_part` whose `sparse_infill_density` is an infill preset (14%, 20%, 26%, 32%, 38%) and whose `sparse_infill_pattern` is `gyroid`. `infill_density` is the global density for the main solid. The response may include `X-VertexSlice-Regions: <count>`. A 3MF that names modifiers but yields none is HTTP 422.
+`model` is `model.stl` when the design has no hardness regions (same request as before). When OrthoCAD has regional hardness, `model` is `model.3mf` (`model/3mf`, or a ZIP body): one main solid plus each region as an Orca `modifier_part` whose `sparse_infill_density` is an infill preset (14%, 20%, 26%, 32%, 38%) and whose `sparse_infill_pattern` is `gyroid`. `infill_density` is the global density for the main solid. After the slice, sparse infill inside each modifier's placed volume is measured against the surrounding base. `X-VertexSlice-Regions` and `X-VertexSlice-Regions-Verified` are the count whose measured density matches the requested preset. A 3MF that names modifiers but yields none, or whose G-code does not show that density, is HTTP 422.
 
 Materials: `GET /v1/materials` (with API key when configured).
 
