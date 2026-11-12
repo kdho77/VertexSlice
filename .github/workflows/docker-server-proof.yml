@@ -137,4 +137,4 @@ jobs:
           python3 validation/tests/test_apex_v2_gcode_bookends.py
           python3 validation/tests/test_first_layer_y.py
           python3 validation/tests/test_print_direction_tunables.py
-          python3 -m unittest tests.test_server_full_chain tests.test_golden_gate -v
+          python3 -m unittest tests.test_server_full_chain tests.test_golden_gate tests.test_threemf_modifiers tests.test_region_infill -v

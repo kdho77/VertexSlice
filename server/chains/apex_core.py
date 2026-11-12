@@ -58,7 +58,18 @@ def run_apex_core(
     owned = work_dir is None
     work = Path(work_dir) if work_dir is not None else Path(tempfile.mkdtemp(prefix="apex_core_chain_"))
     work.mkdir(parents=True, exist_ok=True)
-    prepped, prep_meta = prepare_belt_stl(stl_path)
+    from server.threemf_modifiers import is_3mf_file, prepare_belt_3mf
+
+    if is_3mf_file(stl_path):
+        # Same toe-first / X=140 move as prepare_belt_stl. Modifiers ride the build item.
+        prepped, prep_meta = prepare_belt_3mf(
+            stl_path,
+            dest_dir=work,
+            x_center_mm=140,
+            print_direction="toe_first",
+        )
+    else:
+        prepped, prep_meta = prepare_belt_stl(stl_path)
     final = work / "apex_core.gcode"
     golden = os.environ.get("VS_GCODE_GOLDEN")
     golden_path = Path(golden) if golden else None
@@ -106,6 +117,8 @@ def run_apex_core(
         "rotation_z_deg": prep_meta.get("rotation_z_deg"),
         "x_center_mm": prep_meta.get("x_center_mm"),
     }
+    if prep_meta.get("regions_applied") is not None:
+        stats["regions_applied"] = prep_meta["regions_applied"]
     if owned:
         stats["work_dir"] = str(work)
     return final, stats
