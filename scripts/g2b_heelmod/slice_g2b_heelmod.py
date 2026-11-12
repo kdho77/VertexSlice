@@ -103,7 +103,7 @@ def assert_g2b_identity(process: dict, filament: dict, machine: dict) -> None:
         "detect_narrow_internal_solid_infill": "1",
         "ensure_vertical_shell_thickness": "none",
         "top_shell_layers": "0",
-        "reduce_crossing_wall": "0",
+        "reduce_crossing_wall": "1",
         "resolution": "0.01",
         "wipe": "1",
         "outer_wall_flow_ratio": "1.5466",
