@@ -103,6 +103,55 @@ def _enforce_locked(machine: dict, process: dict, filament: dict, y_offset: floa
         raise SystemExit("LOCKED ApexCore 95A: pressure advance line missing. No changes without Kendon's approval.")
 
 
+def _format_scaled_speed(raw: str, factor: float) -> str:
+    """Scale an absolute mm/s speed. Percentages are refused (they would compound)."""
+    text = raw.strip()
+    if text.endswith("%"):
+        raise SystemExit(f"refusing to scale percentage speed {text!r}")
+    number = float(text)
+    scaled = round(number * float(factor), 4)
+    if abs(scaled - round(scaled)) < 1e-9:
+        return str(int(round(scaled)))
+    return f"{scaled:.4f}".rstrip("0").rstrip(".")
+
+
+def _write_setting(profile: dict, key: str, value: str) -> None:
+    """Same write the min-layer and infill edits use. A missing key is created as a string."""
+    cur = profile.get(key)
+    profile[key] = [value] if isinstance(cur, list) else value
+
+
+def _apply_after_lock(machine: dict, process: dict, filament: dict) -> None:
+    """Optional per-slice edits. Unset means the locked ApexCore profile is unchanged.
+
+    The lock check has already passed. Core slices do not set VS_AFTER_LOCK_JSON.
+    """
+    raw = os.environ.get("VS_AFTER_LOCK_JSON", "").strip()
+    if not raw:
+        return
+    try:
+        blob = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"VS_AFTER_LOCK_JSON is not JSON: {exc}") from exc
+    owners = {"machine": machine, "process": process, "filament": filament}
+    for profile_name, updates in (blob.get("set") or {}).items():
+        dest = owners.get(profile_name)
+        if dest is None:
+            raise SystemExit(f"VS_AFTER_LOCK_JSON unknown profile {profile_name}")
+        for key, value in updates.items():
+            if key not in dest:
+                raise SystemExit(f"VS_AFTER_LOCK_JSON: prepared profile has no {key}")
+            _write_setting(dest, key, str(value))
+    for profile_name, updates in (blob.get("scale") or {}).items():
+        dest = owners.get(profile_name)
+        if dest is None:
+            raise SystemExit(f"VS_AFTER_LOCK_JSON unknown profile {profile_name}")
+        for key, factor in updates.items():
+            if key not in dest:
+                raise SystemExit(f"VS_AFTER_LOCK_JSON: prepared profile has no {key}")
+            _write_setting(dest, key, _format_scaled_speed(_scalar(dest.get(key)), float(factor)))
+
+
 def _g2b_off(profile: dict, key: str) -> None:
     cur = profile.get(key)
     profile[key] = ["0"] if isinstance(cur, list) or cur is None else "0"
@@ -176,10 +225,6 @@ def prepare(work: Path, material: str) -> tuple[dict, dict, dict, float]:
     # (default 4) after that check. 8 reproduces the 2026-10-22 golden.
     min_layer = os.environ.get("APEX_MIN_LAYER_TIME", "4").strip() or "4"
 
-    def _write_setting(profile: dict, key: str, value: str) -> None:
-        cur = profile.get(key)
-        profile[key] = [value] if isinstance(cur, list) else value
-
     _write_setting(filament, "slow_down_layer_time", min_layer)
     _write_setting(process, "slow_down_layer_time", min_layer)
     # Hardness changes this key only, after the locked-profile check.
@@ -189,6 +234,9 @@ def prepare(work: Path, material: str) -> tuple[dict, dict, dict, float]:
         _write_setting(process, "sparse_infill_density", f"{pct}%")
         if _scalar(process.get("sparse_infill_pattern")) != "gyroid":
             raise SystemExit(f"sparse infill pattern {process.get('sparse_infill_pattern')!r}")
+    # Bounce (and only a caller that sets this) edits temps and speeds here.
+    # Core leaves the variable unset, so the locked profile is what gets sliced.
+    _apply_after_lock(machine, process, filament)
     return machine, process, filament, y_offset
 
 

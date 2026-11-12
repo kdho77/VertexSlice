@@ -1,4 +1,4 @@
-"""Production slice chains. ApexCore and ApexLight only."""
+"""Production slice chains. ApexCore, ApexBounce (Core chain), and ApexLight."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -18,14 +18,17 @@ def run_material_chain(
     process_overrides: dict | None,
     print_direction: str | None,
 ) -> tuple[Path, dict]:
-    if material == "apex_core":
-        from server.chains.apex_core import run_apex_core
+    if material in ("apex_core", "apex_bounce"):
+        from server.chains.apex_core import bounce_after_lock, run_apex_core
 
+        # Bounce is the Core g2b chain. Overrides are applied after the lock,
+        # so a Core slice (after_lock is None) cannot pick them up.
         return run_apex_core(
             stl_path,
             work_dir=work_dir,
             timeout_s=timeout_s,
             process_overrides=process_overrides,
+            after_lock=bounce_after_lock() if material == "apex_bounce" else None,
         )
     if material == "apex_light":
         from server.chains.apex_light import run_apex_light

@@ -70,9 +70,16 @@ _MATERIALS: dict[str, MaterialSpec] = {
     "apex_bounce": MaterialSpec(
         material_id="apex_bounce",
         display_name="ApexBounce",
-        filament=PROFILES / "filament" / "ApexBounce.json",
-        nozzle_c=225,
-        bed_c=60,
+        # ApexBounce.json is bed 60 °C and notes 225/60, so it is not Core.
+        # Production bounce uses this Core filament. The g2b chain then sets
+        # nozzle 220 °C, bed 70 °C, and print speeds to 0.8× Core.
+        filament=FILAMENT_95A,
+        nozzle_c=220,
+        bed_c=70,
+        process_overrides=dict(APEX_CORE_PROCESS_OVERRIDES),
+        filament_overrides=dict(APEX_CORE_FILAMENT_OVERRIDES),
+        default_wall_loops=APEX_CORE_WALL_LOOPS,
+        target_first_layer_y_mm=APEX_CORE_TARGET_FIRST_LAYER_Y_MM,
     ),
     "apex_light": MaterialSpec(
         material_id="apex_light",
