@@ -1,8 +1,8 @@
 # Forefoot seam split — ApexCore 95A slice (2026-11-13)
 
-Kendon approved the forefoot stitch on 2026-11-13 (his own words, PM chat), then at 11:27 AM MT the same day kept `wall_loops` at 2 so the heel and arch keep two walls. The current identity is in "Scoped stitch". The belt-edge center seam stays aligned (`g2b_anchor` still true). No printer commands were run.
+Kendon approved the forefoot stitch on 2026-11-13 (his own words, PM chat), then at 11:27 AM MT the same day kept `wall_loops` at 2 so the heel and arch keep two walls. At 4:35 PM MT the same day he asked why that stitch added about an hour at the same filament weight. The identity that ships is the scoped stitch plus the print-time fix in "Print time". The belt-edge center seam stays aligned (`g2b_anchor` still true). No printer commands were run.
 
-The sections through "Proposed values" record the slice before any stitch. "Applied stitch" is the first re-slice, with `wall_loops` set to 1 on the whole path. "Scoped stitch" is the one that ships.
+The sections through "Proposed values" record the slice before any stitch. "Applied stitch" is the first re-slice, with `wall_loops` set to 1 on the whole path. "Scoped stitch" is `wall_loops` 2 plus the five stitch keys. "Print time" is the fix for the hour that stitch added.
 
 ## Result
 
@@ -290,3 +290,56 @@ Same postprocess. Scoped matches the first stitch, because the forefoot loops ar
 | Layers off the X track | | 1 (Z 6.50, X 130.904 → 116.273) |
 
 The line is still the belt-edge center, 0.07 mm lower. One toe layer moves.
+
+## Print time (2026-11-13 4:35 PM MT)
+
+Kendon: "That makes absolutely no sense why it would add an hour to print time at all." Scoped was 2h 23m 24s against the pre-stitch 1h 24m 20s, filament 82.83 g against 83.60 g. Same OrthoCAD insole, Soft 20% gyroid, final G-code after `postprocess_g2b.py match` → `pullback_v2.py` → `topfix_apexcore.py`.
+
+`gap_infill_speed` is already 26 mm/s, the same as `outer_wall_speed`. It is now in the identity guard so a slower default cannot replace it. The gap plastic itself is 12.4 min. The hour is travel between gap beads.
+
+Classic `variable_width` splits one gap polyline into a separate path every time the width changes by more than 0.05 mm. The endpoints still meet (on a heel layer, 137 of 140 beads had another endpoint within 0.3 mm) and the planner prints them out of order. One heel layer at belt Z 229.64 mm is 140 beads, 52 mm of extrusion, and 3762 mm of travel. Across the scoped file that is 447 m of gap travel.
+
+Times below are minutes on the final G-code. Extrusion is distance at the commanded feed. Travel is a full stop at each end (the trapezoid at the `M204` accel). On the pre-stitch file that model is 83.5 min against the slicer footer of 1h 24m 20s. On the scoped file the same model reads 179 min against the footer of 2h 23m 24s, because look-ahead does not stop for every short travel. The footer is the slicer's number. The split shows where the time sits. Retract and prime are E-only moves at their feed. Wipe moves are already inside the feature extrusion. Seam travels are inside the travel column (pre 2.2 min, scoped 3.9, fixed 3.7).
+
+| Feature | Pre ext / travel | First ext / travel | Scoped ext / travel | Fixed ext / travel |
+|---|---|---|---|---|
+| Outer wall | 48.59 / 1.88 | 48.09 / 3.18 | 48.08 / 3.15 | 48.08 / 3.01 |
+| Inner wall | 18.46 / 0.82 | 0 / 0 | 15.54 / 0.72 | 15.54 / 0.72 |
+| Gap infill | 0 / 0 | 9.35 / 59.33 | 12.40 / 86.04 | 9.53 / 1.40 |
+| Sparse infill | 11.82 / 1.84 | 20.00 / 3.70 | 10.89 / 2.37 | 11.19 / 1.85 |
+| Overhang wall | 0.05 / 0.00 | 0.06 / 0.01 | 0.06 / 0.01 | 0.06 / 0.01 |
+| Internal solid | 0.00 / 0.00 | 0.00 / 0.02 | 0.01 / 0.03 | 0.01 / 0.01 |
+| Retract | 0.27 | 0.31 | 0.31 | 0.32 |
+| Prime | 0.24 | 0.27 | 0.28 | 0.29 |
+| Extrusion + travel | 83.5 | 143.8 | 179.3 | 91.4 |
+| Slicer footer | 1h 24m 20s | 1h 56m 49s | 2h 23m 24s | 1h 33m 37s |
+
+The fixed footer is rewritten in `slice_apexcore_g2b.py` after the beads are chained. It is the same model on the chained toolpath, before the seam postprocess. The 91.4 min row is that model on the final file. Both sit inside 10 min of 1h 24m 20s (7 min on the final file, 9 min on the footer).
+
+What the fix does:
+
+1. `chain_gap_fill_travels` prints each run of gap beads whose ends meet (0.3 mm) as one path. The extrusion is the same beads. The travel between two beads that already meet is dropped. The travel that leaves the gap block is kept, because it positions the next feature. With `filter_out_gap_fill` still 0 this cuts gap travel from 447 m to 37 m and the final-file model from the scoped 2h 23m class of toolpath to about 1h 37m. Filament stays 82.83 g. That is still about 13 min over 1h 24m.
+2. The remaining time is the new gap plastic at 26 mm/s, plus hops between islands that do not touch. `filter_out_gap_fill` 8 drops polylines shorter than 8 mm. A threshold of 3 mm, after the same chaining, was still 1h 36m. At 8 mm the final file is 91.4 min, filament 28189.05 mm / 81.36 g. The 1.47 g under the scoped file is those short polylines.
+
+Forefoot, same measurement on the scoped file and the fixed file. Belt Z 2–77 mm, 115 layers. The toe tip at Z 2.60 mm is the one layer without gap fill.
+
+| | Scoped | Fixed |
+|---|---|---|
+| Layers with gap fill | 114 | 114 |
+| Gap fill, belt Z 2–78 mm | 7611 mm | 7612 mm |
+| Inner wall | none | none |
+| Median in-plane wall gap | −0.249 mm | −0.249 mm |
+
+The −0.249 mm is this cross-section (X stations every 2 mm). The −0.266 mm in the scoped table above is the same overlap from the earlier station step. The forefoot toolpath matches.
+
+Heel and arch. Inner-wall length is unchanged from the scoped file. The open cell is the median, over cross-sections, of the largest bead-to-bead gap above 0.15 mm.
+
+| Band | Inner scoped / fixed | Open cell pre / scoped / fixed |
+|---|---|---|
+| Early arch Z 78–88 | 0 / 0 (gap 1362 / 1350 mm) | — |
+| Arch Z 150–200 | 11085 / 11085 mm, 77/77 layers | 2.20 / 2.17 / 2.14 mm |
+| Heel Z 200–250 | 11244 / 11244 mm, 77/77 layers | 1.96 / 2.28 / 1.98 mm |
+
+The first inner wall is still belt Z 88.5 mm. Arch gap fill in Z 150–200 was 1321 mm of polylines shorter than 8 mm, so the filter drops it and the gyroid opening moves back toward the pre-stitch cell. Heel gap fill goes from 3156 mm to 1345 mm. The belt-face seam over Z 6.50–52.04 mm still lands at Y 0.021–0.028 mm, on the same X as the scoped file.
+
+Raising the gap speed to the inner-wall 42 mm/s would also have bought a few minutes. It would print the stitch faster than the outer wall. The shared G2b block already set the gap speed to the outer wall, and that speed was measured at 26. The path change is the fix that removes the hour.

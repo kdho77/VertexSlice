@@ -101,11 +101,15 @@ def overlay_g2b(machine: dict, process: dict, filament: dict) -> None:
 # stays aligned (seam_position and the match postprocess are not in this set).
 # Kendon, 2026-11-13 11:27 AM MT: wall_loops stays 2. Classic walls leave one
 # loop only where the section cannot hold two closed loops, so the heel and
-# arch keep the inner wall. No length cutoff; the same rule fits a youth
-# insole and an M13.
+# arch keep the inner wall. The same rule fits a youth insole and an M13.
+# Kendon, 2026-11-13 4:35 PM MT: the extra hour was travel between gap beads
+# that already meet, not a slow gap speed (gap_infill_speed is already the
+# outer-wall 26 mm/s). filter_out_gap_fill 8 drops polylines shorter than
+# 8 mm. Those are scattered heel and arch islands. The forefoot stitch
+# polylines are longer than 8 mm, so the joint stays.
 APEXCORE_FOREFOOT_STITCH = {
     "wall_generator": "classic",
-    "filter_out_gap_fill": "0",
+    "filter_out_gap_fill": "8",
     "gap_fill_target": "everywhere",
     "min_bead_width": "25%",
     "detect_thin_wall": "1",
@@ -144,6 +148,9 @@ def assert_g2b_identity(
         "min_bead_width": "50%",
         "print_direction": "toe_first",
         "outer_wall_speed": "26",
+        # Already the outer-wall speed in the shared G2b block. Locked so a
+        # slower inherited default cannot come back. Kendon, 2026-11-13 4:35 PM MT.
+        "gap_infill_speed": "26",
     }
     if forefoot_stitch:
         checks.update(APEXCORE_FOREFOOT_STITCH)
