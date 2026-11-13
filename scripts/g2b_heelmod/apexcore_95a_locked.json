@@ -1,7 +1,21 @@
 {
   "profile": "ApexCore 95A G2b",
   "status": "LOCKED",
-  "approval": "Locked to the file Kendon printed. No changes without Kendon's approval.",
+  "approval": "Locked to the file Kendon printed, plus the forefoot stitch Kendon approved on 2026-11-13. The belt-edge center seam stays aligned. No other changes without Kendon's approval.",
+  "forefoot_stitch": {
+    "approved_by": "Kendon",
+    "approved_on": "2026-11-13",
+    "scope": "apex-v2-insole-95a / ApexCore 95A only",
+    "seam": "stays aligned at the belt-edge center (g2b_anchor unchanged)",
+    "changes": {
+      "wall_generator": {"old": "arachne", "new": "classic"},
+      "wall_loops": {"old": "2", "new": "1"},
+      "filter_out_gap_fill": {"old": "9999", "new": "0"},
+      "gap_fill_target": {"old": "nowhere", "new": "everywhere"},
+      "min_bead_width": {"old": "50%", "new": "25%"},
+      "detect_thin_wall": {"old": "0", "new": "1"}
+    }
+  },
   "sha256": "1eb294be4315565e868c0960a569f4f4158253f41b69955dc15cd3da77fb826e",
   "slicer": "OrcaBelt def8eff480",
   "layer_height_mm": 0.46,
@@ -25,7 +39,12 @@
     "sparse_infill_pattern": {"profile": "process", "value": "gyroid"},
     "infill_wall_overlap": {"profile": "process", "value": "15%"},
     "minimum_sparse_infill_area": {"profile": "process", "value": "5"},
-    "wall_loops": {"profile": "process", "value": "2"},
+    "wall_loops": {"profile": "process", "value": "1"},
+    "wall_generator": {"profile": "process", "value": "classic"},
+    "filter_out_gap_fill": {"profile": "process", "value": "0"},
+    "gap_fill_target": {"profile": "process", "value": "everywhere"},
+    "min_bead_width": {"profile": "process", "value": "25%"},
+    "detect_thin_wall": {"profile": "process", "value": "1"},
     "nozzle_temperature": {"profile": "filament", "value": "225"},
     "nozzle_temperature_initial_layer": {"profile": "filament", "value": "225"},
     "nozzle_temperature_range_low": {"profile": "filament", "value": "220"},

@@ -1,6 +1,8 @@
 # Forefoot seam split — ApexCore 95A slice (2026-11-13)
 
-Diagnostic only. The locked ApexCore 95A profile was not changed. No printer commands were run.
+Kendon approved the forefoot stitch on 2026-11-13 (his own words, PM chat). The six settings in the applied section are now the ApexCore 95A / `apex-v2-insole-95a` identity. The belt-edge center seam stays aligned (`g2b_anchor` still true). No printer commands were run.
+
+The sections through "Proposed values" record the slice before that change. The re-slice is in "Applied stitch".
 
 ## Result
 
@@ -22,9 +24,9 @@ A second, separate line is also in the G-code. The belt-seam postprocess restart
 
 The IdeaFormer file the profile id points at (`0.42mm TPU Insole @Vertex Apex V2.json` → `fdm_process_apex_insole_common` → `fdm_process_common`) is the parent. It is not the file that gets sliced. After the G2b overlay the effective values are the ones in the table below.
 
-## Settings in force on this slice
+## Settings in force on the pre-stitch slice
 
-Taken from the process JSON `slice_apexcore_g2b.py` wrote before the slice (`PREP_ONLY=1`), plus the postprocess constants.
+Taken from the process JSON `slice_apexcore_g2b.py` wrote before the slice (`PREP_ONLY=1`), plus the postprocess constants. These are the values before the 2026-11-13 stitch. The six keys that moved are listed again under "Applied stitch".
 
 | Setting | Value used | Where it comes from |
 |---|---|---|
@@ -123,13 +125,11 @@ At that start the postprocess also writes, on a travel longer than 2 mm: `G1 E-0
 
 ## Fix status
 
-Not applied. No test was added.
-
-A change that would actually stitch the forefoot has to move locked keys and G2b-identity keys together. `prepare()` aborts if a locked value drifts, and `assert_g2b_identity` aborts if `wall_generator`, `filter_out_gap_fill`, or `min_bead_width` drift. The printed-file sha the lock protects would change. That needs Kendon’s approval before it is edited.
+Applied on 2026-11-13 after Kendon approved this set and only this set. The shared G2b block (`g2b_config.json`, ApexLight) is unchanged. `assert_g2b_identity` still checks that block first. ApexCore then writes `APEXCORE_FOREFOOT_STITCH` and checks again with `forefoot_stitch=True`. `apexcore_95a_locked.json` records the same six values, with the approval line. The printed sha `1eb294be…` stays in the lock as the pre-stitch file; the byte-match reslice test skips for that reason.
 
 Gap fill alone does not fix the joint. The in-plane gap is already 0.002 mm, so a gap-fill pass has nothing to extrude until the generator leaves a real interior.
 
-### Proposed values (not written)
+### Proposed values (now the approved identity)
 
 For the tangent joint, as one set:
 
@@ -158,4 +158,65 @@ For the straight belt-face line, the edit is in `postprocess_g2b.py`, not in `se
 | injected retract / prime | 0.5 / 0.45 mm | `0` / `0`, matching locked `retraction_length` `0` |
 | dry wipe | 0.7 mm | `0` for this TPU |
 
-`seam_gap=0` is already the right TPU value. Aligned versus nearest does not matter until the postprocess stops moving the start.
+`seam_gap=0` is already the right TPU value. Aligned versus nearest does not matter until the postprocess stops moving the start. That postprocess was left on, per the approval: the seam stays at the belt-edge center.
+
+## Applied stitch
+
+Scope is `prepare()` for `material="core"` only. ApexLight still calls `assert_g2b_identity` without the stitch. Left unchanged: `postprocess_g2b` midpoint restart (`g2b_anchor=True`), `seam_position=aligned`, `seam_gap=0`, retract/prime/wipe, fan 50% / aux 25% from layer 0, `outer_wall_flow_ratio=1.0142`, `infill_wall_overlap=15%`, infill densities 14/20/26/32/38, and every other profile.
+
+Re-slice used the same fixture and the same chain as the section above (`slice_apexcore_g2b.py core` → `postprocess_g2b.py match` → `pullback_v2.py` → `topfix_apexcore.py`), `VS_SPARSE_INFILL_DENSITY=20%`, `APEX_MIN_LAYER_TIME=4`, binary `OrcaBelt-2.3.2-dev` from the main Docker-proof artifact. `topfix` removed 0 pairs.
+
+### Whole print
+
+| | Before | After |
+|---|---|---|
+| Header layer count | 439 | 440 |
+| Footer `total layers count` | 441 | 441 |
+| Estimated time | 1h 24m 20s | 1h 56m 49s (+32m 29s) |
+| Filament | 28962.30 mm / 83.60 g | 22747.21 mm / 65.66 g (−6215 mm, −17.94 g) |
+
+The filament drop is the inner wall leaving the arch and heel (`wall_loops` is process-wide). The extra time is the short gap-fill moves.
+
+### Forefoot, belt Z 2–77 mm
+
+115 layers, Z 2.60–76.76 mm. Counts are layers in that bin that contain the feature.
+
+| Belt Z | Layers | Outer before / after | Gap fill before / after | Inner | Sparse |
+|---|---|---|---|---|---|
+| 2–12 | 15 | 15 / 15 | 0 / 14 | 0 | 0 |
+| 12–22 | 15 | 15 / 15 | 0 / 15 | 0 | 0 |
+| 22–32 | 16 | 16 / 16 | 0 / 16 | 0 | 0 |
+| 32–42 | 15 | 15 / 15 | 0 / 15 | 0 | 0 |
+| 42–52 | 15 | 15 / 15 | 0 / 15 | 0 | 0 |
+| 52–62 | 16 | 16 / 16 | 0 / 16 | 0 | 0 |
+| 62–72 | 15 | 15 / 15 | 0 / 15 | 0 | 0 |
+| 72–78 | 9 | 9 / 9 | 0 / 9 | 0 | 0 |
+
+114 of 115 layers now have gap fill (7611 mm total, 9–87 mm per layer, median 71 mm). The missing one is the toe tip, layer 2 at belt Z 2.60 mm: 12.5 mm of outer wall and 8.2 mm of overhang, no interior left. Outer-wall length over the band is 15919 mm before and 15965 mm after.
+
+Median of the per-layer median in-plane wall-to-wall gap: **−0.002 mm before** (tangent), **−0.266 mm after** (the facing skins overlap by 0.27 mm where they still face). Stations with a bead-to-bead gap above 0.15 mm and nothing between them: **0 / 3649 before, 0 / 3663 after**. Gap fill sits between the skins on 3655 of 3663 stations. The forefoot joint is stitched. No unfilled sliver remains under that 0.15 mm rule.
+
+### Belt-face seam
+
+`g2b_anchor` was not edited. Over belt Z 6.50–52.04 mm (71 layers):
+
+| | Before | After |
+|---|---|---|
+| Seam Y | 0.093–0.100 mm, std 0.002 | 0.021–0.028 mm, std 0.002 |
+| Seam X residual | std 0.091 mm, max 0.20 mm | std 0.089 mm, max 0.19 mm, excluding one layer |
+| Pointwise \|dX\| | | median 0.002 mm |
+
+The line is the same centerline, 0.07 mm lower in Y, because the classic bottom edge sits lower. It is still stacked on the belt face. One layer does not match: belt Z 6.50, the narrow toe, moves from X 130.904 to X 116.273 (−14.6 mm) and gains a second start. Classic walls plus thin-wall detection change that short loop, so the unchanged midpoint restart lands on a different point. The other 70 layers in the band stay on the old X track.
+
+### Heel and arch, belt Z 150–230 mm
+
+| Belt Z | Layers | Inner before / after | Gap fill before / after | Sparse before / after |
+|---|---|---|---|---|
+| 150–170 | 31 | 31 / 0 | 0 / 31 | 31 / 31 |
+| 170–190 | 31 | 31 / 0 | 0 / 31 | 31 / 31 |
+| 190–210 | 30 | 30 / 0 | 0 / 30 | 30 / 30 |
+| 210–230 | 31 | 31 / 0 | 0 / 31 | 31 / 31 |
+
+Outer wall is on every one of these layers both times. Gyroid is still on every thick layer. The inner wall is gone on all of them, because `wall_loops=1` is process-wide on this path; the approval did not include a forefoot-only override. Over Z 150–220 the extrusion lengths move from outer 21050 / inner 16908 / sparse 9898 mm to outer 20774 / inner 0 / sparse 14176 / gap fill 1208 mm.
+
+Where consecutive beads leave a gap above 0.15 mm (mostly the open cells of 20% gyroid), the median of those openings grows: arch Z 150–200, 2.13 mm → 3.49 mm; heel Z 200–250, 1.92 mm → 2.95 mm. The second wall used to occupy that shell. This is the cost of the approved `wall_loops` change, not a new empty channel through the heel. No further key was changed to compensate.

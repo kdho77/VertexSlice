@@ -2,9 +2,12 @@
 """LOCKED ApexCore 95A profile. No changes without Kendon's approval.
 
 Printed file sha256
-1eb294be4315565e868c0960a569f4f4158253f41b69955dc15cd3da77fb826e.
-The numbers live in apexcore_95a_locked.json. prepare() refuses to slice
-if a setting drifts from that file.
+1eb294be4315565e868c0960a569f4f4158253f41b69955dc15cd3da77fb826e
+is the file from before the forefoot stitch. Kendon approved that stitch
+on 2026-11-13 (PM): classic walls, 1 wall loop, gap fill on, min bead 25%,
+detect thin walls. The belt-edge center seam stays aligned. The numbers
+live in apexcore_95a_locked.json. prepare() refuses to slice if a setting
+drifts from that file.
 
 G2b CONFIG_BLOCK with the ApexCore filament swapped in. No heelmod: no
 layer-range flow, min_bead, ensure_all, min-time, and no global
@@ -45,6 +48,7 @@ if lib and Path(lib).is_dir():
     os.environ["LD_LIBRARY_PATH"] = lib + (":" + prior if prior else "")
 
 from slice_g2b_heelmod import (  # noqa: E402
+    APEXCORE_FOREFOOT_STITCH,
     Y_MACH_OFFSET_LIGHT,
     assert_g2b_identity,
     flatten,
@@ -148,8 +152,14 @@ def prepare(work: Path, material: str) -> tuple[dict, dict, dict, float]:
     saved = json.loads(json.dumps(filament))
     overlay_g2b(machine, process, filament)
     assert_g2b_identity(process, filament, machine)
-    # Filament block is ApexCore. Process/machine stay on the G2b CONFIG_BLOCK.
+    # Filament block is ApexCore. Process/machine stay on the G2b CONFIG_BLOCK,
+    # then the forefoot stitch Kendon approved on 2026-11-13 is applied on top.
+    # Shared G2b keys (ApexLight, seam, fan, flow targets, overlap) stay put.
     filament = saved
+    for key, value in APEXCORE_FOREFOOT_STITCH.items():
+        cur = process.get(key)
+        process[key] = [value] if isinstance(cur, list) else value
+    assert_g2b_identity(process, filament, machine, forefoot_stitch=True)
     if process.get("layer_height") != "0.46":
         raise SystemExit(f"layer height drifted to {process.get('layer_height')!r}")
     # ApexCore's filament retraction is 1.5 mm and the machine flag is on, so

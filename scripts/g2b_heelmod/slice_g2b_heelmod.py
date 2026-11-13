@@ -96,8 +96,33 @@ def overlay_g2b(machine: dict, process: dict, filament: dict) -> None:
     machine["machine_start_gcode"] = unescape(CFG["machine_start_gcode"])
 
 
-def assert_g2b_identity(process: dict, filament: dict, machine: dict) -> None:
-    """Refuse the e2b2 / PR #7 profile drift called out in review."""
+# Kendon, 2026-11-13 (his own words, PM): ApexCore 95A / apex-v2-insole-95a
+# only. Stitch the thin-forefoot tangent joint. The belt-edge center seam
+# stays aligned (seam_position and the match postprocess are not in this set).
+APEXCORE_FOREFOOT_STITCH = {
+    "wall_generator": "classic",
+    "wall_loops": "1",
+    "filter_out_gap_fill": "0",
+    "gap_fill_target": "everywhere",
+    "min_bead_width": "25%",
+    "detect_thin_wall": "1",
+}
+
+
+def assert_g2b_identity(
+    process: dict,
+    filament: dict,
+    machine: dict,
+    *,
+    forefoot_stitch: bool = False,
+) -> None:
+    """Refuse the e2b2 / PR #7 profile drift called out in review.
+
+    The default check is the shared G2b block (ApexLight and the ApexCore
+    overlay, before the forefoot stitch). ApexCore 95A applies
+    APEXCORE_FOREFOOT_STITCH and calls again with forefoot_stitch=True.
+    That second check is the approved ApexCore identity (Kendon, 2026-11-13).
+    """
     checks = {
         "filter_out_gap_fill": "9999",
         "detect_narrow_internal_solid_infill": "1",
@@ -116,6 +141,8 @@ def assert_g2b_identity(process: dict, filament: dict, machine: dict) -> None:
         "print_direction": "toe_first",
         "outer_wall_speed": "26",
     }
+    if forefoot_stitch:
+        checks.update(APEXCORE_FOREFOOT_STITCH)
     def scalar(v) -> str:
         if isinstance(v, list):
             return "" if not v else str(v[0])
