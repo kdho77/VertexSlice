@@ -99,9 +99,12 @@ def overlay_g2b(machine: dict, process: dict, filament: dict) -> None:
 # Kendon, 2026-11-13 (his own words, PM): ApexCore 95A / apex-v2-insole-95a
 # only. Stitch the thin-forefoot tangent joint. The belt-edge center seam
 # stays aligned (seam_position and the match postprocess are not in this set).
+# Kendon, 2026-11-13 11:27 AM MT: wall_loops stays 2. Classic walls leave one
+# loop only where the section cannot hold two closed loops, so the heel and
+# arch keep the inner wall. No length cutoff; the same rule fits a youth
+# insole and an M13.
 APEXCORE_FOREFOOT_STITCH = {
     "wall_generator": "classic",
-    "wall_loops": "1",
     "filter_out_gap_fill": "0",
     "gap_fill_target": "everywhere",
     "min_bead_width": "25%",
@@ -122,6 +125,7 @@ def assert_g2b_identity(
     overlay, before the forefoot stitch). ApexCore 95A applies
     APEXCORE_FOREFOOT_STITCH and calls again with forefoot_stitch=True.
     That second check is the approved ApexCore identity (Kendon, 2026-11-13).
+    wall_loops stays 2 (Kendon, 2026-11-13 11:27 AM MT).
     """
     checks = {
         "filter_out_gap_fill": "9999",
@@ -143,6 +147,10 @@ def assert_g2b_identity(
     }
     if forefoot_stitch:
         checks.update(APEXCORE_FOREFOOT_STITCH)
+        # Applied after the stitch dict so a one-wall override cannot become
+        # the ApexCore identity. Two loops are global; thin sections drop the
+        # inner loop on their own.
+        checks["wall_loops"] = "2"
     def scalar(v) -> str:
         if isinstance(v, list):
             return "" if not v else str(v[0])

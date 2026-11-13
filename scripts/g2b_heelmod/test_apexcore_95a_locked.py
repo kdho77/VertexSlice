@@ -150,6 +150,10 @@ class ApexCore95ALocked(unittest.TestCase):
         stitch = lock["forefoot_stitch"]
         self.assertEqual(stitch["approved_by"], "Kendon")
         self.assertEqual(stitch["approved_on"], "2026-11-13")
+        self.assertNotIn("wall_loops", APEXCORE_FOREFOOT_STITCH)
+        self.assertEqual(lock["settings"]["wall_loops"]["value"], "2")
+        self.assertEqual(stitch["wall_loops"]["value"], "2")
+        self.assertIn("11:27 AM MT", stitch["wall_loops"]["approved_on"])
         for key, value in APEXCORE_FOREFOOT_STITCH.items():
             self.assertEqual(lock["settings"][key]["value"], value)
             self.assertEqual(stitch["changes"][key]["new"], value)
@@ -172,6 +176,7 @@ class ApexCore95ALocked(unittest.TestCase):
             if isinstance(got, list):
                 got = got[0]
             self.assertEqual(str(got), value)
+        self.assertEqual(str(process["wall_loops"]), "2")
         self.assertEqual(process["seam_position"], "aligned")
         self.assertEqual(str(process["seam_gap"]), "0")
         self.assertEqual(process["outer_wall_flow_ratio"], "1.0142")

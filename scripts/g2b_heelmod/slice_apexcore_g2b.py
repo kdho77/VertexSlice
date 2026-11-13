@@ -4,8 +4,10 @@
 Printed file sha256
 1eb294be4315565e868c0960a569f4f4158253f41b69955dc15cd3da77fb826e
 is the file from before the forefoot stitch. Kendon approved that stitch
-on 2026-11-13 (PM): classic walls, 1 wall loop, gap fill on, min bead 25%,
-detect thin walls. The belt-edge center seam stays aligned. The numbers
+on 2026-11-13 (PM): classic walls, gap fill on, min bead 25%, detect thin
+walls. At 11:27 AM MT the same day he kept wall_loops at 2, so the heel and
+arch still get two walls. Classic walls stitch a section that cannot hold
+two closed loops. The belt-edge center seam stays aligned. The numbers
 live in apexcore_95a_locked.json. prepare() refuses to slice if a setting
 drifts from that file.
 
@@ -154,6 +156,7 @@ def prepare(work: Path, material: str) -> tuple[dict, dict, dict, float]:
     assert_g2b_identity(process, filament, machine)
     # Filament block is ApexCore. Process/machine stay on the G2b CONFIG_BLOCK,
     # then the forefoot stitch Kendon approved on 2026-11-13 is applied on top.
+    # wall_loops stays the shared G2b value of 2 (Kendon, 11:27 AM MT).
     # Shared G2b keys (ApexLight, seam, fan, flow targets, overlap) stay put.
     filament = saved
     for key, value in APEXCORE_FOREFOOT_STITCH.items():

@@ -1,8 +1,8 @@
 # Forefoot seam split — ApexCore 95A slice (2026-11-13)
 
-Kendon approved the forefoot stitch on 2026-11-13 (his own words, PM chat). The six settings in the applied section are now the ApexCore 95A / `apex-v2-insole-95a` identity. The belt-edge center seam stays aligned (`g2b_anchor` still true). No printer commands were run.
+Kendon approved the forefoot stitch on 2026-11-13 (his own words, PM chat), then at 11:27 AM MT the same day kept `wall_loops` at 2 so the heel and arch keep two walls. The current identity is in "Scoped stitch". The belt-edge center seam stays aligned (`g2b_anchor` still true). No printer commands were run.
 
-The sections through "Proposed values" record the slice before that change. The re-slice is in "Applied stitch".
+The sections through "Proposed values" record the slice before any stitch. "Applied stitch" is the first re-slice, with `wall_loops` set to 1 on the whole path. "Scoped stitch" is the one that ships.
 
 ## Result
 
@@ -162,6 +162,8 @@ For the straight belt-face line, the edit is in `postprocess_g2b.py`, not in `se
 
 ## Applied stitch
 
+This section is the first re-slice (`wall_loops` 2 → 1 on the whole path). Kendon's 11:27 AM MT note replaced that. The profile that ships is in "Scoped stitch".
+
 Scope is `prepare()` for `material="core"` only. ApexLight still calls `assert_g2b_identity` without the stitch. Left unchanged: `postprocess_g2b` midpoint restart (`g2b_anchor=True`), `seam_position=aligned`, `seam_gap=0`, retract/prime/wipe, fan 50% / aux 25% from layer 0, `outer_wall_flow_ratio=1.0142`, `infill_wall_overlap=15%`, infill densities 14/20/26/32/38, and every other profile.
 
 Re-slice used the same fixture and the same chain as the section above (`slice_apexcore_g2b.py core` → `postprocess_g2b.py match` → `pullback_v2.py` → `topfix_apexcore.py`), `VS_SPARSE_INFILL_DENSITY=20%`, `APEX_MIN_LAYER_TIME=4`, binary `OrcaBelt-2.3.2-dev` from the main Docker-proof artifact. `topfix` removed 0 pairs.
@@ -220,3 +222,71 @@ The line is the same centerline, 0.07 mm lower in Y, because the classic bottom 
 Outer wall is on every one of these layers both times. Gyroid is still on every thick layer. The inner wall is gone on all of them, because `wall_loops=1` is process-wide on this path; the approval did not include a forefoot-only override. Over Z 150–220 the extrusion lengths move from outer 21050 / inner 16908 / sparse 9898 mm to outer 20774 / inner 0 / sparse 14176 / gap fill 1208 mm.
 
 Where consecutive beads leave a gap above 0.15 mm (mostly the open cells of 20% gyroid), the median of those openings grows: arch Z 150–200, 2.13 mm → 3.49 mm; heel Z 200–250, 1.92 mm → 2.95 mm. The second wall used to occupy that shell. This is the cost of the approved `wall_loops` change, not a new empty channel through the heel. No further key was changed to compensate.
+
+## Scoped stitch
+
+Kendon, 2026-11-13 11:27 AM MT: the one-wall change applies only to the forefoot. Heel and arch keep two walls.
+
+Measured on the same OrthoCAD sample, same chain, same binary. Three profiles:
+
+| Key | Pre-stitch | First stitch (`wall_loops=1`) | Scoped (ships) |
+|---|---|---|---|
+| `wall_generator` | arachne | classic | classic |
+| `wall_loops` | 2 | 1 | 2 |
+| `filter_out_gap_fill` | 9999 | 0 | 0 |
+| `gap_fill_target` | nowhere | everywhere | everywhere |
+| `min_bead_width` | 50% | 25% | 25% |
+| `detect_thin_wall` | 0 | 1 | 1 |
+
+`wall_loops` stays the shared G2b value of 2. It is not in `APEXCORE_FOREFOOT_STITCH`. `assert_g2b_identity(..., forefoot_stitch=True)` requires 2. A height-range or modifier box is not used.
+
+Why this is the forefoot-only result: a second classic loop does not fit in the thin slab, so those layers stay one outer wall plus gap fill. The inner loop appears on its own once the section is thick enough. That test is the local cross-section, not a belt-length cutoff, so a youth insole and an M13 get the stitch in the thin forefoot and two walls through the heel and arch.
+
+A second slice with `detect_thin_wall=0` still stitched the forefoot and still started the inner wall at the same place. Turning thin-wall detection off did not bring the heel any closer to the pre-stitch file, and the overlap in the forefoot dropped from 0.27 mm to 0.08 mm. The approved `detect_thin_wall=1` stays.
+
+### Whole print
+
+| | Pre-stitch | First stitch | Scoped |
+|---|---|---|---|
+| Header layers | 439 | 440 | 440 |
+| Time | 1h 24m 20s | 1h 56m 49s | 2h 23m 24s |
+| Filament | 28962.30 mm / 83.60 g | 22747.21 mm / 65.66 g | 28696.56 mm / 82.83 g |
+
+### Forefoot, belt Z 2–77 mm (115 layers)
+
+| | Pre-stitch | First stitch | Scoped |
+|---|---|---|---|
+| Layers with gap fill | 0 | 114 | 114 |
+| Gap fill length | 0 | 7611 mm | 7611 mm |
+| Inner wall | 0 | 0 | 0 |
+| Median in-plane wall gap | −0.002 mm | −0.266 mm | −0.266 mm |
+| Unfilled stations (>0.15 mm, nothing between) | 0 / 3649 | 0 / 3663 | 0 / 3663 |
+
+The toe tip at belt Z 2.60 mm is the one layer without gap fill (12.5 mm of outer wall, no interior). The other 114 layers overlap by 0.27 mm. Same forefoot toolpath as the first stitch.
+
+### Heel and arch
+
+Inner-wall length and the median open gyroid cell (largest bead-to-bead gap above 0.15 mm). Pre-stitch had no gap fill in these bands.
+
+| Band | Inner pre / first / scoped | Open cell pre / first / scoped |
+|---|---|---|
+| Early arch, Z 78–88 (16 layers) | 1240 mm / 0 / 0 | — |
+| Arch, Z 150–200 (77 layers) | 11665 / 0 / 11098 mm | 2.13 / 3.49 / 2.12 mm |
+| Heel, Z 200–250 (77 layers) | 13361 / 0 / 11225 mm | 1.92 / 2.95 / 2.21 mm |
+| Thick, Z 150–220 (108 layers) | 16908 / 0 / 15974 mm | 2.03 / 3.31 / 2.09 mm |
+
+The inner wall is back on every arch and heel layer from belt Z 88 mm. Over Z 150–220 it is 15974 mm against 16908 mm before. The arch cell is 2.12 mm against 2.13 mm. The heel cell is 2.21 mm against 1.92 mm: classic walls plus the new gap fill (3180 mm on Z 200–250, 0 before) shorten the inner wall and leave a slightly larger gyroid opening. The first stitch's 2.95 mm heel cell is gone.
+
+The early arch, belt Z 78–88, still has no inner wall (gap fill 1362 mm instead of the pre-stitch inner wall of 1240 mm). Classic loops need more thickness than Arachne did before a second closed wall fits. The first inner wall in the scoped slice is at belt Z 88.5 mm. Pre-stitch started at 78.1 mm.
+
+### Seam, belt Z 6.50–52.04 mm (71 layers)
+
+Same postprocess. Scoped matches the first stitch, because the forefoot loops are the same.
+
+| | Pre-stitch | Scoped |
+|---|---|---|
+| Seam Y | 0.093–0.100 mm | 0.021–0.028 mm |
+| Median \|dX\| vs pre-stitch | | 0.002 mm |
+| Layers off the X track | | 1 (Z 6.50, X 130.904 → 116.273) |
+
+The line is still the belt-edge center, 0.07 mm lower. One toe layer moves.
