@@ -416,4 +416,4 @@ Belt-face seam, Z 6.50–52.04 mm, 70 layers. The landing is the `;seam travel` 
 
 `test_travel_wall_crossings` and `test_apexcore_95a_locked`: 21 passed, 1 skipped (the pre-stitch sha). The gate ceiling is still main’s 121 and the per-region counts above. `validation/belt_gcode_gate.py` on this final: R7-1ST-Y PASS, first layer Y [1.289, 1.289] mm. R11-GANTRY PASS. R8-Z-STEP WARN, average step 0.651 mm, the same warning as the pre-stitch file. `scripts/belt_smoke.sh`: 14 PASS, 0 WARN, 0 FAIL. No golden hash was repinned.
 
-CI on `8381972c`: “Build image and run slice proof” SUCCESS, “Validation scripts (no binary)” SUCCESS. The pull request stays a draft.
+CI on `8381972c`: “Build image and run slice proof” SUCCESS, “Validation scripts (no binary)” SUCCESS. The chord retract is `1d8990e29d`. The measurement note follows it. The pull request stays a draft.
