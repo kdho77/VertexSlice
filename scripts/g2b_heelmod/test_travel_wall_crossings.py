@@ -284,5 +284,81 @@ class TravelWallCrossings(unittest.TestCase):
         self.assertIn("G1 X21 Y10 E0.05", out)
 
 
+class PullbackSeamChordTest(unittest.TestCase):
+    """A long infill seam keeps its retract when the hop is split along the wall."""
+
+    def _run(self, text: str) -> str:
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "in.gcode"
+            dst = Path(tmp) / "out.gcode"
+            src.write_text(text)
+            subprocess.run(
+                [sys.executable, str(HERE / "pullback_v2.py"), str(src), str(dst)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return dst.read_text()
+
+    def test_inside_route_keeps_the_chord_retract(self) -> None:
+        # Chord is 30 mm. The along-wall steps are short, so a per-segment
+        # test would drop the retract the single hop used to get.
+        src = "\n".join([
+            "G1 E-0.5 F1800",
+            ";LAYER_CHANGE",
+            ";TYPE:Sparse infill",
+            "G1 X0 Y0 E0.1",
+            ";C seam travel: inside",
+            "G1 X10 Y0 F12720 ;seam inside",
+            "G1 X20 Y0 F12720 ;seam inside",
+            "G1 X30 Y0 F12720 ;seam travel",
+            ";TYPE:Sparse infill",
+            "G1 X31 Y0 E0.1",
+            "",
+        ])
+        out = self._run(src)
+        self.assertEqual(out.count("G1 E-0.5 F1800"), 2)
+        self.assertEqual(out.count("G1 E0.45"), 1)
+        self.assertLess(out.index("G1 E-0.5 F1800", 1), out.index(";seam inside"))
+
+    def test_short_chord_does_not_gain_a_retract(self) -> None:
+        src = "\n".join([
+            "G1 E-0.5 F1800",
+            ";LAYER_CHANGE",
+            ";TYPE:Sparse infill",
+            "G1 X0 Y0 E0.1",
+            ";C seam travel: inside",
+            "G1 X0 Y10 F12720 ;seam inside",
+            "G1 X0 Y20 F12720 ;seam inside",
+            "G1 X3 Y0 F12720 ;seam travel",
+            ";TYPE:Sparse infill",
+            "G1 X4 Y0 E0.1",
+            "",
+        ])
+        out = self._run(src)
+        self.assertEqual(out.count("G1 E-0.5 F1800"), 1)
+        self.assertNotIn("G1 E0.45", out)
+
+    def test_direct_hop_still_retracts(self) -> None:
+        src = "\n".join([
+            "G1 E-0.5 F1800",
+            ";LAYER_CHANGE",
+            ";TYPE:Sparse infill",
+            "G1 X0 Y0 E0.1",
+            ";C seam travel: lift + direct",
+            "G1 Y0.4 F12720 ;lift",
+            "G1 X30 Y0.4 F12720 ;seam travel",
+            ";TYPE:Sparse infill",
+            "G1 X31 Y0 E0.1",
+            "",
+        ])
+        out = self._run(src)
+        self.assertEqual(out.count("G1 E-0.5 F1800"), 2)
+        self.assertEqual(out.count("G1 E0.45"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
