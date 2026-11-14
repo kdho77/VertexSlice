@@ -24,19 +24,25 @@ from check_travel_wall_crossings import (  # noqa: E402
 # OrthoCAD sample top, Soft 20% gyroid, final G-code, measured 2026-11-14.
 # Perimeter crossings are travels whose XY segment crosses an outer or
 # overhang wall and whose endpoints are more than 0.3 mm from that wall.
-# On these profiles every remaining crossing is a `;C seam travel` direct
-# hop from postprocess_g2b (seam_block). The slicer's own travels, with
-# reduce_crossing_wall=1, add none. chain_gap_fill_travels must not add any
-# either (chain_hops stays 0). The seam-block count is higher on the stitch
-# than on main because classic walls plus gap fill create more seam hops;
-# turning the chain off leaves 265 of those, so they are not the chain.
+# The ceiling is main's pre-stitch final, region by region. A later slice
+# fails when any region goes above that. The straight seam hop on the first
+# stitch measured 267; the inside route brought this branch to 0.
+MAIN_REGION_CROSSINGS = {
+    "forefoot": 0,
+    "arch": 0,
+    "heel": 89,
+    "other": 32,
+}
 RECORDED_SLICE = {
     "apexcore_main_perimeter": 121,
-    "apexcore_main_seam_block": 121,
-    "apexcore_stitch_chain_off_perimeter": 520,
-    "apexcore_stitch_chain_off_seam_block": 265,
-    "apexcore_pr29_perimeter": 267,
-    "apexcore_pr29_seam_block": 267,
+    "apexcore_main_regions": MAIN_REGION_CROSSINGS,
+    "apexcore_pr29_perimeter": 0,
+    "apexcore_pr29_regions": {
+        "forefoot": 0,
+        "arch": 0,
+        "heel": 0,
+        "other": 0,
+    },
     "apexcore_pr29_chain_hops": 0,
     "apex_light_perimeter": 0,
 }
@@ -224,31 +230,58 @@ class TravelWallCrossings(unittest.TestCase):
         self.assertNotIn("G1 X12.000 Y5.000 F12720", out)
         self.assertIn("G1 X12 Y-1 F12720", out)
 
-    def test_recorded_chain_adds_no_non_seam_crossing(self) -> None:
+    def test_recorded_stitch_stays_at_or_under_main_per_region(self) -> None:
         recorded = RECORDED_SLICE
-        self.assertEqual(recorded["apexcore_main_perimeter"], recorded["apexcore_main_seam_block"])
+        main_regions = recorded["apexcore_main_regions"]
+        pr_regions = recorded["apexcore_pr29_regions"]
+        self.assertEqual(sum(main_regions.values()), recorded["apexcore_main_perimeter"])
+        self.assertEqual(recorded["apexcore_main_perimeter"], 121)
         self.assertEqual(recorded["apex_light_perimeter"], 0)
         self.assertEqual(recorded["apexcore_pr29_chain_hops"], 0)
-        self.assertEqual(
-            recorded["apexcore_pr29_perimeter"] - recorded["apexcore_pr29_seam_block"],
-            0,
-        )
-        # The chain may not add seam-block crossings beyond the two measured
-        # against the same stitch with the chain turned off.
-        self.assertLessEqual(
-            recorded["apexcore_pr29_seam_block"],
-            recorded["apexcore_stitch_chain_off_seam_block"] + 2,
-        )
-        baseline = {"totals": {"perimeter_crossings": recorded["apexcore_pr29_perimeter"]}}
+        for name, cap in main_regions.items():
+            self.assertLessEqual(pr_regions[name], cap, name)
+        self.assertLessEqual(sum(pr_regions.values()), recorded["apexcore_main_perimeter"])
+        baseline = {"totals": {"perimeter_crossings": recorded["apexcore_main_perimeter"]}}
         assert_crossings_not_increased(
             {"totals": {"perimeter_crossings": recorded["apexcore_pr29_perimeter"]}},
             baseline,
         )
         with self.assertRaises(AssertionError):
             assert_crossings_not_increased(
-                {"totals": {"perimeter_crossings": recorded["apexcore_pr29_perimeter"] + 1}},
+                {"totals": {"perimeter_crossings": recorded["apexcore_main_perimeter"] + 1}},
                 baseline,
             )
+
+    def test_seam_routes_around_a_wall_and_keeps_the_landing(self) -> None:
+        from postprocess_g2b import seam
+
+        # The open wall ends on the left. Sparse infill starts on the right.
+        # A straight hop crosses the closed outer wall between them.
+        src = "\n".join([
+            "M83",
+            "G90",
+            ";LAYER_CHANGE",
+            ";Z:40",
+            "G1 X8 Y0 F1560",
+            ";TYPE:Outer wall",
+            "G1 X14 Y0 E0.2",
+            "G1 X14 Y12 E0.2",
+            "G1 X8 Y12 E0.2",
+            "G1 X8 Y0 E0.2",
+            "G1 X1 Y2 F12720",
+            ";TYPE:Outer wall",
+            "G1 X1 Y10 E0.3",
+            "G1 X20 Y10 F12720",
+            ";TYPE:Sparse infill",
+            "G1 X21 Y10 E0.05",
+            "",
+        ])
+        out, _counts = seam(src, retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
+        self.assertIn(";C seam travel: inside", out)
+        self.assertNotIn("G1 X20.000 Y10.400", out)
+        report = analyze(out)
+        self.assertEqual(report["totals"]["perimeter_crossings"], 0)
+        self.assertIn("G1 X21 Y10 E0.05", out)
 
 
 if __name__ == "__main__":
