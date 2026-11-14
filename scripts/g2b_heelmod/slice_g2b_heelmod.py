@@ -96,8 +96,41 @@ def overlay_g2b(machine: dict, process: dict, filament: dict) -> None:
     machine["machine_start_gcode"] = unescape(CFG["machine_start_gcode"])
 
 
-def assert_g2b_identity(process: dict, filament: dict, machine: dict) -> None:
-    """Refuse the e2b2 / PR #7 profile drift called out in review."""
+# Kendon, 2026-11-13 (his own words, PM): ApexCore 95A / apex-v2-insole-95a
+# only. Stitch the thin-forefoot tangent joint. The belt-edge center seam
+# stays aligned (seam_position and the match postprocess are not in this set).
+# Kendon, 2026-11-13 11:27 AM MT: wall_loops stays 2. Classic walls leave one
+# loop only where the section cannot hold two closed loops, so the heel and
+# arch keep the inner wall. The same rule fits a youth insole and an M13.
+# Kendon, 2026-11-13 4:35 PM MT: the extra hour was travel between gap beads
+# that already meet, not a slow gap speed (gap_infill_speed is already the
+# outer-wall 26 mm/s). filter_out_gap_fill 8 drops polylines shorter than
+# 8 mm. Those are scattered heel and arch islands. The forefoot stitch
+# polylines are longer than 8 mm, so the joint stays.
+APEXCORE_FOREFOOT_STITCH = {
+    "wall_generator": "classic",
+    "filter_out_gap_fill": "8",
+    "gap_fill_target": "everywhere",
+    "min_bead_width": "25%",
+    "detect_thin_wall": "1",
+}
+
+
+def assert_g2b_identity(
+    process: dict,
+    filament: dict,
+    machine: dict,
+    *,
+    forefoot_stitch: bool = False,
+) -> None:
+    """Refuse the e2b2 / PR #7 profile drift called out in review.
+
+    The default check is the shared G2b block (ApexLight and the ApexCore
+    overlay, before the forefoot stitch). ApexCore 95A applies
+    APEXCORE_FOREFOOT_STITCH and calls again with forefoot_stitch=True.
+    That second check is the approved ApexCore identity (Kendon, 2026-11-13).
+    wall_loops stays 2 (Kendon, 2026-11-13 11:27 AM MT).
+    """
     checks = {
         "filter_out_gap_fill": "9999",
         "detect_narrow_internal_solid_infill": "1",
@@ -115,7 +148,16 @@ def assert_g2b_identity(process: dict, filament: dict, machine: dict) -> None:
         "min_bead_width": "50%",
         "print_direction": "toe_first",
         "outer_wall_speed": "26",
+        # Already the outer-wall speed in the shared G2b block. Locked so a
+        # slower inherited default cannot come back. Kendon, 2026-11-13 4:35 PM MT.
+        "gap_infill_speed": "26",
     }
+    if forefoot_stitch:
+        checks.update(APEXCORE_FOREFOOT_STITCH)
+        # Applied after the stitch dict so a one-wall override cannot become
+        # the ApexCore identity. Two loops are global; thin sections drop the
+        # inner loop on their own.
+        checks["wall_loops"] = "2"
     def scalar(v) -> str:
         if isinstance(v, list):
             return "" if not v else str(v[0])

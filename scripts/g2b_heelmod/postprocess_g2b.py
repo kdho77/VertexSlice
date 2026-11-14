@@ -250,17 +250,218 @@ def _wall_chains(segs: list[dict], kind: str, anchor_x: float | None, anchor: bo
     return _open_chains(segs, i, t), anchor_x
 
 
-def _emit_approach(out: list[str], x: float, y: float, z: float, dx: float, dy: float, dz: float, retract: bool) -> None:
-    out.append(";C seam travel: lift + direct\n")
+def _perimeter_by_layer(lines: list[str]) -> list[list[tuple[float, float, float, float]]]:
+    """Outer and overhang extrusion edges. Index 0 is the preamble, before the first layer."""
+    layers: list[list[tuple[float, float, float, float]]] = [[]]
+    x = y = None
+    typ = ""
+    for line in lines:
+        if line.startswith(";LAYER_CHANGE"):
+            # A layer that omits ;TYPE: keeps the previous feature. The tip of
+            # this insole is still outer wall, and the crossing check treats it
+            # that way.
+            layers.append([])
+            continue
+        if line.startswith(";TYPE:"):
+            typ = line[6:].strip()
+            continue
+        if typ not in ("Outer wall", "Overhang wall") or not _is_g01(line):
+            if _is_g01(line):
+                w = _words(line)
+                if "X" in w:
+                    x = float(w["X"])
+                if "Y" in w:
+                    y = float(w["Y"])
+            continue
+        w = _words(line)
+        if "E" not in w or float(w["E"]) <= 0 or ("X" not in w and "Y" not in w):
+            if "X" in w:
+                x = float(w["X"])
+            if "Y" in w:
+                y = float(w["Y"])
+            continue
+        if x is None or y is None:
+            if "X" in w:
+                x = float(w["X"])
+            if "Y" in w:
+                y = float(w["Y"])
+            continue
+        nx = float(w["X"]) if "X" in w else x
+        ny = float(w["Y"]) if "Y" in w else y
+        layers[-1].append((x, y, nx, ny))
+        x, y = nx, ny
+    return layers
+
+
+def _crossing(grid, ax: float, ay: float, bx: float, by: float) -> bool:
+    if math.hypot(bx - ax, by - ay) <= 1e-4:
+        return False
+    if not grid.hits(ax, ay, bx, by):
+        return False
+    return not (grid.near_endpoint(ax, ay, 0.3) or grid.near_endpoint(bx, by, 0.3))
+
+
+def _closest_on_ring(ring: list[tuple[float, float]], px: float, py: float):
+    best = (px, py)
+    best_d = 1e18
+    best_i = 0
+    best_t = 0.0
+    n = len(ring) - 1
+    for i in range(n):
+        ax, ay = ring[i]
+        bx, by = ring[i + 1]
+        dx, dy = bx - ax, by - ay
+        len2 = dx * dx + dy * dy
+        t = 0.0 if len2 <= 1e-18 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / len2))
+        qx, qy = ax + t * dx, ay + t * dy
+        dist = math.hypot(px - qx, py - qy)
+        if dist < best_d:
+            best_d, best, best_i, best_t = dist, (qx, qy), i, t
+    return best, best_i, best_t
+
+
+def _walk_ring(ring, i0: int, t0: float, i1: int, t1: float, direction: int) -> list[tuple[float, float]]:
+    n = len(ring) - 1
+
+    def pt(i: int, t: float) -> tuple[float, float]:
+        ax, ay = ring[i]
+        bx, by = ring[i + 1]
+        return (ax + (bx - ax) * t, ay + (by - ay) * t)
+
+    start, goal = pt(i0, t0), pt(i1, t1)
+    if i0 == i1 and ((direction > 0 and t0 <= t1 + 1e-9) or (direction < 0 and t1 <= t0 + 1e-9)):
+        return [start, goal]
+    pts = [start]
+    i = i0
+    for _ in range(n + 3):
+        if direction > 0:
+            nxt = ring[i + 1]
+            i = (i + 1) % n
+        else:
+            nxt = ring[i]
+            i = (i - 1) % n
+        if math.hypot(pts[-1][0] - nxt[0], pts[-1][1] - nxt[1]) > 1e-6:
+            pts.append((nxt[0], nxt[1]))
+        if i == i1:
+            pts.append(goal)
+            return pts
+    pts.append(goal)
+    return pts
+
+
+def _radial_inset(ring: list[tuple[float, float]], dist: float) -> list[tuple[float, float]]:
+    """Pull each vertex toward the ring centroid, staying short of it."""
+    pts = ring[:-1]
+    cx = sum(p[0] for p in pts) / len(pts)
+    cy = sum(p[1] for p in pts) / len(pts)
+    inn = []
+    for px, py in pts:
+        dx, dy = cx - px, cy - py
+        length = math.hypot(dx, dy) or 1.0
+        step = min(dist, length * 0.4)
+        inn.append((px + dx / length * step, py + dy / length * step))
+    inn.append(inn[0])
+    return inn
+
+
+def _dock(grid, ring, inn, px: float, py: float):
+    """Points from (px, py) onto the inset ring, entering through the boundary when needed."""
+    ip, ii, it = _closest_on_ring(inn, px, py)
+    if not _crossing(grid, px, py, ip[0], ip[1]):
+        return [ (px, py), ip ], ii, it
+    op, _oi, _ot = _closest_on_ring(ring, px, py)
+    ip2, ii2, it2 = _closest_on_ring(inn, op[0], op[1])
+    return [(px, py), op, ip2], ii2, it2
+
+
+def _clean_path(path: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    out = [path[0]]
+    for px, py in path[1:]:
+        if math.hypot(px - out[-1][0], py - out[-1][1]) > 0.02:
+            out.append((px, py))
+    return out
+
+
+def route_inside_wall(
+    edges: list[tuple[float, float, float, float]],
+    start: tuple[float, float],
+    dest: tuple[float, float],
+) -> list[tuple[float, float]]:
+    """Path from start to dest that does not cut across an outer wall.
+
+    A straight hop is kept when it does not cross. Otherwise the path follows
+    the largest outer ring, inset toward its centroid, so the nozzle stays
+    inside the part. The seam point itself is unchanged: the path ends at dest.
+    """
+    from check_travel_wall_crossings import _Grid, _chain_polygons
+
+    if not edges:
+        return [start, dest]
+    grid = _Grid(edges)
+    ax, ay = start
+    bx, by = dest
+    if not grid.hits(ax, ay, bx, by):
+        return [start, dest]
+    _closed, _open, rings = _chain_polygons(edges)
+    if not rings:
+        return [start, dest]
+    ring = max(rings, key=lambda r: abs(sum(
+        r[i][0] * r[i + 1][1] - r[i + 1][0] * r[i][1] for i in range(len(r) - 1)
+    )))
+    for dist in (0.25, 0.15, 0.08):
+        inn = _radial_inset(ring, dist)
+        left, i0, t0 = _dock(grid, ring, inn, ax, ay)
+        right, i1, t1 = _dock(grid, ring, inn, bx, by)
+        cands = []
+        for direction in (1, -1):
+            mid = _walk_ring(inn, i0, t0, i1, t1, direction)
+            path = _clean_path(left[:-1] + mid + list(reversed(right)))
+            if not any(_crossing(grid, p[0], p[1], q[0], q[1]) for p, q in zip(path, path[1:])):
+                length = sum(math.hypot(q[0] - p[0], q[1] - p[1]) for p, q in zip(path, path[1:]))
+                cands.append((length, path))
+        if cands:
+            cands.sort(key=lambda item: item[0])
+            return cands[0][1]
+    return [start, dest]
+
+
+def _emit_approach(
+    out: list[str],
+    x: float,
+    y: float,
+    z: float,
+    dx: float,
+    dy: float,
+    dz: float,
+    retract: bool,
+    route: list[tuple[float, float]] | None = None,
+) -> None:
+    inside = route is not None and len(route) >= 2
+    out.append(";C seam travel: inside\n" if inside else ";C seam travel: lift + direct\n")
     if retract:
         out.append(f"G1 E-{RETRACT:.1f} F{RETRACT_F:.0f}\n")
-    out.append(f"G1 Y{_fmt(y + LIFT, 3)} F{TRAVEL_F:.0f} ;lift\n")
-    travel = f"G1 X{_fmt(dx, 3)} Y{_fmt(dy + LIFT, 3)}"
-    if z is None or abs((dz or 0) - (z or 0)) > 1e-4:
-        travel += f" Z{_fmt(dz, 3)}"
-    travel += f" F{TRAVEL_F:.0f} ;seam travel\n"
-    out.append(travel)
-    out.append(f"G1 Y{_fmt(dy, 3)} F{TRAVEL_F:.0f} ;lower\n")
+    if not inside:
+        out.append(f"G1 Y{_fmt(y + LIFT, 3)} F{TRAVEL_F:.0f} ;lift\n")
+        travel = f"G1 X{_fmt(dx, 3)} Y{_fmt(dy + LIFT, 3)}"
+        if z is None or abs((dz or 0) - (z or 0)) > 1e-4:
+            travel += f" Z{_fmt(dz, 3)}"
+        travel += f" F{TRAVEL_F:.0f} ;seam travel\n"
+        out.append(travel)
+        out.append(f"G1 Y{_fmt(dy, 3)} F{TRAVEL_F:.0f} ;lower\n")
+    else:
+        # The +0.4 Y lift is what swings a chord across the wall. The inside
+        # path is at the layer's own XY and still ends on the seam point.
+        pts = route[1:]
+        z_move = z is None or abs((dz or 0) - (z or 0)) > 1e-4
+        for i, (px, py) in enumerate(pts):
+            last = i == len(pts) - 1
+            travel = f"G1 X{_fmt(px, 3)} Y{_fmt(py, 3)}"
+            if last and z_move:
+                travel += f" Z{_fmt(dz, 3)}"
+            tag = " ;seam travel" if last else " ;seam inside"
+            travel += f" F{TRAVEL_F:.0f}{tag}\n"
+            out.append(travel)
+        out.append(f"G1 Y{_fmt(dy, 3)} F{TRAVEL_F:.0f} ;lower\n")
     if retract:
         out.append(f"G1 E{PRIME:.2f} F{RETRACT_F:.0f}\n")
     out.append(f"G1 F{TRAVEL_F:.0f}\n")
@@ -282,6 +483,11 @@ def seam(
     i = 0
     n = len(lines)
     counts = {"seam_travel": 0, "retract": 0, "prime": 0, "wipe": 0, "seam_start": 0}
+    from check_travel_wall_crossings import _Grid
+
+    walls_by_layer = _perimeter_by_layer(lines)
+    wall_grids = [_Grid(edges) if edges else None for edges in walls_by_layer]
+    layer_i = 0
 
     def extrusion(line: str) -> bool:
         if not _is_g01(line):
@@ -299,6 +505,11 @@ def seam(
 
     while i < n:
         line = lines[i]
+        if line.startswith(";LAYER_CHANGE"):
+            layer_i += 1
+            out.append(line)
+            i += 1
+            continue
         if line.startswith(";TYPE:"):
             typ = line[6:].strip()
             out.append(line)
@@ -429,8 +640,13 @@ def seam(
                                 if tl.startswith(";TYPE:"):
                                     typ = tl[6:].strip()
                     use_dz = dz if ci == 0 else z
+                    route = None
+                    grid = wall_grids[layer_i] if layer_i < len(wall_grids) else None
+                    if grid is not None and _crossing(grid, x, y + LIFT, dx, dy + LIFT):
+                        route = route_inside_wall(walls_by_layer[layer_i], (x, y), (dx, dy))
                     _emit_approach(
-                        out, x, y, z if z is not None else 0.0, dx, dy, use_dz if use_dz is not None else 0.0, do_retract
+                        out, x, y, z if z is not None else 0.0, dx, dy,
+                        use_dz if use_dz is not None else 0.0, do_retract, route,
                     )
                     counts["seam_travel"] += 1
                     if do_retract:
