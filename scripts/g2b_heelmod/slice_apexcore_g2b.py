@@ -53,6 +53,7 @@ if lib and Path(lib).is_dir():
     prior = os.environ.get("LD_LIBRARY_PATH")
     os.environ["LD_LIBRARY_PATH"] = lib + (":" + prior if prior else "")
 
+from check_travel_wall_crossings import travel_crosses_edge  # noqa: E402
 from slice_g2b_heelmod import (  # noqa: E402
     APEXCORE_FOREFOOT_STITCH,
     Y_MACH_OFFSET_LIGHT,
@@ -260,8 +261,28 @@ def _rewrite_dest(line: str, x: float, y: float) -> str:
     return _WORD.sub(sub, line, count=0)
 
 
-def _chain_beads(beads: list[dict]) -> list[list[tuple[int, bool]]]:
-    """Greedy chains. Each step is (bead index, reversed)."""
+def _segment_crosses_wall(
+    walls: list[tuple[float, float, float, float]] | None,
+    a: tuple[float, float],
+    b: tuple[float, float],
+) -> bool:
+    """True when travel AB crosses an outer-wall edge away from its own endpoints."""
+    if not walls:
+        return False
+    if math.hypot(a[0] - b[0], a[1] - b[1]) <= 1e-6:
+        return False
+    return any(travel_crosses_edge(a[0], a[1], b[0], b[1], *edge) for edge in walls)
+
+
+def _chain_beads(
+    beads: list[dict],
+    walls: list[tuple[float, float, float, float]] | None = None,
+) -> list[list[tuple[int, bool]]]:
+    """Greedy chains. Each step is (bead index, reversed).
+
+    A join that would cross an outer wall is not a chain. Those beads keep
+    the slicer's combed travel instead of a straight hop.
+    """
     n = len(beads)
     unused = set(range(n))
     grid: dict[tuple[int, int], list[tuple[int, int]]] = {}
@@ -296,7 +317,7 @@ def _chain_beads(beads: list[dict]) -> list[list[tuple[int, bool]]]:
                         continue
                     pt = beads[i]["pts"][0] if end == 0 else beads[i]["pts"][-1]
                     d = math.hypot(pt[0] - x, pt[1] - y)
-                    if d <= best_d:
+                    if d <= best_d and not _segment_crosses_wall(walls, (x, y), pt):
                         best_d = d
                         best = (i, end)
         return best
@@ -337,46 +358,225 @@ def _chain_beads(beads: list[dict]) -> list[list[tuple[int, bool]]]:
     return chains
 
 
-def _emit_gap_chains(beads: list[dict], origin: tuple[float, float] | None) -> list[str]:
+def _emit_straight(out: list[str], x: float, y: float) -> None:
+    out.append("M204 S10000\n")
+    out.append(f"G1 X{x:.3f} Y{y:.3f} F12720\n")
+    out.append("M204 S8000\n")
+
+
+def _pt_key(pt: tuple[float, float]) -> tuple[int, int]:
+    return (int(round(pt[0] * 50)), int(round(pt[1] * 50)))
+
+
+def _gap_neighbors(
+    segments: list[tuple[float, float, float, float]],
+    walls: list[tuple[float, float, float, float]] | None,
+) -> dict[tuple[int, int], list[tuple[float, float]]]:
+    """Gap-bead graph. Endpoints within the join tolerance connect when that
+    short link does not cross an outer wall."""
+    adj: dict[tuple[int, int], list[tuple[float, float]]] = {}
+    nodes: list[tuple[float, float]] = []
+
+    def add(a: tuple[float, float], b: tuple[float, float]) -> None:
+        adj.setdefault(_pt_key(a), []).append(b)
+
+    for x0, y0, x1, y1 in segments:
+        a, b = (x0, y0), (x1, y1)
+        add(a, b)
+        add(b, a)
+        nodes.append(a)
+        nodes.append(b)
+    # One pass: connect a node to later nodes within the join tolerance.
+    # n is a few hundred beads on a heel layer.
+    for i, a in enumerate(nodes):
+        for b in nodes[i + 1 :]:
+            if math.hypot(a[0] - b[0], a[1] - b[1]) > _GAP_JOIN_MM:
+                continue
+            if _segment_crosses_wall(walls, a, b):
+                continue
+            add(a, b)
+            add(b, a)
+    return adj
+
+
+def _path_along_gaps(
+    segments: list[tuple[float, float, float, float]],
+    walls: list[tuple[float, float, float, float]] | None,
+    start: tuple[float, float],
+    goal: tuple[float, float],
+) -> list[tuple[float, float]] | None:
+    if math.hypot(start[0] - goal[0], start[1] - goal[1]) <= 0.05:
+        return [start]
+    adj = _gap_neighbors(segments, walls)
+    sk, gk = _pt_key(start), _pt_key(goal)
+    if sk not in adj or gk not in adj:
+        return None
+    prev: dict[tuple[int, int], tuple[tuple[int, int], tuple[float, float]] | None] = {sk: None}
+    queue = [sk]
+    found = False
+    while queue:
+        key = queue.pop(0)
+        if key == gk:
+            found = True
+            break
+        for nxt in adj.get(key, ()):
+            nk = _pt_key(nxt)
+            if nk in prev:
+                continue
+            prev[nk] = (key, nxt)
+            queue.append(nk)
+    if not found:
+        return None
+    path = [goal]
+    key = gk
+    while prev[key] is not None:
+        parent, pt = prev[key]
+        path.append(pt)
+        key = parent
+    path.append(start)
+    path.reverse()
+    return path
+
+
+def _move_inside(
+    out: list[str],
+    pos: tuple[float, float] | None,
+    dest: tuple[float, float],
+    segments: list[tuple[float, float, float, float]],
+    walls: list[tuple[float, float, float, float]] | None,
+) -> tuple[float, float] | None:
+    """Move to dest without a straight hop that crosses an outer wall.
+
+    A straight line is used when it stays off the wall. Otherwise the move
+    follows gap-bead centerlines, which are inside the part. If neither
+    exists, the nozzle stays put so a later original travel can run.
+    """
+    if pos is None:
+        return pos
+    if math.hypot(pos[0] - dest[0], pos[1] - dest[1]) <= 0.05:
+        return dest
+    if not _segment_crosses_wall(walls, pos, dest):
+        _emit_straight(out, dest[0], dest[1])
+        return dest
+    path = _path_along_gaps(segments, walls, pos, dest)
+    if not path:
+        return pos
+    for pt in path[1:]:
+        if _segment_crosses_wall(walls, pos, pt):
+            return pos
+        if math.hypot(pos[0] - pt[0], pos[1] - pt[1]) > 0.05:
+            _emit_straight(out, pt[0], pt[1])
+        pos = pt
+    return pos
+
+
+def _play_travels(
+    out: list[str],
+    lines: list[str],
+    pos: tuple[float, float] | None,
+) -> tuple[float, float] | None:
+    x = None if pos is None else pos[0]
+    y = None if pos is None else pos[1]
+    for line in lines:
+        out.append(line)
+        if _is_travel(line):
+            x, y = _xy_of(line, x, y)
+    if x is None or y is None:
+        return pos
+    return (x, y)
+
+
+def _emit_bead(out: list[str], bead: dict, rev: bool) -> tuple[float, float]:
+    out.extend(bead["header"])
+    pts = bead["pts"]
+    moves = bead["moves"]
+    if not rev:
+        out.extend(moves)
+        return pts[-1]
+    for k, move in enumerate(reversed(moves)):
+        dest = pts[-(k + 2)]
+        out.append(_rewrite_dest(move, dest[0], dest[1]))
+    return pts[0]
+
+
+def _bead_segments(bead: dict) -> list[tuple[float, float, float, float]]:
+    pts = bead["pts"]
+    return [(pts[k][0], pts[k][1], pts[k + 1][0], pts[k + 1][1]) for k in range(len(pts) - 1)]
+
+
+def _emit_gap_chains(
+    beads: list[dict],
+    origin: tuple[float, float] | None,
+    walls: list[tuple[float, float, float, float]] | None = None,
+) -> list[str]:
+    """Print each touching run as one path, without a new wall-crossing travel.
+
+    Chains are entered in slicer order. The combed travel that first reached
+    the chain is kept. A straight hop is emitted only when it does not cross
+    an outer wall. Before the exit travel (played by the caller) the nozzle
+    is back at the original end of the gap block, so that travel keeps the
+    slicer's own path.
+    """
     if not beads:
         return []
-    chains = _chain_beads(beads)
-    # Nearest chain first, so the hop between chains stays short.
-    pending = list(range(len(chains)))
+    chains = _chain_beads(beads, walls)
+    segments: list[tuple[float, float, float, float]] = []
+    for bead in beads:
+        segments.extend(_bead_segments(bead))
+    order = sorted(range(len(chains)), key=lambda ci: min(i for i, _rev in chains[ci]))
     pos = origin
     out: list[str] = []
-
-    def chain_start(ci: int) -> tuple[float, float]:
-        i, rev = chains[ci][0]
-        pts = beads[i]["pts"]
-        return pts[-1] if rev else pts[0]
-
-    while pending:
+    for ci in order:
+        chain = chains[ci]
+        entry_i = min(i for i, _rev in chain)
+        exit_i = max(i for i, _rev in chain)
+        entry = beads[entry_i]
+        entry_pt = entry["pts"][0]
+        exit_pt = beads[exit_i]["pts"][-1]
+        approach_from = entry.get("approach_from")
+        if pos is not None and approach_from is not None:
+            pos = _move_inside(out, pos, approach_from, segments, walls)
+        pos = _play_travels(out, entry.get("approach") or [], pos if approach_from is None else approach_from)
+        # The kept approach ends on the slicer's entry point. A straight hop is
+        # used only when it does not cross an outer wall.
         if pos is None:
-            pick = pending.pop(0)
+            pos = entry_pt
         else:
-            pick = min(pending, key=lambda ci: math.hypot(chain_start(ci)[0] - pos[0], chain_start(ci)[1] - pos[1]))
-            pending.remove(pick)
-        sx, sy = chain_start(pick)
-        if pos is not None and math.hypot(sx - pos[0], sy - pos[1]) > _GAP_JOIN_MM:
-            out.append("M204 S10000\n")
-            out.append(f"G1 X{sx:.3f} Y{sy:.3f} F12720\n")
-            out.append("M204 S8000\n")
-        for i, rev in chains[pick]:
-            bead = beads[i]
-            out.extend(bead["header"])
-            moves = bead["moves"]
-            pts = bead["pts"]
-            if not rev:
-                out.extend(moves)
-                pos = pts[-1]
-            else:
-                # Walk the polyline backwards. E on each move stays, destination swaps.
-                for k, move in enumerate(reversed(moves)):
-                    dest = pts[-(k + 2)]
-                    out.append(_rewrite_dest(move, dest[0], dest[1]))
-                pos = pts[0]
+            pos = _move_inside(out, pos, entry_pt, segments, walls) or pos
+        path_start_i, path_start_rev = chain[0]
+        path_start = beads[path_start_i]["pts"][-1] if path_start_rev else beads[path_start_i]["pts"][0]
+        pos = _move_inside(out, pos, path_start, segments, walls) or path_start
+        for i, rev in chain:
+            pos = _emit_bead(out, beads[i], rev)
+        pos = _move_inside(out, pos, exit_pt, segments, walls) or exit_pt
+    if beads and pos is not None:
+        original_end = beads[-1]["pts"][-1]
+        pos = _move_inside(out, pos, original_end, segments, walls) or original_end
     return out
+
+
+def _outer_walls_by_layer(lines: list[str]) -> list[list[tuple[float, float, float, float]]]:
+    """Outer and overhang extrusion edges, indexed like ;LAYER_CHANGE (0 = preamble)."""
+    layers: list[list[tuple[float, float, float, float]]] = [[]]
+    x: float | None = None
+    y: float | None = None
+    typ = ""
+    for line in lines:
+        if line.startswith(";LAYER_CHANGE"):
+            layers.append([])
+            typ = ""
+            continue
+        if line.startswith(";TYPE:"):
+            typ = line[6:].strip()
+            continue
+        body = line.split(";", 1)[0].strip()
+        if body.startswith(("G0", "G1")) and ("X" in body or "Y" in body):
+            if typ in ("Outer wall", "Overhang wall") and _is_gap_extrusion(line) and x is not None and y is not None:
+                nx, ny = _xy_of(line, x, y)
+                if nx is not None and ny is not None:
+                    layers[-1].append((x, y, nx, ny))
+            x, y = _xy_of(line, x, y)
+    return layers
 
 
 def chain_gap_fill_travels(text: str) -> str:
@@ -388,8 +588,13 @@ def chain_gap_fill_travels(text: str) -> str:
     extrusion start at the last bead. Kendon, 2026-11-13 4:35 PM MT: the
     scoped slice added about an hour at the same filament weight, and that
     hour was the travels between beads that already meet.
+
+    A straight hop that would cross an outer wall is not written. The chain
+    returns to the slicer's own point and keeps that combed travel, so
+    reduce_crossing_wall is not undone by the reorder.
     """
     lines = text.splitlines(keepends=True)
+    walls_by_layer = _outer_walls_by_layer(lines)
     out: list[str] = []
     beads: list[dict] = []
     header: list[str] = []
@@ -397,24 +602,34 @@ def chain_gap_fill_travels(text: str) -> str:
     # hop the chain replaces (if another bead follows) or the exit to the
     # next feature (if the block ends).
     tail: list[str] = []
+    tail_from: tuple[float, float] | None = None
     gap = False
     x: float | None = None
     y: float | None = None
     origin: tuple[float, float] | None = None
+    layer_i = 0
 
     def flush() -> None:
-        nonlocal beads, header, tail, origin
+        nonlocal beads, header, tail, tail_from, origin
+        walls = walls_by_layer[layer_i] if layer_i < len(walls_by_layer) else []
         if beads:
-            out.extend(_emit_gap_chains(beads, origin))
+            out.extend(_emit_gap_chains(beads, origin, walls))
         out.extend(header)
         out.extend(tail)
         beads = []
         header = []
         tail = []
+        tail_from = None
         origin = None
 
     for line in lines:
-        if line.startswith(";TYPE:") or line.startswith(";LAYER_CHANGE"):
+        if line.startswith(";LAYER_CHANGE"):
+            flush()
+            layer_i += 1
+            gap = False
+            out.append(line)
+            continue
+        if line.startswith(";TYPE:"):
             flush()
             gap = line.startswith(";TYPE:Gap infill")
             if gap and x is not None and y is not None:
@@ -433,26 +648,40 @@ def chain_gap_fill_travels(text: str) -> str:
                 continue
             # The travels since the previous bead are the ones the chain
             # replaces. Width, feed, and accel lines in that span belong to
-            # this bead.
+            # this bead. The travel lines themselves are kept on the bead so
+            # a hop that would cross a wall can fall back to the slicer's path.
+            approach: list[str] = []
+            approach_from = (x, y) if tail_from is None else tail_from
             if tail:
+                approach = [ln for ln in tail if _is_travel(ln)]
                 header.extend(ln for ln in tail if not _is_travel(ln))
                 tail = []
+                tail_from = None
             nx, ny = _xy_of(line, x, y)
             # A bead that continues the previous one with no travel stays one bead.
             if (
                 beads
                 and not header
+                and not approach
                 and abs(beads[-1]["pts"][-1][0] - x) < 1e-6
                 and abs(beads[-1]["pts"][-1][1] - y) < 1e-6
             ):
                 beads[-1]["pts"].append((nx, ny))
                 beads[-1]["moves"].append(line)
             else:
-                beads.append({"pts": [(x, y), (nx, ny)], "moves": [line], "header": header})
+                beads.append({
+                    "pts": [(x, y), (nx, ny)],
+                    "moves": [line],
+                    "header": header,
+                    "approach": approach,
+                    "approach_from": approach_from,
+                })
                 header = []
             x, y = nx, ny
             continue
         if _is_travel(line):
+            if tail_from is None:
+                tail_from = (x, y) if x is not None and y is not None else None
             tail.append(line)
             x, y = _xy_of(line, x, y)
             continue
