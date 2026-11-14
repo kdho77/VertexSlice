@@ -31,7 +31,12 @@ for i,l in enumerate(lines):
     if l.startswith(';LAYER_CHANGE'): layer+=1; reset(); lastext=None; SEAM=False
     if l.startswith(';TYPE:'): typ=l[6:].strip()
     if 'seam' in l.lower() or 'C_SEAM' in l:
-        reset(); lastext=None; SEAM=True
+        # An inside-wall seam route is several `;seam inside` moves plus the
+        # landing. They are one approach. Keep the chain and score the chord,
+        # which is the length the lift-and-direct hop used to have.
+        cont=chain is not None and chain.get('inside') and ('seam inside' in l.lower() or 'seam travel' in l.lower())
+        if not cont:
+            reset(); lastext=None; SEAM=True
     d=parse(l)
     if d is None: continue
     nx,ny=d.get('X',x),d.get('Y',y)
@@ -50,8 +55,12 @@ for i,l in enumerate(lines):
         reset(); lastext=None; SEAM=False
     elif 'X' in d or 'Y' in d:
         if chain is None:
-            chain={'start':i,'len':0,'ok':lastext is not None and lastext[1] in INF and typ in INF,'Fbefore':Fb,'layer':layer,'stype':lastext[1] if lastext else None,'last':i,'seam':SEAM,'y0':y}
-        chain['len']+=math.hypot(nx-x,ny-y); chain['last']=i; chain['Fafter']=F
+            chain={'start':i,'len':0,'ok':lastext is not None and lastext[1] in INF and typ in INF,'Fbefore':Fb,'layer':layer,'stype':lastext[1] if lastext else None,'last':i,'seam':SEAM,'y0':y,'x0':x,'inside':'seam inside' in l.lower()}
+        if chain.get('inside'):
+            chain['len']=math.hypot(nx-chain['x0'],ny-chain['y0'])
+        else:
+            chain['len']+=math.hypot(nx-x,ny-y)
+        chain['last']=i; chain['Fafter']=F
         if typ not in INF: chain['ok']=False
     x,y=nx,ny
 out=[];after={}

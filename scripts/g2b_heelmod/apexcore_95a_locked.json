@@ -1,7 +1,26 @@
 {
   "profile": "ApexCore 95A G2b",
   "status": "LOCKED",
-  "approval": "Locked to the file Kendon printed. No changes without Kendon's approval.",
+  "approval": "Locked to the file Kendon printed, plus the forefoot stitch Kendon approved on 2026-11-13. At 11:27 AM MT he kept wall_loops at 2 so the heel and arch keep two walls. At 4:35 PM MT the extra hour of print time was the travels between gap beads that already meet. gap_infill_speed was already 26 mm/s, the same as the outer wall. filter_out_gap_fill 8 drops gap polylines shorter than 8 mm; the forefoot stitch is longer than that. The belt-edge center seam stays aligned. No other changes without Kendon's approval.",
+  "forefoot_stitch": {
+    "approved_by": "Kendon",
+    "approved_on": "2026-11-13",
+    "scope": "apex-v2-insole-95a / ApexCore 95A only",
+    "seam": "stays aligned at the belt-edge center (g2b_anchor unchanged)",
+    "wall_loops": {
+      "value": "2",
+      "approved_by": "Kendon",
+      "approved_on": "2026-11-13 11:27 AM MT",
+      "why": "Two loops stay on the whole path. Classic walls omit the inner loop only where the section cannot hold two closed loops, which is the thin forefoot on a youth insole and on an M13. No fixed belt-length cutoff."
+    },
+    "changes": {
+      "wall_generator": {"old": "arachne", "new": "classic"},
+      "filter_out_gap_fill": {"old": "9999", "new": "8", "why": "A threshold of 0 keeps every gap polyline. After beads that already meet are printed as one path, the polylines shorter than 8 mm are scattered heel and arch islands, and the travel between those islands is the time still above the pre-stitch print. The forefoot stitch polylines are longer than 8 mm."},
+      "gap_fill_target": {"old": "nowhere", "new": "everywhere"},
+      "min_bead_width": {"old": "50%", "new": "25%"},
+      "detect_thin_wall": {"old": "0", "new": "1"}
+    }
+  },
   "sha256": "1eb294be4315565e868c0960a569f4f4158253f41b69955dc15cd3da77fb826e",
   "slicer": "OrcaBelt def8eff480",
   "layer_height_mm": 0.46,
@@ -26,6 +45,12 @@
     "infill_wall_overlap": {"profile": "process", "value": "15%"},
     "minimum_sparse_infill_area": {"profile": "process", "value": "5"},
     "wall_loops": {"profile": "process", "value": "2"},
+    "wall_generator": {"profile": "process", "value": "classic"},
+    "filter_out_gap_fill": {"profile": "process", "value": "8"},
+    "gap_infill_speed": {"profile": "process", "value": "26", "why": "Already equal to outer_wall_speed in the shared G2b block. Not the extra hour. Locked so a slower default cannot replace it."},
+    "gap_fill_target": {"profile": "process", "value": "everywhere"},
+    "min_bead_width": {"profile": "process", "value": "25%"},
+    "detect_thin_wall": {"profile": "process", "value": "1"},
     "nozzle_temperature": {"profile": "filament", "value": "225"},
     "nozzle_temperature_initial_layer": {"profile": "filament", "value": "225"},
     "nozzle_temperature_range_low": {"profile": "filament", "value": "220"},
