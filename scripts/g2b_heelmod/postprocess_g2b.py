@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
-"""G2b post-process: shear E fix, belt-side seam, min-layer-time, coupon cut.
+"""G2b post-process: shear E fix, off-belt seam, min-layer-time, coupon cut.
 
 efix rescales every extruding XY move from the belt-shear length
 sqrt(dx^2+2*dy^2) back to the true XY length. It never changes F.
 
-The seam block matches the G2b toe file: belt-side start on closed wall
-loops, retract 0.5 / lift +0.4 Y / prime 0.45, travel at the machine travel
-feed, and a 0.7 mm outer wipe at 60% of that wall's feed. Infill travels get
-the lift only (no retract). E on split edges is divided by true XY length so
-outer E/mm stays flat across a layer.
+Closed outer and overhang walls used to start on the belt (min-Y) to match
+the G2b toe file. That stacks the seam on the plantar face. They now start
+at the midpoint of the face away from the belt (max-Y). A flat loop with no
+point above the belt band still uses that toe-file belt start, so a leader
+tab with no dorsal face is unchanged. Inner walls still restart on the belt
+contact at the outer seam's X. Coupon cut and min-layer-time do not use the
+seam point. The inside-wall travel still ends on whatever point the seam uses.
+
+Retract 0.5 and prime 0.5. A closed outer loop then extrudes a 0.4 mm
+overlap and wipes 0.7 mm dry at 60% of that wall's feed. Infill travels get
+the lift only (no retract). E on split edges is divided by true XY length
+so outer E/mm stays flat across a layer.
 
 Min-time slows a layer whose true-XY time is under 8 s. Feed is scaled and
 clamped to a 10 mm/s floor. E is not touched.
@@ -32,12 +39,17 @@ INFILL = {
     "Internal Bridge",
 }
 RETRACT = 0.5
-PRIME = 0.45
+PRIME = 0.5
 LIFT = 0.4
 RETRACT_F = 1800
 TRAVEL_F = 12720  # 212 mm/s
 WIPE_MM = 0.7
 WIPE_FRAC = 0.6
+# Extruded past the joint, along the wall the loop just started. The dry wipe
+# still follows, so the join is covered instead of left short.
+OVERLAP_MM = 0.4
+_EDGE_BAND = 0.25
+_EDGE_MIN_LEN = 2.0
 
 
 def _body(line: str) -> str:
@@ -134,6 +146,135 @@ def _belt_split(segments: list[dict]) -> list[dict]:
     return [b] + segments[best_i + 1 :] + segments[:best_i] + [a]
 
 
+def _start_on_segment(segments: list[dict], i: int, t: float) -> list[dict]:
+    """Rotate a closed loop so it begins at fraction t of segment i. E/mm stays flat."""
+    n = len(segments)
+    if t <= 1e-4:
+        return segments[i:] + segments[:i]
+    if t >= 1.0 - 1e-4:
+        j = (i + 1) % n
+        return segments[j:] + segments[:j]
+    s = segments[i]
+    mx = s["x0"] + (s["x1"] - s["x0"]) * t
+    my = s["y0"] + (s["y1"] - s["y0"]) * t
+    e = s["e"]
+    f = s["f"]
+    comments = list(s["comments"])
+
+    def _synth(x1: float, y1: float, ee: float, ff: str | None) -> str:
+        parts = ["G1", f"X{_fmt(x1, 3)}", f"Y{_fmt(y1, 3)}", f"E{ee:.5f}"]
+        if ff:
+            parts.append(f"F{float(ff):.0f}")
+        return " ".join(parts) + "\n"
+
+    b = dict(s)
+    b.update(x0=mx, y0=my, e=e * (1 - t), raw=_synth(s["x1"], s["y1"], e * (1 - t), f), comments=list(comments))
+    a = dict(s)
+    a.update(x1=mx, y1=my, e=e * t, raw=_synth(mx, my, e * t, f), comments=list(comments))
+    return [b] + segments[i + 1 :] + segments[:i] + [a]
+
+
+def _longest_edge_run(segments: list[dict], on_edge) -> tuple[int, int, float] | None:
+    """Longest consecutive run of on-edge segments, wrapping the closed loop.
+
+    Returns (start index, count, length).
+    """
+    n = len(segments)
+    flags = [bool(on_edge(s)) for s in segments]
+    if not any(flags):
+        return None
+    if all(flags):
+        runs = [(0, n)]
+    else:
+        shift = flags.index(False)
+        rotated = flags[shift:] + flags[:shift]
+        runs = []
+        i = 0
+        while i < n:
+            if not rotated[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and rotated[j]:
+                j += 1
+            runs.append(((i + shift) % n, j - i))
+            i = j
+    best = None
+    for start, count in runs:
+        length = 0.0
+        for k in range(count):
+            s = segments[(start + k) % n]
+            length += math.hypot(s["x1"] - s["x0"], s["y1"] - s["y0"])
+        if best is None or length > best[2]:
+            best = (start, count, length)
+    return best
+
+
+def _run_midpoint(segments: list[dict], start: int, count: int) -> tuple[int, float]:
+    """Segment index and fraction where the run's arc-length midpoint falls."""
+    n = len(segments)
+    lengths = []
+    for k in range(count):
+        s = segments[(start + k) % n]
+        lengths.append(math.hypot(s["x1"] - s["x0"], s["y1"] - s["y0"]))
+    half = 0.5 * sum(lengths)
+    acc = 0.0
+    for k, length in enumerate(lengths):
+        if acc + length >= half - 1e-9:
+            t = 0.0 if length <= 1e-9 else (half - acc) / length
+            return (start + k) % n, min(1.0, max(0.0, t))
+        acc += length
+    return (start + count - 1) % n, 1.0
+
+
+def _dorsal_vertex_start(segments: list[dict], pts: list[tuple[float, float]]) -> list[dict]:
+    """Start at the dorsal-most vertex. Ties break toward a lateral end, off the midline."""
+    ymax = max(p[1] for p in pts)
+    xs = [p[0] for p in pts]
+    mid_x = 0.5 * (min(xs) + max(xs))
+    best_d = 1e18
+    best_i = 0
+    for i, s in enumerate(segments):
+        d = (ymax - s["y0"]) * 1000.0 - abs(s["x0"] - mid_x)
+        if d < best_d:
+            best_d = d
+            best_i = i
+    return segments[best_i:] + segments[:best_i]
+
+
+def _dorsal_split(segments: list[dict]) -> list[dict]:
+    """Rotate a closed loop so it starts off the plantar (belt) face.
+
+    The start is the midpoint of the max-Y edge, the face away from the belt.
+    A crest shorter than 2 mm uses the dorsal-most vertex instead, and a tie
+    there prefers the lateral end. A flat loop with no point above the belt
+    band keeps the toe-file belt start: that is a leader tab with no dorsal face.
+    """
+    if len(segments) < 3:
+        return segments
+    pts = [(segments[0]["x0"], segments[0]["y0"])] + [(s["x1"], s["y1"]) for s in segments]
+    if math.hypot(pts[-1][0] - pts[0][0], pts[-1][1] - pts[0][1]) > 0.8:
+        return segments
+    ymin = min(p[1] for p in pts)
+    ymax = max(p[1] for p in pts)
+    if ymax <= ymin + _EDGE_BAND:
+        return _belt_split(segments)
+
+    def on_dorsal(s: dict) -> bool:
+        return s["y0"] >= ymax - _EDGE_BAND and s["y1"] >= ymax - _EDGE_BAND
+
+    run = _longest_edge_run(segments, on_dorsal)
+    if run is not None and run[2] >= _EDGE_MIN_LEN:
+        i, t = _run_midpoint(segments, run[0], run[1])
+        started = _start_on_segment(segments, i, t)
+        if started[0]["y0"] > ymin + _EDGE_BAND:
+            return started
+    started = _dorsal_vertex_start(segments, pts)
+    if started[0]["y0"] <= ymin + _EDGE_BAND:
+        return _belt_split(segments)
+    return started
+
+
 def _synth_move(x1: float, y1: float, ee: float, ff: str | None) -> str:
     parts = ["G1", f"X{_fmt(x1, 3)}", f"Y{_fmt(y1, 3)}", f"E{ee:.5f}"]
     if ff:
@@ -217,15 +358,20 @@ def _rotate_at(segs: list[dict], i: int, t: float) -> list[dict]:
 
 
 def _wall_chains(segs: list[dict], kind: str, anchor_x: float | None, anchor: bool) -> tuple[list[list[dict]], float | None]:
-    """Outer walls start at their belt-edge midpoint. Other walls start at that same X.
+    """Outer and overhang walls start off the belt. Other walls start at that seam's X.
 
+    A closed outer loop starts at the midpoint of its max-Y edge. Inner walls,
+    when the G2b anchor is on, still restart on the belt contact at that X.
     An open wall that crosses the anchor in its middle is extruded as two runs,
     both beginning on the belt. That is the extra seam the G2b toe file inserts.
     """
     if not segs:
         return [segs], anchor_x
     if not anchor or kind in ("Outer wall", "Overhang wall"):
-        segs = _belt_split(segs)
+        if kind in ("Outer wall", "Overhang wall"):
+            segs = _dorsal_split(segs)
+        else:
+            segs = _belt_split(segs)
         new_anchor = segs[0]["x0"] if kind in ("Outer wall", "Overhang wall") else anchor_x
         return [segs], new_anchor
     if anchor_x is None:
@@ -651,6 +797,44 @@ def _rendered_crosses(grid, start: tuple[float, float], rendered: list[str]) -> 
     return False
 
 
+def _emit_outer_finish(
+    out: list[str],
+    chain: list[dict],
+    feed_fallback: float,
+    counts: dict,
+) -> tuple[float, float] | None:
+    """Cover a closed joint, then the dry wipe. Returns the nozzle XY after the wipe.
+
+    The wipe hides a blob, so it stays. The 0.4 mm before it is extruded along
+    the wall the loop started on, which is the direction past the joint. An
+    open wall keeps the dry glide only.
+    """
+    if not chain:
+        return None
+    closed = math.hypot(chain[-1]["x1"] - chain[0]["x0"], chain[-1]["y1"] - chain[0]["y0"]) <= 0.8
+    guide = chain[0] if closed else chain[-1]
+    span = math.hypot(guide["x1"] - guide["x0"], guide["y1"] - guide["y0"])
+    if span <= 1e-6:
+        return None
+    ux = (guide["x1"] - guide["x0"]) / span
+    uy = (guide["y1"] - guide["y0"]) / span
+    feed = float(guide["f"]) if guide.get("f") else feed_fallback
+    sx, sy = chain[-1]["x1"], chain[-1]["y1"]
+    if closed and guide["e"] > 0:
+        step = min(OVERLAP_MM, span)
+        sx = chain[-1]["x1"] + ux * step
+        sy = chain[-1]["y1"] + uy * step
+        out.append(f"G1 X{_fmt(sx, 3)} Y{_fmt(sy, 3)} E{guide['e'] / span * step:.5f} F{feed:.0f} ;seam overlap\n")
+        counts["overlap"] += 1
+    wx = sx + ux * WIPE_MM
+    wy = sy + uy * WIPE_MM
+    out.append(";WIPE_START\n")
+    out.append(f"G1 X{_fmt(wx, 3)} Y{_fmt(wy, 3)} F{feed * WIPE_FRAC:.0f} ;glide\n")
+    out.append(";WIPE_END\n")
+    counts["wipe"] += 1
+    return wx, wy
+
+
 def _emit_approach(
     out: list[str],
     x: float,
@@ -676,8 +860,10 @@ def _emit_approach(
         out.append(f"G1 Y{_fmt(dy, 3)} F{TRAVEL_F:.0f} ;lower\n")
     else:
         # The +0.4 Y lift is what swings a chord across the wall. The inside
-        # path is at the layer's own XY and still ends on the seam point.
-        pts = route[1:]
+        # path is at the layer's own XY. A 0.02 mm cleanup can drop the real
+        # destination, so the last point is put back on the seam.
+        pts = list(route[1:])
+        pts[-1] = (dx, dy)
         z_move = z is None or abs((dz or 0) - (z or 0)) > 1e-4
         for i, (px, py) in enumerate(pts):
             last = i == len(pts) - 1
@@ -708,7 +894,7 @@ def seam(
     anchor_x: float | None = None
     i = 0
     n = len(lines)
-    counts = {"seam_travel": 0, "retract": 0, "prime": 0, "wipe": 0, "seam_start": 0}
+    counts = {"seam_travel": 0, "retract": 0, "prime": 0, "wipe": 0, "overlap": 0, "seam_start": 0}
     from check_travel_wall_crossings import _Grid
 
     walls_by_layer = _perimeter_by_layer(lines)
@@ -784,7 +970,7 @@ def seam(
                     elif _is_g01(tl) and not extrusion(tl):
                         feeds.append(tl if tl.endswith("\n") else tl + "\n")
                 # Parse the extrusion run before emitting the approach, so a rotated
-                # wall can be travelled to at its belt-side start.
+                # wall can be travelled to at its seam start.
                 segs: list[dict] = []
                 comments: list[str] = []
                 k = j
@@ -891,19 +1077,9 @@ def seam(
                     last_chain = ci == len(chains) - 1
                     if wall:
                         if last_chain and dest_type in ("Outer wall", "Overhang wall"):
-                            last = chain[-1]
-                            span = math.hypot(last["x1"] - last["x0"], last["y1"] - last["y0"])
-                            if span > 1e-6:
-                                ux = (last["x1"] - last["x0"]) / span
-                                uy = (last["y1"] - last["y0"]) / span
-                                feed = float(last["f"]) if last["f"] else (f or 1560.0)
-                                wx = last["x1"] + ux * WIPE_MM
-                                wy = last["y1"] + uy * WIPE_MM
-                                out.append(";WIPE_START\n")
-                                out.append(f"G1 X{_fmt(wx, 3)} Y{_fmt(wy, 3)} F{feed * WIPE_FRAC:.0f} ;glide\n")
-                                out.append(";WIPE_END\n")
-                                counts["wipe"] += 1
-                                x, y = wx, wy
+                            finished = _emit_outer_finish(out, chain, f or 1560.0, counts)
+                            if finished is not None:
+                                x, y = finished
                         out.append(";C_SEAM_END\n")
                     elif last_chain:
                         out.extend(comments)
