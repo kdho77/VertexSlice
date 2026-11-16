@@ -1,0 +1,55 @@
+DONE ApexLight crossings=1 rcw=1
+DONE ApexCore crossings=0 rcw=1
+DONE ApexForge crossings=257 rcw=1
+DONE ApexBounce crossings=257 rcw=1
+===JSON===
+[
+  {
+    "material": "ApexLight",
+    "material_id": "apex_light",
+    "reduce_crossing_wall": "1",
+    "filament_settings_id": "ApexLight",
+    "print_settings_id": "0.42mm TPU Insole Medium @Vertex Apex V2",
+    "sparse_infill_density": "26%",
+    "sparse_infill_pattern": "gyroid",
+    "wall_crossings": 1,
+    "elapsed_s": 173.934,
+    "chain": "apex_light-pr17q-postedit"
+  },
+  {
+    "material": "ApexCore",
+    "material_id": "apex_core",
+    "reduce_crossing_wall": "1",
+    "filament_settings_id": "ApexCore",
+    "print_settings_id": "0.42mm TPU Insole Medium @Vertex Apex V2",
+    "sparse_infill_density": "26%",
+    "sparse_infill_pattern": "gyroid",
+    "wall_crossings": 0,
+    "elapsed_s": 5.15,
+    "chain": "apex_core-g2b-v1"
+  },
+  {
+    "material": "ApexForge",
+    "material_id": "apex_forge",
+    "reduce_crossing_wall": "1",
+    "filament_settings_id": "ApexForge",
+    "print_settings_id": "0.42mm TPU Insole Medium @Vertex Apex V2",
+    "sparse_infill_density": "26%",
+    "sparse_infill_pattern": "gyroid",
+    "wall_crossings": 257,
+    "elapsed_s": 4.547,
+    "chain": null
+  },
+  {
+    "material": "ApexBounce",
+    "material_id": "apex_bounce",
+    "reduce_crossing_wall": "1",
+    "filament_settings_id": "ApexBounce",
+    "print_settings_id": "0.42mm TPU Insole Medium @Vertex Apex V2",
+    "sparse_infill_density": "26%",
+    "sparse_infill_pattern": "gyroid",
+    "wall_crossings": 257,
+    "elapsed_s": 4.888,
+    "chain": null
+  }
+]
