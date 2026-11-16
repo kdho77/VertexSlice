@@ -314,6 +314,18 @@ def slice_stl(
             postprocess(gcode_path.read_text(encoding="utf-8", errors="replace")),
             encoding="utf-8",
         )
+    if material in ("apex_forge", "apex_bounce"):
+        # Their filament and process stay as sliced. This is the inside-wall
+        # travel walk Core's seam pass already uses, and nothing else.
+        g2b = REPO_ROOT / "scripts" / "g2b_heelmod"
+        if str(g2b) not in sys.path:
+            sys.path.insert(0, str(g2b))
+        from postprocess_g2b import clear_perimeter_crossings
+
+        gcode_path.write_text(
+            clear_perimeter_crossings(gcode_path.read_text(encoding="utf-8", errors="replace")),
+            encoding="utf-8",
+        )
     gcodes = [gcode_path]
 
     stats = {
