@@ -9,12 +9,26 @@ without changing ``pp_d.py`` or ApexCore output.
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from . import apex_light_post_edit
 
 
 def finalize_apex_light(text: str) -> str:
-    """Last stage: fan lock + drop pp_c seam E-0.5/E0.45 pairs."""
-    return apex_light_post_edit.apply_post_edit(text)
+    """Last stage: fan lock, drop pp_c seam E pairs, then the inside-wall travel pass."""
+    text = apex_light_post_edit.apply_post_edit(text)
+    return _clear_perimeter_crossings(text)
+
+
+def _clear_perimeter_crossings(text: str) -> str:
+    """Light-only. ApexCore never reaches this module."""
+    g2b = Path(__file__).resolve().parents[2] / "scripts" / "g2b_heelmod"
+    if str(g2b) not in sys.path:
+        sys.path.insert(0, str(g2b))
+    from postprocess_g2b import clear_perimeter_crossings
+
+    return clear_perimeter_crossings(text)
 
 
 def run_after_pp_d(text: str, *, material: str | None = None) -> str:

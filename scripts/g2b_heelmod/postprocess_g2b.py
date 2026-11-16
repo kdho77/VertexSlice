@@ -425,6 +425,232 @@ def route_inside_wall(
     return [start, dest]
 
 
+# Open outer walls (a seam gap, or the last few tip layers) have no closed ring,
+# so route_inside_wall keeps the straight hop. Pairing the two loose ends up to
+# this gap lets that same inset walk run. The checker still uses the real edges.
+_OPEN_WALL_CLOSE_MM = 30.0
+
+
+def _path_crosses(grid, path: list[tuple[float, float]]) -> bool:
+    return any(_crossing(grid, p[0], p[1], q[0], q[1]) for p, q in zip(path, path[1:]))
+
+
+def _loose_ends(edges: list[tuple[float, float, float, float]]) -> list[tuple[float, float]]:
+    from check_travel_wall_crossings import CLOSE_MM
+
+    def key(x: float, y: float) -> tuple[int, int]:
+        return (int(round(x / CLOSE_MM)), int(round(y / CLOSE_MM)))
+
+    degree: dict[tuple[int, int], int] = {}
+    pos: dict[tuple[int, int], tuple[float, float]] = {}
+    for x0, y0, x1, y1 in edges:
+        for point in ((x0, y0), (x1, y1)):
+            k = key(*point)
+            degree[k] = degree.get(k, 0) + 1
+            pos[k] = point
+    return [pos[k] for k, count in degree.items() if count == 1]
+
+
+def _closing_edges(edges: list[tuple[float, float, float, float]]) -> list[tuple[float, float, float, float]]:
+    """Join each loose end to its nearest loose end within _OPEN_WALL_CLOSE_MM."""
+    ends = _loose_ends(edges)
+    extra: list[tuple[float, float, float, float]] = []
+    used: set[int] = set()
+    for i, start in enumerate(ends):
+        if i in used:
+            continue
+        best: tuple[float, int, tuple[float, float]] | None = None
+        for j in range(i + 1, len(ends)):
+            if j in used:
+                continue
+            other = ends[j]
+            dist = math.hypot(start[0] - other[0], start[1] - other[1])
+            if dist <= _OPEN_WALL_CLOSE_MM and dist > 1e-6 and (best is None or dist < best[0]):
+                best = (dist, j, other)
+        if best is None:
+            continue
+        used.add(i)
+        used.add(best[1])
+        extra.append((start[0], start[1], best[2][0], best[2][1]))
+    return extra
+
+
+def _route_off_wall(
+    edges: list[tuple[float, float, float, float]],
+    start: tuple[float, float],
+    dest: tuple[float, float],
+    grid,
+) -> list[tuple[float, float]] | None:
+    """Inside-wall path, or None when no path stays off the real perimeter."""
+    path = route_inside_wall(edges, start, dest)
+    if len(path) >= 3 and not _path_crosses(grid, path):
+        return path
+    extra = _closing_edges(edges)
+    if not extra:
+        return None
+    path = route_inside_wall([*edges, *extra], start, dest)
+    if len(path) >= 3 and not _path_crosses(grid, path):
+        return path
+    return None
+
+
+def clear_perimeter_crossings(text: str) -> str:
+    """Reroute travels that cut an outer or overhang wall.
+
+    Same inside-wall walk the G2b seam pass uses. Extrusion lines, feeds on
+    those lines, and every travel that does not cross are copied unchanged.
+    A file with no perimeter crossing is returned as the same string.
+    """
+    from check_travel_wall_crossings import OUTER, OVERHANG, _Grid, _body, _is_move, _words
+
+    lines = text.splitlines(keepends=True)
+    x = y = None
+    absolute = True
+    relative_e = False
+    abs_e = 0.0
+    typ = ""
+    layer_i = -1
+    edges: list[list[tuple[float, float, float, float]]] = []
+    travels: list[tuple[int, int, float, float, float, float]] = []
+
+    for index, raw in enumerate(lines):
+        if raw.startswith(";LAYER_CHANGE"):
+            layer_i += 1
+            edges.append([])
+            continue
+        if raw.startswith(";TYPE:"):
+            typ = raw[6:].splitlines()[0].strip()
+            continue
+        body = _body(raw)
+        if body.startswith("M83"):
+            relative_e = True
+            continue
+        if body.startswith("M82"):
+            relative_e = False
+            continue
+        if body.startswith("G90"):
+            absolute = True
+            continue
+        if body.startswith("G91"):
+            absolute = False
+            continue
+        if body.startswith("G92"):
+            w = _words(raw)
+            if "X" in w:
+                x = float(w["X"])
+            if "Y" in w:
+                y = float(w["Y"])
+            if "E" in w:
+                abs_e = float(w["E"])
+            continue
+        if not _is_move(raw):
+            continue
+        w = _words(raw)
+        px, py = x, y
+        if "X" in w:
+            x = float(w["X"]) if absolute or x is None else x + float(w["X"])
+        if "Y" in w:
+            y = float(w["Y"]) if absolute or y is None else y + float(w["Y"])
+        de = 0.0
+        if "E" in w:
+            amount = float(w["E"])
+            if relative_e:
+                de = amount
+            else:
+                de = amount - abs_e
+                abs_e = amount
+        if px is None or py is None or x is None or y is None:
+            continue
+        if "X" not in w and "Y" not in w:
+            continue
+        if layer_i < 0:
+            continue
+        if de > 1e-9:
+            if typ in (OUTER, OVERHANG):
+                edges[layer_i].append((px, py, x, y))
+        elif "E" not in w:
+            travels.append((index, layer_i, px, py, x, y))
+
+    if not travels:
+        return text
+
+    replacements: dict[int, list[str]] = {}
+    for index, layer_i, px, py, nx, ny in travels:
+        layer_edges = edges[layer_i] if layer_i < len(edges) else []
+        if not layer_edges:
+            continue
+        grid = _Grid(layer_edges)
+        if not _crossing(grid, px, py, nx, ny):
+            continue
+        path = _route_off_wall(layer_edges, (px, py), (nx, ny), grid)
+        if path is None:
+            continue
+        rendered = _render_routed_travel(lines[index], path)
+        if rendered is None:
+            continue
+        # Rounding can put a vertex back on the wall. Keep the original line then.
+        if _rendered_crosses(grid, (px, py), rendered):
+            continue
+        replacements[index] = rendered
+
+    if not replacements:
+        return text
+    out: list[str] = []
+    for index, raw in enumerate(lines):
+        out.extend(replacements.get(index, [raw]))
+    return "".join(out)
+
+
+def _render_routed_travel(raw: str, path: list[tuple[float, float]]) -> list[str] | None:
+    """Replace one straight travel with the inside path. Destination tokens stay."""
+    newline = "\r\n" if raw.endswith("\r\n") else "\n" if raw.endswith("\n") else ""
+    content = raw[: len(raw) - len(newline)] if newline else raw
+    body, sep, comment = content.partition(";")
+    words = dict(WORD.findall(body))
+    cmd = body.strip().split(" ", 1)[0]
+    if cmd not in ("G0", "G1"):
+        return None
+    points = path[1:]
+    if len(points) < 2:
+        return None
+    f_token = words.get("F")
+    z_token = words.get("Z")
+    dest_x = words.get("X")
+    dest_y = words.get("Y")
+    comment_text = (" " + sep + comment) if sep else ""
+    rendered: list[str] = []
+    for i, (px, py) in enumerate(points):
+        last = i == len(points) - 1
+        if last and dest_x is not None and dest_y is not None:
+            x_token, y_token = dest_x, dest_y
+        else:
+            x_token, y_token = _fmt(px, 3), _fmt(py, 3)
+        parts = [cmd, f"X{x_token}", f"Y{y_token}"]
+        if last and z_token is not None:
+            parts.append(f"Z{z_token}")
+        if i == 0 and f_token is not None:
+            parts.append(f"F{f_token}")
+        piece = " ".join(parts)
+        if last and comment_text:
+            piece += comment_text
+        rendered.append(piece + newline)
+    return rendered
+
+
+def _rendered_crosses(grid, start: tuple[float, float], rendered: list[str]) -> bool:
+    x, y = start
+    for line in rendered:
+        words = dict(WORD.findall(_body(line)))
+        if "X" not in words and "Y" not in words:
+            continue
+        nx = float(words["X"]) if "X" in words else x
+        ny = float(words["Y"]) if "Y" in words else y
+        if _crossing(grid, x, y, nx, ny):
+            return True
+        x, y = nx, ny
+    return False
+
+
 def _emit_approach(
     out: list[str],
     x: float,
