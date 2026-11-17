@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ApexCore / ApexForge / ApexBounce / ApexLight materials: temps, API, PRINT_START call line."""
+"""ApexCore / ApexForge / ApexBounce / ApexLight / ApexVylon materials: temps, API, PRINT_START call line."""
 from __future__ import annotations
 
 import json
@@ -69,6 +69,7 @@ def test_registry_and_api_contract() -> list[str]:
         "apex_forge": ("ApexForge", 245, 0),
         "apex_bounce": ("ApexBounce", 225, 60),
         "apex_light": ("ApexLight", 260, 0),
+        "apex_vylon": ("ApexVylon", 245, 60),
     }
     if set(mats) != set(expect):
         fails.append(f"material ids {sorted(mats)} != {sorted(expect)}")
@@ -131,7 +132,7 @@ def test_http_400_and_materials_endpoint() -> list[str]:
     if body.get("default") != "apex_core":
         fails.append(f"GET /v1/materials default {body.get('default')!r}")
     ids = [m["id"] for m in body.get("materials") or []]
-    if ids != ["apex_core", "apex_forge", "apex_bounce", "apex_light"]:
+    if ids != ["apex_core", "apex_forge", "apex_bounce", "apex_light", "apex_vylon"]:
         fails.append(f"GET /v1/materials ids {ids}")
     bad = client.post(
         "/v1/slice",
@@ -147,7 +148,7 @@ def test_builtin_presets_registered() -> list[str]:
     fails: list[str] = []
     vendor = json.loads(VENDOR.read_text())
     names = {e["name"] for e in vendor.get("filament_list") or []}
-    for name in ("ApexCore", "ApexForge", "ApexBounce", "ApexLight"):
+    for name in ("ApexCore", "ApexForge", "ApexBounce", "ApexLight", "ApexVylon"):
         if name not in names:
             fails.append(f"{name} not in IdeaFormer.json filament_list")
         path = REPO / "resources/profiles/IdeaFormer/filament" / f"{name}.json"
@@ -155,7 +156,7 @@ def test_builtin_presets_registered() -> list[str]:
             fails.append(f"missing {path}")
     model = json.loads((REPO / "resources/profiles/IdeaFormer/machine/Vertex Apex V2.json").read_text())
     mats = model.get("default_materials") or ""
-    for name in ("ApexCore", "ApexForge", "ApexBounce", "ApexLight"):
+    for name in ("ApexCore", "ApexForge", "ApexBounce", "ApexLight", "ApexVylon"):
         if name not in mats:
             fails.append(f"{name} missing from Vertex Apex V2 default_materials")
     return fails
@@ -307,6 +308,294 @@ def test_validator_accepts_belt() -> list[str]:
     return fails
 
 
+_VYLON_BED_KEYS = (
+    "hot_plate_temp",
+    "hot_plate_temp_initial_layer",
+    "cool_plate_temp",
+    "cool_plate_temp_initial_layer",
+    "textured_plate_temp",
+    "textured_plate_temp_initial_layer",
+    "eng_plate_temp",
+    "eng_plate_temp_initial_layer",
+)
+_FILAMENT_IDENTITY_KEYS = {
+    "name",
+    "setting_id",
+    "filament_notes",
+    "filament_settings_id",
+    "filament_id",
+}
+_SPEC_DELTA_FIELDS = {
+    "material_id",
+    "display_name",
+    "filament",
+    "bed_c",
+    "default_wall_loops",
+}
+
+
+def test_apex_vylon_is_forge_except_bed_and_walls() -> list[str]:
+    """ApexVylon matches ApexForge except belt/bed 60 °C and wall loops 6.
+
+    OrthoCAD sends profile_id, material, infill_density, and the model. It does
+    not send wall_loops. The slice API injects default_wall_loops on that path.
+    Vylon stays on Forge's single orca-slicer path (no Core/Light chain).
+    """
+    import dataclasses
+
+    from server.slice_overrides import apply_process_overrides
+
+    fails: list[str] = []
+    forge = resolve_material("apex_forge")
+    vylon = resolve_material("apex_vylon")
+    if vylon.display_name != "ApexVylon" or vylon.material_id != "apex_vylon":
+        fails.append(f"apex_vylon identity {vylon.material_id}/{vylon.display_name}")
+    if (vylon.nozzle_c, vylon.bed_c, vylon.default_wall_loops) != (245, 60, 6):
+        fails.append(
+            f"apex_vylon nozzle/bed/walls {vylon.nozzle_c}/{vylon.bed_c}/{vylon.default_wall_loops}"
+        )
+    if (forge.nozzle_c, forge.bed_c) != (245, 0) or forge.default_wall_loops is not None:
+        fails.append(
+            f"apex_forge temps/walls changed {forge.nozzle_c}/{forge.bed_c}/{forge.default_wall_loops}"
+        )
+    if vylon.filament.name != "ApexVylon.json":
+        fails.append(f"apex_vylon filament {vylon.filament.name}")
+    for field in dataclasses.fields(forge):
+        if field.name in _SPEC_DELTA_FIELDS:
+            continue
+        if getattr(forge, field.name) != getattr(vylon, field.name):
+            fails.append(f"apex_vylon {field.name} differs from apex_forge")
+    if vylon.process_overrides or vylon.machine_overrides or vylon.filament_overrides:
+        fails.append("apex_vylon gained process, machine, or filament overrides")
+    if vylon.target_first_layer_y_mm is not None or vylon.gcode_postprocess is not None:
+        fails.append("apex_vylon gained a first-layer target or gcode postprocess")
+
+    raw_forge = json.loads(forge.filament.read_text())
+    raw_vylon = json.loads(vylon.filament.read_text())
+    if raw_vylon.get("inherits") != "ApexForge":
+        fails.append(f"ApexVylon.json inherits {raw_vylon.get('inherits')!r}, expected ApexForge")
+    for key in ("type", "from", "instantiation", "compatible_printers"):
+        if raw_vylon.get(key) != raw_forge.get(key):
+            fails.append(f"ApexVylon.json {key} differs from ApexForge")
+    for key in (
+        "nozzle_temperature",
+        "nozzle_temperature_initial_layer",
+        "nozzle_temperature_range_low",
+        "nozzle_temperature_range_high",
+    ):
+        if key in raw_vylon:
+            fails.append(f"ApexVylon.json overrides {key} instead of inheriting ApexForge")
+        if key not in raw_forge:
+            fails.append(f"ApexForge.json missing {key}")
+    extra_raw = set(raw_vylon) - set(raw_forge) - set(_VYLON_BED_KEYS)
+    if extra_raw:
+        fails.append(f"ApexVylon.json extra keys {sorted(extra_raw)}")
+    for key in _VYLON_BED_KEYS:
+        if raw_vylon.get(key) != ["60"]:
+            fails.append(f"ApexVylon.json {key} {raw_vylon.get(key)!r} != ['60']")
+
+    forge_flat = _flatten(forge.filament)
+    vylon_flat = _flatten(vylon.filament)
+    nozzle, bed = filament_temps(vylon_flat)
+    if (nozzle, bed) != (245, 60):
+        fails.append(f"apex_vylon flatten temps {nozzle}/{bed} != 245/60")
+    if filament_temps(forge_flat) != (245, 0):
+        fails.append(f"apex_forge flatten temps changed {filament_temps(forge_flat)}")
+    for key in set(forge_flat) | set(vylon_flat):
+        if forge_flat.get(key) == vylon_flat.get(key):
+            continue
+        if key in _VYLON_BED_KEYS:
+            if forge_flat.get(key) != ["0"] or vylon_flat.get(key) != ["60"]:
+                fails.append(f"bed field {key}: forge {forge_flat.get(key)!r} vylon {vylon_flat.get(key)!r}")
+            continue
+        if key in _FILAMENT_IDENTITY_KEYS:
+            continue
+        fails.append(f"flattened filament {key} differs from ApexForge")
+
+    machine = _flatten(MACHINE)
+    start = machine.get("machine_start_gcode") or ""
+    rendered = render_expected_start_gcode(start, 245, 60, str(machine.get("gcode_flavor") or ""))
+    fails.extend(f"apex_vylon: {item}" for item in assert_material_temps_in_gcode(rendered, 245, 60))
+    if "M190 S60" not in rendered and "M140 S60" not in rendered:
+        fails.append("rendered ApexVylon start gcode missing M140/M190 S60")
+    forge_rendered = render_expected_start_gcode(start, 245, 0, str(machine.get("gcode_flavor") or ""))
+    fails.extend(f"apex_forge: {item}" for item in assert_material_temps_in_gcode(forge_rendered, 245, 0))
+
+    with tempfile.TemporaryDirectory(prefix="vylon_walls_") as td:
+        flat_p = flatten_profile(PROCESS, Path(td) / "process.json")
+        apply_process_overrides(flat_p, {"wall_loops": vylon.default_wall_loops})
+        applied = json.loads(flat_p.read_text())
+        if str(applied.get("wall_loops")) != "6":
+            fails.append(f"process wall_loops {applied.get('wall_loops')!r} != 6")
+
+    fails.extend(_assert_single_orca_path("apex_vylon"))
+    fails.extend(_assert_single_orca_path("apex_forge"))
+    fails.extend(_assert_vylon_http_injects_walls())
+    fails.extend(_slice_vylon_gcode_if_binary())
+    return fails
+
+
+def _assert_single_orca_path(material_id: str) -> list[str]:
+    """Forge and Vylon must not enter the Core/Light production chain."""
+    from unittest.mock import patch
+
+    import server.slice_engine as slice_engine
+
+    fails: list[str] = []
+    profile = get_profile("apex-v2-insole-95a", material=material_id)
+    if profile is None:
+        return [f"{material_id} profile missing"]
+    seen = {"binary": 0}
+
+    def binary() -> Path:
+        seen["binary"] += 1
+        raise FileNotFoundError("orca-slicer binary not found")
+
+    def chain(*_args, **_kwargs):
+        raise AssertionError(f"{material_id} dispatched to a production chain")
+
+    with tempfile.TemporaryDirectory(prefix=f"path_{material_id}_") as td:
+        stl = Path(td) / "model.stl"
+        stl.write_bytes(b"solid x\nendsolid x\n")
+        with patch("server.slice_engine._slicer_binary", binary), patch(
+            "server.chains.run_material_chain", chain
+        ):
+            try:
+                slice_engine.slice_stl(
+                    stl,
+                    profile,
+                    material=material_id,
+                    belt_insole_place=False,
+                )
+            except FileNotFoundError:
+                pass
+            except AssertionError as exc:
+                fails.append(str(exc))
+    if seen["binary"] != 1 and not any("production chain" in item for item in fails):
+        fails.append(f"{material_id} did not stay on the single orca path")
+    return fails
+
+
+def _assert_vylon_http_injects_walls() -> list[str]:
+    """POST /v1/slice accepts apex_vylon and injects wall_loops 6 when omitted."""
+    from unittest.mock import patch
+
+    fails: list[str] = []
+    try:
+        from fastapi.testclient import TestClient
+        from server.app import app
+    except Exception as exc:
+        print(f"  SKIP ApexVylon HTTP ({exc})")
+        return fails
+
+    seen: dict[str, dict] = {}
+
+    def fake(stl, profile, **kwargs):
+        material_id = kwargs.get("material")
+        seen[material_id] = {
+            "overrides": dict(kwargs.get("process_overrides") or {}),
+            "filament": profile.filament.name,
+            "process_overrides": dict(profile.process_overrides),
+        }
+        dest = Path(kwargs["work_dir"]) / "out.gcode"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("PRINT_START\nM104 S245\nM109 S245\nM190 S60\n", encoding="utf-8")
+        return dest, {"elapsed_s": 0.0}
+
+    client = TestClient(app)
+    stl_bytes = b"solid x\nendsolid x\n"
+    with patch("server.app.slice_stl", fake):
+        vylon = client.post(
+            "/v1/slice",
+            data={
+                "profile_id": "apex-v2-insole-95a",
+                "material": "apex_vylon",
+                "infill_density": "32",
+            },
+            files={"model": ("afo.stl", stl_bytes, "model/stl")},
+        )
+        forge = client.post(
+            "/v1/slice",
+            data={"profile_id": "apex-v2-insole-95a", "material": "apex_forge"},
+            files={"model": ("afo.stl", stl_bytes, "model/stl")},
+        )
+    if vylon.status_code != 200:
+        fails.append(f"apex_vylon slice HTTP {vylon.status_code} body={vylon.text[:300]}")
+        return fails
+    if vylon.headers.get("x-material") != "apex_vylon":
+        fails.append(f"X-Material {vylon.headers.get('x-material')!r}")
+    if vylon.headers.get("x-wall-loops") != "6":
+        fails.append(f"X-Wall-Loops {vylon.headers.get('x-wall-loops')!r} != 6")
+    if vylon.headers.get("x-infill-density") != "32%":
+        fails.append(f"X-Infill-Density {vylon.headers.get('x-infill-density')!r}")
+    got = seen.get("apex_vylon") or {}
+    if got.get("filament") != "ApexVylon.json":
+        fails.append(f"slice filament {got.get('filament')!r}")
+    if got.get("process_overrides"):
+        fails.append(f"apex_vylon profile process overrides {got.get('process_overrides')!r}")
+    overrides = got.get("overrides") or {}
+    if overrides.get("wall_loops") != 6:
+        fails.append(f"request wall_loops {overrides.get('wall_loops')!r} != 6")
+    if overrides.get("sparse_infill_density") != "32%":
+        fails.append(f"request infill {overrides.get('sparse_infill_density')!r} != 32%")
+    if forge.status_code != 200:
+        fails.append(f"apex_forge slice HTTP {forge.status_code}")
+    else:
+        forge_over = (seen.get("apex_forge") or {}).get("overrides") or {}
+        if "wall_loops" in forge_over:
+            fails.append(f"apex_forge request gained wall_loops {forge_over.get('wall_loops')!r}")
+        if (seen.get("apex_forge") or {}).get("filament") != "ApexForge.json":
+            fails.append("apex_forge slice filament changed")
+    return fails
+
+
+def _slice_vylon_gcode_if_binary() -> list[str]:
+    binary = _binary()
+    if binary is None:
+        print("  SKIP ApexVylon live gcode: orca-slicer not present")
+        return []
+    if not MODEL.is_file():
+        return ["missing insole_sample.stl"]
+    fails: list[str] = []
+    import re
+
+    with tempfile.TemporaryDirectory(prefix="mat_apex_vylon_") as td:
+        outdir = Path(td)
+        flat_m = flatten_profile(MACHINE, outdir / "machine.json")
+        flat_p = flatten_profile(PROCESS, outdir / "process.json")
+        from server.slice_overrides import apply_process_overrides
+
+        apply_process_overrides(flat_p, {"wall_loops": 6})
+        flat_f = flatten_profile(
+            REPO / "resources/profiles/IdeaFormer/filament/ApexVylon.json",
+            outdir / "filament.json",
+        )
+        cmd = [
+            str(binary),
+            "--slice",
+            "1",
+            "--allow-newer-file",
+            "--load-settings",
+            f"{flat_m};{flat_p}",
+            "--load-filaments",
+            str(flat_f),
+            "--outputdir",
+            str(outdir),
+            str(MODEL),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, errors="replace")
+        if proc.returncode != 0:
+            return [f"apex_vylon slice exit {proc.returncode}: {(proc.stdout + proc.stderr)[-800:]}"]
+        gcodes = list(outdir.glob("**/*.gcode"))
+        if not gcodes:
+            return ["apex_vylon no gcode"]
+        text = gcodes[0].read_text(encoding="utf-8", errors="replace")
+        fails.extend(f"apex_vylon: {item}" for item in assert_material_temps_in_gcode(text, 245, 60))
+        if not re.search(r"; wall_loops = 6\b", text) and not re.search(r"\bperimeters\s*=\s*6\b", text):
+            fails.append("sliced gcode missing wall_loops/perimeters = 6")
+    return fails
+
+
 def main() -> int:
     print("Apex materials")
     tests = (
@@ -314,6 +603,7 @@ def main() -> int:
         test_http_400_and_materials_endpoint,
         test_builtin_presets_registered,
         test_profile_temps_and_print_start,
+        test_apex_vylon_is_forge_except_bed_and_walls,
         test_validator_accepts_belt,
         test_sliced_gcode_temps,
     )

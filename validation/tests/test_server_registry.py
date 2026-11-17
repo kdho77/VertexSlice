@@ -25,7 +25,7 @@ def main() -> int:
             if not path.is_file():
                 fails.append(f"{pid}: missing {label} {path}")
     mats = list_materials()
-    if [m["id"] for m in mats] != ["apex_core", "apex_forge", "apex_bounce", "apex_light"]:
+    if [m["id"] for m in mats] != ["apex_core", "apex_forge", "apex_bounce", "apex_light", "apex_vylon"]:
         fails.append(f"materials {mats}")
     if fails:
         for f in fails:

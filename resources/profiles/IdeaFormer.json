@@ -131,6 +131,10 @@
             "sub_path": "filament/ApexLight.json"
         },
         {
+            "name": "ApexVylon",
+            "sub_path": "filament/ApexVylon.json"
+        },
+        {
             "name": "VERTEX_APEX_CORE_85A",
             "sub_path": "filament/VERTEX_APEX_CORE_85A.json"
         },
