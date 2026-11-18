@@ -26,11 +26,6 @@ overlap and wipes 0.7 mm dry at 60% of that wall's feed. Infill travels get
 the lift only (no retract). E on split edges is divided by true XY length
 so outer E/mm stays flat across a layer.
 
-A thin section is two skins and a gap bead that does not reach either one.
-close_thin_skins() raises that bead's E until the plastic meets both skins,
-and extends the bead along its own line where it stops short of the slot.
-The path is the one the slicer already combed, so no new wall-crossing travel.
-
 Min-time slows a layer whose true-XY time is under 8 s. Feed is scaled and
 clamped to a 10 mm/s floor. E is not touched.
 """
@@ -940,6 +935,20 @@ def _rendered_crosses(grid, start: tuple[float, float], rendered: list[str]) -> 
     return False
 
 
+def _chain_wall_feed(chain: list[dict], fallback: float = 1560.0) -> float:
+    """Extrusion feed on a wall chain, never the travel feed left on the approach."""
+    for seg in chain:
+        tok = seg.get("f")
+        if tok is None:
+            continue
+        feed = float(tok)
+        if abs(feed - TRAVEL_F) > 1.0:
+            return feed
+    if abs(fallback - TRAVEL_F) > 1.0:
+        return fallback
+    return 1560.0
+
+
 def _overlap_line(chain: list[dict], feed_fallback: float = 1560.0) -> tuple[str, float, float] | None:
     """0.4 mm of extrusion past a closed joint. None when the chain is not a loop,
     or when it is short enough that the replay would be a second wall.
@@ -955,7 +964,7 @@ def _overlap_line(chain: list[dict], feed_fallback: float = 1560.0) -> tuple[str
     uy = (guide["y1"] - guide["y0"]) / span
     sx = chain[-1]["x1"] + ux * step
     sy = chain[-1]["y1"] + uy * step
-    feed = float(guide["f"]) if guide.get("f") else feed_fallback
+    feed = _chain_wall_feed(chain, feed_fallback)
     line = f"G1 X{_fmt(sx, 3)} Y{_fmt(sy, 3)} E{guide['e'] / span * step:.5f} F{feed:.0f} ;seam overlap\n"
     return line, sx, sy
 
@@ -982,9 +991,9 @@ def _emit_outer_finish(
         return None
     ux = (guide["x1"] - guide["x0"]) / span
     uy = (guide["y1"] - guide["y0"]) / span
-    feed = float(guide["f"]) if guide.get("f") else feed_fallback
+    feed = _chain_wall_feed(chain, feed_fallback)
     sx, sy = chain[-1]["x1"], chain[-1]["y1"]
-    hit = _overlap_line(chain, feed_fallback)
+    hit = _overlap_line(chain, feed)
     if hit is not None:
         line, sx, sy = hit
         out.append(line)
@@ -1790,327 +1799,6 @@ def layer_times(text: str) -> list[float]:
     return times
 
 
-# Rounded-rectangle extrusion model at the locked 0.46 mm layer height.
-# width = mm3_per_mm / height + height * (1 - pi/4).
-_SKIN_H = 0.46
-_SKIN_ADJ = _SKIN_H * (1.0 - 0.25 * math.pi)
-_SKIN_AREA = math.pi * (1.75 / 2.0) ** 2
-_SKIN_AIR = 0.05
-# A section thicker than this is the gyroid core, not a skin pocket.
-_SKIN_MAX_THICK = 4.0
-# Air plus the thin bead, in the toe and the 15-30% band, stays under this.
-_SKIN_MAX_SLOT = 2.2
-_SKIN_OVERLAP = 0.08
-# A 0.15 mm bead filling a 2 mm slot is about a 40x volume. The slot
-# cap above is what keeps a bad neighbor match from becoming a rope.
-_SKIN_MAX_GROW = 60.0
-# How far a gap bead may be stretched to cover the slot it stops short of.
-_SKIN_EXTEND = 8.0
-
-
-def _skin_width(e_mm: float, length: float) -> float:
-    if length <= 1e-6:
-        return 0.0
-    return e_mm * _SKIN_AREA / length / _SKIN_H + _SKIN_ADJ
-
-
-def _skin_e(width: float, length: float) -> float:
-    mm3 = _SKIN_H * max(width - _SKIN_ADJ, 0.02)
-    return mm3 * length / _SKIN_AREA
-
-
-def _replace_e(line: str, new_e: float) -> str:
-    nl = "\n" if line.endswith("\n") else ""
-    body, sep, comment = line.rstrip("\n").partition(";")
-    body2, n = re.subn(r"E[+-]?(?:\d+\.?\d*|\.\d+)", f"E{new_e:.5f}", body, count=1)
-    if n != 1:
-        return line
-    out = body2 + (sep + comment if sep else "")
-    return out + nl
-
-
-def _cross_at(x0: float, y0: float, x1: float, y1: float, xm: float) -> float | None:
-    if abs(x1 - x0) < 1e-9:
-        return None
-    t = (xm - x0) / (x1 - x0)
-    if t < -1e-6 or t > 1.0 + 1e-6:
-        return None
-    t = min(1.0, max(0.0, t))
-    return y0 + t * (y1 - y0)
-
-
-def close_thin_skins(text: str) -> tuple[str, dict]:
-    """Widen a gap bead that sits in a thin slot until it meets both skins.
-
-    The slicer leaves the bead at a fraction of the slot, so the two skins
-    have air between them. The bead's path does not move. Where the bead
-    stops a few millimetres short of that slot, it is extended and the
-    nozzle is brought back to the same point, so the next move is unchanged.
-    A section thicker than 4 mm is left alone.
-    """
-    lines = text.splitlines(keepends=True)
-    moves: list[dict] = []
-    x = y = None
-    typ = ""
-    layer = -1
-    for index, raw in enumerate(lines):
-        line = raw.rstrip("\n")
-        if line.startswith(";LAYER_CHANGE"):
-            layer += 1
-            continue
-        if line.startswith(";TYPE:"):
-            typ = line[6:].strip()
-            continue
-        if not _is_g01(line):
-            continue
-        w = _words(line)
-        nx = float(w["X"]) if "X" in w else x
-        ny = float(w["Y"]) if "Y" in w else y
-        if (
-            "E" in w
-            and float(w["E"]) > 0
-            and x is not None
-            and y is not None
-            and nx is not None
-            and ny is not None
-            and ("X" in w or "Y" in w)
-        ):
-            length = math.hypot(nx - x, ny - y)
-            if length > 0.05:
-                e = float(w["E"])
-                moves.append(
-                    {
-                        "i": index,
-                        "layer": layer,
-                        "typ": typ,
-                        "x0": x,
-                        "y0": y,
-                        "x1": nx,
-                        "y1": ny,
-                        "e": e,
-                        "length": length,
-                        "width": _skin_width(e, length),
-                    }
-                )
-        if "X" in w and nx is not None:
-            x = nx
-        if "Y" in w and ny is not None:
-            y = ny
-
-    by_layer: dict[int, list[dict]] = {}
-    for move in moves:
-        by_layer.setdefault(move["layer"], []).append(move)
-
-    widened = 0
-    for layer_moves in by_layer.values():
-        gaps = [m for m in layer_moves if m["typ"] == "Gap infill"]
-        others = [m for m in layer_moves if m["typ"] != "Gap infill"]
-        for gap in gaps:
-            # A diagonal bead still has to reach the skins above and below it.
-            # Only a bead that runs straight up the slot is left to the column fill.
-            if abs(gap["y1"] - gap["y0"]) > 4.0 * abs(gap["x1"] - gap["x0"]):
-                continue
-            # The slot gets wider along a long bead. Sample every millimetre
-            # so a short opening between the ends is not missed.
-            need = 0.0
-            span = max(gap["length"], 1e-6)
-            n = max(3, int(span) + 1)
-            for k in range(n):
-                frac = 0.02 + 0.96 * (k / (n - 1))
-                xm = gap["x0"] + frac * (gap["x1"] - gap["x0"])
-                ym = gap["y0"] + frac * (gap["y1"] - gap["y0"])
-                hits = []
-                for other in others:
-                    yc = _cross_at(other["x0"], other["y0"], other["x1"], other["y1"], xm)
-                    if yc is None:
-                        continue
-                    half = other["width"] / 2.0
-                    hits.append((yc - half, yc + half))
-                if len(hits) < 1:
-                    continue
-                hits.sort()
-                below = max((hi for lo, hi in hits if hi <= ym + 0.02), default=None)
-                above = min((lo for lo, hi in hits if lo >= ym - 0.02), default=None)
-                if below is None or above is None:
-                    continue
-                thick = hits[-1][1] - hits[0][0]
-                slot = above - below
-                if thick > _SKIN_MAX_THICK or slot > _SKIN_MAX_SLOT:
-                    continue
-                # The bead is not always in the middle of the slot.
-                reach = max(ym - below, above - ym) + _SKIN_OVERLAP
-                need = max(need, 2.0 * reach)
-            if need <= gap["width"] + _SKIN_AIR:
-                continue
-            cur = max(gap["width"] - _SKIN_ADJ, 0.02)
-            grow = max(need - _SKIN_ADJ, 0.02) / cur
-            if grow > _SKIN_MAX_GROW:
-                continue
-            gap["width"] = need
-            gap["e"] = _skin_e(need, gap["length"])
-            lines[gap["i"]] = _replace_e(lines[gap["i"]], gap["e"])
-            widened += 1
-
-    # Columns the widened bead still does not reach. Extend along the bead.
-    before_ins: dict[int, list[str]] = {}
-    after_ins: dict[int, list[str]] = {}
-    extended = 0
-    inserted = 0
-    for layer_moves in by_layer.values():
-        if not layer_moves:
-            continue
-        xs = [v for m in layer_moves for v in (m["x0"], m["x1"])]
-        x_lo, x_hi = min(xs), max(xs)
-        hollow: list[tuple[float, float, float]] = []
-        xb = int(math.floor(x_lo))
-        while xb < x_hi:
-            xm = xb + 0.5
-            iv = []
-            for m in layer_moves:
-                yc = _cross_at(m["x0"], m["y0"], m["x1"], m["y1"], xm)
-                if yc is None:
-                    continue
-                iv.append((yc - m["width"] / 2.0, yc + m["width"] / 2.0, m["typ"]))
-            if len(iv) >= 2:
-                iv.sort()
-                thick = iv[-1][1] - iv[0][0]
-                if thick <= _SKIN_MAX_THICK:
-                    merged = [list(iv[0][:2])]
-                    for lo, hi, _typ in iv[1:]:
-                        if lo <= merged[-1][1] + _SKIN_AIR:
-                            merged[-1][1] = max(merged[-1][1], hi)
-                        else:
-                            merged.append([lo, hi])
-                    if len(merged) >= 2:
-                        k = max(range(len(merged) - 1), key=lambda n: merged[n + 1][0] - merged[n][1])
-                        hole_lo, hole_hi = merged[k][1], merged[k + 1][0]
-                        hole = hole_hi - hole_lo
-                        # A gap bead only counts when it bridges the slot. A bead
-                        # that sits in the middle and still leaves air does not.
-                        gap_covers = any(
-                            t == "Gap infill" and lo <= hole_lo + _SKIN_AIR and hi >= hole_hi - _SKIN_AIR
-                            for lo, hi, t in iv
-                        )
-                        if hole > _SKIN_AIR and not gap_covers:
-                            hollow.append((xm, hole_lo, hole_hi))
-            xb += 1
-        if not hollow:
-            continue
-        # Group consecutive columns whose slot Y stays put.
-        spans: list[list[tuple[float, float, float]]] = [[hollow[0]]]
-        for col in hollow[1:]:
-            prev = spans[-1][-1]
-            if col[0] - prev[0] <= 1.5 and abs(col[1] - prev[1]) < 0.15 and abs(col[2] - prev[2]) < 0.15:
-                spans[-1].append(col)
-            else:
-                spans.append([col])
-        gaps = [m for m in layer_moves if m["typ"] == "Gap infill" and abs(m["x1"] - m["x0"]) >= abs(m["y1"] - m["y0"])]
-        # One extension per bead end. Farther spans on the same end combine.
-        pre: dict[int, tuple[float, float, float, float]] = {}
-        post: dict[int, tuple[float, float, float, float]] = {}
-        for span in spans:
-            x0 = min(c[0] for c in span) - 0.5
-            x1 = max(c[0] for c in span) + 0.5
-            y_lo = sum(c[1] for c in span) / len(span)
-            y_hi = sum(c[2] for c in span) / len(span)
-            if y_hi - y_lo > _SKIN_MAX_SLOT or y_hi - y_lo <= _SKIN_AIR:
-                continue
-            matched = False
-            for gap in gaps:
-                for which, ax, ay, sign in (
-                    ("post", gap["x1"], gap["y1"], 1.0 if gap["x1"] >= gap["x0"] else -1.0),
-                    ("pre", gap["x0"], gap["y0"], -1.0 if gap["x1"] >= gap["x0"] else 1.0),
-                ):
-                    if not (y_lo - 0.4 <= ay <= y_hi + 0.4):
-                        continue
-                    far_x = x1 if sign > 0 else x0
-                    # Only the side the bead does not already cover.
-                    if sign > 0 and far_x <= ax + 0.2:
-                        continue
-                    if sign < 0 and far_x >= ax - 0.2:
-                        continue
-                    if abs(far_x - ax) > _SKIN_EXTEND:
-                        continue
-                    reach = max(ay - y_lo, y_hi - ay) + _SKIN_OVERLAP
-                    width = 2.0 * reach
-                    if width <= _SKIN_ADJ + 0.02 or width > _SKIN_MAX_SLOT + 0.4:
-                        continue
-                    covers = min(ax, far_x) - 0.2 <= (x0 + x1) / 2.0 <= max(ax, far_x) + 0.2
-                    bucket = post if which == "post" else pre
-                    prev = bucket.get(gap["i"])
-                    if prev is None or abs(far_x - ax) > abs(prev[2] - prev[0]):
-                        bucket[gap["i"]] = (ax, ay, far_x, width)
-                        if covers:
-                            matched = True
-                    elif width > prev[3]:
-                        bucket[gap["i"]] = (prev[0], prev[1], prev[2], width)
-                        if covers:
-                            matched = True
-            if matched:
-                continue
-            # No gap bead on this slot. The toe tip is two skins and nothing
-            # between them. Leave from a wall endpoint and come back to it,
-            # extruding both ways so the move is not a travel.
-            walls = [m for m in layer_moves if m["typ"] in ("Outer wall", "Overhang wall")]
-            best_wall = None
-            best_dx = 8.0
-            y_mid = (y_lo + y_hi) / 2.0
-            for wall in walls:
-                endx, endy = wall["x1"], wall["y1"]
-                if min(abs(endy - y_lo), abs(endy - y_hi)) > wall["width"]:
-                    continue
-                dx = 0.0 if x0 <= endx <= x1 else min(abs(endx - x0), abs(endx - x1))
-                if dx < best_dx:
-                    best_dx = dx
-                    best_wall = wall
-            if best_wall is None:
-                continue
-            endx, endy = best_wall["x1"], best_wall["y1"]
-            width = (y_hi - y_lo) + 2.0 * _SKIN_OVERLAP
-            if width > _SKIN_MAX_SLOT + 0.4:
-                continue
-            # Cover the whole span. Going only to the farther end misses the
-            # corner column that sits just past the wall endpoint.
-            e_down = _skin_e(width, max(abs(y_mid - endy), 0.2))
-            e_to_x0 = _skin_e(width, max(abs(x0 - endx), 0.2))
-            e_across = _skin_e(width, max(abs(x1 - x0), 0.2))
-            e_back = _skin_e(width, max(math.hypot(endx - x1, endy - y_mid), 0.2))
-            after_ins.setdefault(best_wall["i"], []).extend([
-                f"G1 X{endx:.3f} Y{y_mid:.3f} E{e_down:.5f} ;skin fill\n",
-                f"G1 X{x0:.3f} Y{y_mid:.3f} E{e_to_x0:.5f} ;skin fill\n",
-                f"G1 X{x1:.3f} Y{y_mid:.3f} E{e_across:.5f} ;skin fill\n",
-                f"G1 X{endx:.3f} Y{endy:.3f} E{e_back:.5f} ;skin fill return\n",
-            ])
-            inserted += 1
-        for gap_i, (ax, ay, far_x, width) in pre.items():
-            e_out = _skin_e(width, abs(far_x - ax))
-            before_ins[gap_i] = [
-                f"G1 X{far_x:.3f} Y{ay:.3f} E{e_out:.5f} ;skin fill\n",
-                f"G1 X{ax:.3f} Y{ay:.3f} E{e_out:.5f} ;skin fill return\n",
-            ]
-            extended += 1
-        for gap_i, (ax, ay, far_x, width) in post.items():
-            e_out = _skin_e(width, abs(far_x - ax))
-            after_ins.setdefault(gap_i, []).extend([
-                f"G1 X{far_x:.3f} Y{ay:.3f} E{e_out:.5f} ;skin fill\n",
-                f"G1 X{ax:.3f} Y{ay:.3f} E{e_out:.5f} ;skin fill return\n",
-            ])
-            extended += 1
-
-    if before_ins or after_ins or widened:
-        out_lines: list[str] = []
-        for index, line in enumerate(lines):
-            extra_before = before_ins.get(index)
-            if extra_before:
-                out_lines.extend(extra_before)
-            out_lines.append(line if line.endswith("\n") or line == "" else line + "\n")
-            extra_after = after_ins.get(index)
-            if extra_after:
-                out_lines.extend(extra_after)
-        text = "".join(out_lines)
-    return text, {"widened": widened, "extended": extended, "inserted": inserted}
-
-
 def main() -> None:
     cmd = sys.argv[1]
     src = Path(sys.argv[2])
@@ -2131,20 +1819,16 @@ def main() -> None:
         # G2b toe seam, without the heelmod min-time pass.
         out, n = efix(text)
         out, counts = seam(out, retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
-        out, skin = close_thin_skins(out)
         Path(sys.argv[3]).write_text(out)
         print("efix", n)
         print("seam", counts)
-        print("skin", skin)
     elif cmd == "all":
         out, n = efix(text)
         out, counts = seam(out)
-        out, skin = close_thin_skins(out)
         out, mt = mintime(out)
         Path(sys.argv[3]).write_text(out)
         print("efix", n)
         print("seam", counts)
-        print("skin", skin)
         print("mintime", mt)
         times = layer_times(out)
         under = sum(1 for t in times if t < 8.0 - 1e-3)

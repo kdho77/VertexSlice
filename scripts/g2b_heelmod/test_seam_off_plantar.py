@@ -21,8 +21,8 @@ from postprocess_g2b import (  # noqa: E402
     PRIME,
     RETRACT,
     SHORT_LOOP_MM,
+    TRAVEL_F,
     _dorsal_split,
-    close_thin_skins,
     seam,
 )
 from tools.belt_pp.pipeline import finalize_apex_light  # noqa: E402
@@ -519,6 +519,44 @@ class SeamOffPlantar(unittest.TestCase):
         self.assertEqual(PRIME, RETRACT)
         self.assertEqual(OVERLAP_MM, 0.4)
 
+    def test_seam_overlap_uses_outer_wall_feed_not_travel(self) -> None:
+        """Seam overlap must print at wall F (e.g. 1560), never travel F12720."""
+        cases = [
+            _insole_section(),
+            _flat_leader(),
+            "\n".join([
+                "M83",
+                "G90",
+                ";LAYER_CHANGE",
+                ";Z:40",
+                "G1 X70 Y1 F1560",
+                ";TYPE:Outer wall",
+                "G1 X80 Y0 F12720",
+                "G1 X160 Y0 E0.80 F1560",
+                "G1 X160 Y2 E0.02",
+                "G1 X80 Y2 E0.80",
+                "G1 X80 Y0 E0.02",
+                "G1 X90 Y0.4 F12720",
+                ";TYPE:Inner wall",
+                "G1 X150 Y0.4 E0.60 F1560",
+                "G1 X150 Y1.6 E0.012",
+                "G1 X90 Y1.6 E0.60",
+                "G1 X90 Y0.4 E0.012",
+                "",
+            ]),
+        ]
+        wall_f = 1560.0
+        for src in cases:
+            out, _counts = seam(src, retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
+            overlap_lines = [ln for ln in out.splitlines() if ";seam overlap" in ln]
+            self.assertTrue(overlap_lines, msg="expected at least one seam overlap")
+            for ln in overlap_lines:
+                words = dict(WORD.findall(ln.split(";", 1)[0]))
+                self.assertIn("F", words)
+                feed = float(words["F"])
+                self.assertAlmostEqual(feed, wall_f, places=0)
+                self.assertNotAlmostEqual(feed, TRAVEL_F, places=0)
+
     def test_tessellated_dorsal_edge_uses_the_run_midpoint(self) -> None:
         segs = [
             _seg(80, 0, 160, 0, 0.8),
@@ -804,58 +842,6 @@ class SeamOffPlantar(unittest.TestCase):
         self.assertAlmostEqual(starts[1][0], 120.0, places=2)
         self.assertAlmostEqual(starts[1][1], 0.4, places=2)
         self.assertEqual(analyze(out)["totals"]["perimeter_crossings"], 0)
-
-    def test_close_thin_skins_fills_the_slot_without_a_crossing(self) -> None:
-        # Two 1.04 mm skins 1.6 mm apart and a 0.30 mm bead between them.
-        height = 0.46
-        area = math.pi * (0.875 ** 2)
-        adj = height * (1.0 - 0.25 * math.pi)
-
-        def e_for(width: float, length: float) -> float:
-            return height * (width - adj) * length / area
-
-        src = "\n".join([
-            ";LAYER_CHANGE",
-            ";Z:1",
-            ";TYPE:Outer wall",
-            "G1 X0 Y0 F1000",
-            f"G1 X10 Y0 E{e_for(1.04, 10):.5f}",
-            ";TYPE:Outer wall",
-            "G1 X10 Y1.6 F1000",
-            f"G1 X0 Y1.6 E{e_for(1.04, 10):.5f}",
-            ";TYPE:Gap infill",
-            "G1 X0 Y0.8 F1000",
-            f"G1 X10 Y0.8 E{e_for(0.30, 10):.5f}",
-            "",
-        ])
-        out, stats = close_thin_skins(src)
-        self.assertGreater(stats["widened"], 0)
-        gap_es = [
-            float(ln.split("E", 1)[1].split()[0])
-            for ln in out.splitlines()
-            if "Y0.8" in ln.split(";", 1)[0] and "E" in ln.split(";", 1)[0]
-        ]
-        self.assertGreater(max(gap_es), e_for(0.30, 10) * 1.5)
-        self.assertNotIn("F12720", out)
-        self.assertEqual(analyze(out)["totals"]["perimeter_crossings"], 0)
-
-        # No bead at all: the fill is extruded, both ways, from a wall end.
-        empty = "\n".join([
-            ";LAYER_CHANGE",
-            ";Z:1",
-            ";TYPE:Outer wall",
-            "G1 X0 Y0 F1000",
-            f"G1 X10 Y0 E{e_for(1.04, 10):.5f}",
-            ";TYPE:Outer wall",
-            "G1 X10 Y1.6 F1000",
-            f"G1 X0 Y1.6 E{e_for(1.04, 10):.5f}",
-            "",
-        ])
-        filled, stats = close_thin_skins(empty)
-        self.assertGreater(stats["inserted"], 0)
-        self.assertIn(";skin fill", filled)
-        self.assertNotIn("F12720", filled)
-        self.assertEqual(analyze(filled)["totals"]["perimeter_crossings"], 0)
 
 
 if __name__ == "__main__":
