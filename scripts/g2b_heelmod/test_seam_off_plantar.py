@@ -164,11 +164,10 @@ def _light_heel_loop(last: str = "G1 X80 Y0.021 E0.02") -> str:
 
 
 def _light_two_islands() -> str:
-    """Two closed outers whose pp_d hop still aims at the belt seam.
+    """Two closed outers. The hop between them already runs below the belt.
 
-    b79a1fb4 moved only the lower. The hop stayed at Y+0.4, off every wall
-    by more than the 0.3 mm seam window, and cut both islands. The M204
-    makes that same hop a chain hop as well as a seam-block travel.
+    Shifting that hop up to the dorsal edge is what cut the islands. The M204
+    marks the same hop as a chain hop.
     """
     return "\n".join([
         "M83",
@@ -182,7 +181,7 @@ def _light_two_islands() -> str:
         ";TYPE:Outer wall",
         ";C seam travel: lift + direct",
         "G1 Y-0.600 F12720 ;lift",
-        "G1 X20.000 Y0.400 F12720 ;seam travel",
+        "G1 X20.000 Y-0.400 F12720 ;seam travel",
         "G1 Y0.000 F12720 ;lower",
         "G1 E1.5 F1800",
         ";PP_HEELROUTE_END",
@@ -193,9 +192,9 @@ def _light_two_islands() -> str:
         "G1 X20 Y0 E0.20",
         ";TYPE:Outer wall",
         ";C seam travel: lift + direct",
-        "G1 Y0.400 F12720 ;lift",
+        "G1 Y-0.400 F12720 ;lift",
         "M204 S10000",
-        "G1 X80.000 Y0.400 F12720 ;seam travel",
+        "G1 X80.000 Y-0.400 F12720 ;seam travel",
         "M204 S8000",
         "G1 Y0.000 F12720 ;lower",
         "G1 X100 Y0 E0.20 F1560",
@@ -203,6 +202,41 @@ def _light_two_islands() -> str:
         "G1 X60 Y10 E0.40",
         "G1 X60 Y0 E0.10",
         "G1 X80 Y0 E0.20",
+        "",
+    ])
+
+
+def _light_zipper_y_hop() -> str:
+    """Short Y hop at the Jabbour zipper X, ending on the lifted belt seam.
+
+    The hop sits just inside a straight belt edge, so it crosses nothing.
+    The dorsal edge is the line y=10 whose midpoint is X 149.786. Moving the
+    hop up to that edge (the ec4b4b retarget) makes both ends more than
+    0.3 mm from every wall and the segment crosses the top.
+    """
+    return "\n".join([
+        "M83",
+        "G90",
+        ";LAYER_CHANGE",
+        ";Z:40",
+        "; reduce_crossing_wall = 1",
+        "G1 X149.786 Y0.500 F1560",
+        ";PP_HEELROUTE_START",
+        "G1 E-1.5 F1800",
+        ";TYPE:Outer wall",
+        ";C seam travel: lift + direct",
+        "G1 X149.786 Y0.422 F12720 ;seam travel",
+        "G1 Y0.022 F12720 ;lower",
+        "G1 E1.5 F1800",
+        ";PP_HEELROUTE_END",
+        "G1 X220.000 Y0.022 E0.70214 F1560",
+        "G1 X220.000 Y10.000 E0.09978",
+        "G1 X79.572 Y10.000 E1.40428",
+        "G1 X79.572 Y0.022 E0.09978",
+        "G1 X149.786 Y0.022 E0.70214",
+        ";C seam travel: lift + direct",
+        "G1 Y-1.000 F12720 ;lift",
+        "G1 X80.000 Y-1.000 F12720 ;seam travel",
         "",
     ])
 
@@ -261,6 +295,31 @@ def _square_hop() -> str:
 
 def _words(line: str) -> dict[str, str]:
     return dict(WORD.findall(line.split(";", 1)[0]))
+
+
+def _outer_starts(text: str) -> list[tuple[float, float]]:
+    """XY where each outer or overhang extrusion begins."""
+    x = y = None
+    typ = ""
+    found = []
+    for line in text.splitlines():
+        if line.startswith(";TYPE:"):
+            typ = line[6:].strip()
+        words = _words(line)
+        body = line.split(";", 1)[0].strip()
+        if (
+            typ in ("Outer wall", "Overhang wall")
+            and (body.startswith("G0") or body.startswith("G1"))
+            and "E" in words
+            and float(words["E"]) > 0
+            and ("X" in words or "Y" in words)
+        ):
+            found.append((x, y))
+        if "X" in words:
+            x = float(words["X"])
+        if "Y" in words:
+            y = float(words["Y"])
+    return found
 
 
 def _seam_starts(text: str) -> list[tuple[float, float]]:
@@ -455,9 +514,13 @@ class SeamOffPlantar(unittest.TestCase):
             self.assertNotIn("G1 E-0.5", out)
             self.assertNotIn("G1 E0.45", out)
             self.assertNotIn("G1 E0.50", out)
-            self.assertIn("G1 X120.000 Y2.000 F12720 ;heel route", out)
+            self.assertIn("G1 X80 Y0.021 F12720 ;heel route", out)
             self.assertIn(";seam overlap", out)
             self.assertIn("X119.600 Y2.000", out)
+            start = _outer_starts(out)[0]
+            self.assertAlmostEqual(start[0], 120.0, places=2)
+            self.assertAlmostEqual(start[1], 2.0, places=2)
+            self.assertGreaterEqual(start[1], 1.75)
             report = analyze(out)
             self.assertEqual(report["totals"]["perimeter_crossings"], 0)
             self.assertEqual(report["reduce_crossing_wall"], "1")
@@ -474,10 +537,55 @@ class SeamOffPlantar(unittest.TestCase):
         self.assertEqual(out.count("G1 E1.5 F1800"), 1)
         self.assertNotIn("G1 E-0.5", out)
         self.assertNotIn("G1 E0.50", out)
-        self.assertNotIn("G1 X80.000 Y0.400", out)
-        self.assertIn("G1 X80.000 Y10.400 F12720 ;seam travel", out)
+        self.assertIn("G1 X80.000 Y-0.400 F12720 ;seam travel", out)
+        self.assertNotIn("Y10.400", out)
         self.assertIn(";seam overlap", out)
         self.assertEqual(out.count(";seam overlap"), 2)
+        starts = _outer_starts(out)
+        self.assertGreaterEqual(len(starts), 2)
+        for start in starts[:2]:
+            self.assertAlmostEqual(start[1], 10.0, places=2)
+            self.assertGreaterEqual(start[1], 1.75)
+        y_before_second = None
+        y = None
+        seen = 0
+        for line in out.splitlines():
+            if line.startswith(";C seam travel"):
+                seen += 1
+                if seen == 2:
+                    y_before_second = y
+                    break
+            words = _words(line)
+            if "Y" in words:
+                y = float(words["Y"])
+        self.assertAlmostEqual(y_before_second, 0.0, places=2)
+
+    def test_light_zipper_y_hop_is_not_shifted_onto_the_wall(self) -> None:
+        src = _light_zipper_y_hop()
+        shifted = src.replace(
+            "G1 X149.786 Y0.422 F12720 ;seam travel",
+            "G1 X149.786 Y10.400 F12720 ;seam travel",
+        )
+        shifted_report = analyze(shifted)
+        self.assertGreater(shifted_report["totals"]["perimeter_crossings"], 0)
+        self.assertGreater(shifted_report["totals"]["seam_block_crossings"], 0)
+        out = finalize_apex_light(src)
+        report = analyze(out)
+        self.assertEqual(report["totals"]["perimeter_crossings"], 0)
+        self.assertEqual(report["totals"]["seam_block_crossings"], 0)
+        self.assertEqual(report["totals"]["chain_hop_crossings"], 0)
+        self.assertEqual(report["reduce_crossing_wall"], "1")
+        self.assertIn("G1 X149.786 Y0.422 F12720 ;seam travel", out)
+        self.assertNotIn("Y10.400", out)
+        self.assertIn("G1 E-1.5 F1800", out)
+        self.assertIn("G1 E1.5 F1800", out)
+        self.assertNotIn("G1 E-0.5", out)
+        self.assertNotIn("G1 E0.50", out)
+        start = _outer_starts(out)[0]
+        self.assertAlmostEqual(start[0], 149.786, places=2)
+        self.assertAlmostEqual(start[1], 10.0, places=2)
+        self.assertGreaterEqual(start[1], 1.75)
+        self.assertIn(";seam overlap", out)
 
     def test_near_closed_corner_does_not_add_a_gap_crossing(self) -> None:
         out, counts = seam(
@@ -522,6 +630,7 @@ class SeamOffPlantar(unittest.TestCase):
             _light_heel_loop("G1 X81.2 Y0.021 E0.02"),
             _short_nub_layer(),
             _light_two_islands(),
+            _light_zipper_y_hop(),
         ):
             out = finalize_apex_light(src)
             report = analyze(out)

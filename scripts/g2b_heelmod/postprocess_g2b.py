@@ -17,8 +17,9 @@ on whatever point the seam uses. A closed chain of only a few millimetres
 gets the wipe and no overlap: that overlap is a second copy of the wall,
 and the lift-and-direct hop was chosen before the copy existed. A near-closed
 loop is joined across its opening before the rotate, so the raw lines cannot
-become a chord. On ApexLight the whole lift-and-direct block moves with the
-seam; leaving the hop at the old belt height cut through the part.
+become a chord. On ApexLight the lift-and-direct block stays where it was
+written. The nozzle walks the perimeter to the dorsal start and back, so the
+hop is not slid up the zipper.
 
 Retract 0.5 and prime 0.5. A closed outer loop then extrudes a 0.4 mm
 overlap and wipes 0.7 mm dry at 60% of that wall's feed. Infill travels get
@@ -976,30 +977,6 @@ def _emit_approach(
     out.append(f"G1 F{TRAVEL_F:.0f}\n")
 
 
-def _retarget_landing(line: str, x: float, y: float) -> str:
-    """Replace the XY on a travel. E, F, Z, and the comment stay."""
-    newline = ""
-    content = line
-    if line.endswith("\r\n"):
-        newline = "\r\n"
-        content = line[:-2]
-    elif line.endswith("\n"):
-        newline = "\n"
-        content = line[:-1]
-    body, sep, com = content.partition(";")
-    words = dict(WORD.findall(body))
-
-    def put(axis: str, value: float, text: str) -> str:
-        token = axis + _fmt(value, 3)
-        if axis in words:
-            return re.sub(rf"{axis}[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?", token, text, count=1)
-        return text.rstrip() + " " + token
-
-    body = put("X", x, body)
-    body = put("Y", y, body)
-    return body + (sep + com if sep else "") + newline
-
-
 def _move_extrusion(line: str) -> bool:
     if not _is_g01(line):
         return False
@@ -1111,109 +1088,175 @@ def _collect_outer_run(
     }
 
 
-def _near_point(ax: float, ay: float, bx: float, by: float, tol: float = 0.02) -> bool:
-    return math.hypot(ax - bx, ay - by) <= tol
+def _segment_t(seg: dict, x: float, y: float, tol: float) -> float | None:
+    x0, y0, x1, y1 = seg["x0"], seg["y0"], seg["x1"], seg["y1"]
+    vx, vy = x1 - x0, y1 - y0
+    span2 = vx * vx + vy * vy
+    if span2 < 1e-18:
+        if math.hypot(x - x0, y - y0) <= tol:
+            return 0.0
+        return None
+    t = ((x - x0) * vx + (y - y0) * vy) / span2
+    if t < -1e-3 or t > 1.0 + 1e-3:
+        return None
+    t = min(1.0, max(0.0, t))
+    if math.hypot(x0 + vx * t - x, y0 + vy * t - y) <= tol:
+        return t
+    return None
 
 
-def _retarget_approach(
-    gap: list[str], old: tuple[float, float], new: tuple[float, float], incoming: tuple[float | None, float | None]
-) -> list[str]:
-    """Aim the whole seam block at the new landing, not only the last lower.
+def _locate_on_chain(segments: list[dict], x: float, y: float, tol: float = 0.02) -> tuple[int, float] | None:
+    for i, seg in enumerate(segments):
+        if math.hypot(seg["x0"] - x, seg["y0"] - y) <= tol:
+            return i, 0.0
+    for i, seg in enumerate(segments):
+        t = _segment_t(seg, x, y, tol)
+        if t is not None:
+            return i, t
+    return None
 
-    pp_d leaves a lift, a hop at the old belt height, and a lower. Moving only
-    the lower keeps the hop on the belt, 0.4 mm off every wall, where it cuts
-    the part. The hop shifts with the seam. A lift whose absolute Y now points
-    back down through the part is raised above the nozzle instead.
-    """
-    dx, dy = new[0] - old[0], new[1] - old[1]
-    lifted = (old[0], old[1] + LIFT)
-    cx = incoming[0]
-    cy = incoming[1]
-    out: list[str] = []
-    moved_xy = False
+
+def _walk_forward(
+    segments: list[dict], start: tuple[float, float], goal: tuple[float, float]
+) -> list[tuple[float, float]] | None:
+    """Vertices after start, ending at goal, in chain order. None if either point is off the chain."""
+    found_start = _locate_on_chain(segments, start[0], start[1])
+    found_goal = _locate_on_chain(segments, goal[0], goal[1])
+    if found_start is None or found_goal is None:
+        return None
+    i0, t0 = found_start
+    i1, _t1 = found_goal
+    n = len(segments)
+    if i0 == i1 and t0 <= _t1 + 1e-6:
+        if math.hypot(goal[0] - start[0], goal[1] - start[1]) <= 1e-3:
+            return []
+        return [goal]
+    points: list[tuple[float, float]] = []
+    if t0 < 1.0 - 1e-6:
+        points.append((segments[i0]["x1"], segments[i0]["y1"]))
+    i = (i0 + 1) % n
+    guard = 0
+    while guard <= n:
+        guard += 1
+        if i == i1:
+            points.append(goal)
+            return points
+        points.append((segments[i]["x1"], segments[i]["y1"]))
+        i = (i + 1) % n
+    return None
+
+
+def _reversed_chain(segments: list[dict]) -> list[dict]:
+    return [{"x0": seg["x1"], "y0": seg["y1"], "x1": seg["x0"], "y1": seg["y0"]} for seg in reversed(segments)]
+
+
+def _walk_length(origin: tuple[float, float], points: list[tuple[float, float]]) -> float:
+    total = 0.0
+    cx, cy = origin
+    for px, py in points:
+        total += math.hypot(px - cx, py - cy)
+        cx, cy = px, py
+    return total
+
+
+def _along_wall(
+    segments: list[dict], start: tuple[float, float], goal: tuple[float, float]
+) -> list[tuple[float, float]] | None:
+    """Shorter perimeter walk from start to goal. None when a point is not on the loop."""
+    if math.hypot(goal[0] - start[0], goal[1] - start[1]) <= 1e-3:
+        return []
+    forward = _walk_forward(segments, start, goal)
+    backward = _walk_forward(_reversed_chain(segments), start, goal)
+    if forward is None and backward is None:
+        return None
+    if forward is None:
+        chosen = backward
+    elif backward is None:
+        chosen = forward
+    elif _walk_length(start, forward) <= _walk_length(start, backward):
+        chosen = forward
+    else:
+        chosen = backward
+    if chosen:
+        chosen[-1] = goal
+    return chosen
+
+
+def _emit_wall_walk(points: list[tuple[float, float]]) -> list[str]:
+    lines: list[str] = []
+    prev: tuple[float, float] | None = None
+    for px, py in points:
+        if prev is not None and math.hypot(px - prev[0], py - prev[1]) <= 1e-3:
+            continue
+        lines.append(f"G1 X{_fmt(px, 3)} Y{_fmt(py, 3)} F{TRAVEL_F:.0f}\n")
+        prev = (px, py)
+    return lines
+
+
+def _gap_nozzle(gap: list[str], x: float | None, y: float | None) -> tuple[float | None, float | None]:
     for line in gap:
-        if not _move_travel(line):
-            out.append(line)
+        if not _is_g01(line):
             continue
-        w = _words(line)
-        if "X" not in w and "Y" not in w:
-            out.append(line)
-            continue
-        if cx is None or cy is None:
-            # No position yet. A landing is still retargeted; anything else
-            # only seeds the nozzle for the lines after it.
-            sx = float(w["X"]) if "X" in w else None
-            sy = float(w["Y"]) if "Y" in w else None
-            if sx is not None and sy is not None and (
-                _near_point(sx, sy, old[0], old[1]) or _near_point(sx, sy, lifted[0], lifted[1])
-            ):
-                sx += dx
-                sy += dy
-                out.append(_retarget_landing(line, sx, sy))
-                moved_xy = True
-            else:
-                out.append(line)
-            cx, cy = sx if sx is not None else cx, sy if sy is not None else cy
-            continue
-        dest_x = float(w["X"]) if "X" in w else cx
-        dest_y = float(w["Y"]) if "Y" in w else cy
-        before_y = cy
-        if _near_point(dest_x, dest_y, old[0], old[1]) or _near_point(dest_x, dest_y, lifted[0], lifted[1]):
-            dest_x += dx
-            dest_y += dy
-            out.append(_retarget_landing(line, dest_x, dest_y))
-            moved_xy = True
-        elif (
-            ";lift" in line
-            and "X" not in w
-            and dest_y < before_y - 0.05
-        ):
-            dest_y = before_y + LIFT
-            out.append(_retarget_landing(line, dest_x, dest_y))
-            moved_xy = True
-        elif "X" not in w and abs(dest_y - old[1]) <= 0.02 and _near_point(cx, 0.0, new[0], 0.0, 0.02):
-            # Y-only lower after the hop already moved onto the new seam's X.
-            dest_y = new[1]
-            out.append(_retarget_landing(line, dest_x, dest_y))
-            moved_xy = True
-        else:
-            out.append(line)
-        cx, cy = dest_x, dest_y
-    if not moved_xy:
-        out.append(f"G1 X{_fmt(new[0], 3)} Y{_fmt(new[1], 3)} F{TRAVEL_F:.0f}\n")
-    return out
+        words = _words(line)
+        if "X" in words:
+            x = float(words["X"])
+        if "Y" in words:
+            y = float(words["Y"])
+    return x, y
 
 
 def _render_reseat(run: dict) -> tuple[list[str], float, float] | None:
-    """New lines for one outer run, or None when the run is already fine."""
+    """New lines for one outer run, or None when the run should be left alone.
+
+    The lift-and-direct block is not moved. Sliding it from the belt seam to
+    the dorsal seam is a short Y hop along the zipper, and both ends of that
+    hop sit outside the 0.3 mm seam window. The nozzle instead walks the
+    perimeter, extrudes from the dorsal start, and walks back to the point
+    the following travels were written from.
+    """
     segs = run["segs"]
     rotated = _dorsal_split(segs)
     hit = _overlap_line(rotated)
-    moved = math.hypot(rotated[0]["x0"] - segs[0]["x0"], rotated[0]["y0"] - segs[0]["y0"]) > 1e-4
+    old_start = (segs[0]["x0"], segs[0]["y0"])
+    old_end = (segs[-1]["x1"], segs[-1]["y1"])
+    new_start = (rotated[0]["x0"], rotated[0]["y0"])
+    moved = math.hypot(new_start[0] - old_start[0], new_start[1] - old_start[1]) > 1e-4
     if not moved and hit is None:
         return None
-    gap = list(run["gap"])
+    arrive: list[tuple[float, float]] = []
     if moved:
-        gap = _retarget_approach(gap, (segs[0]["x0"], segs[0]["y0"]), (rotated[0]["x0"], rotated[0]["y0"]), run["incoming"])
-    piece = gap
-    for s in rotated:
-        piece.extend(s["comments"])
-        piece.append(s["raw"] if s["raw"].endswith("\n") else s["raw"] + "\n")
+        landed = _gap_nozzle(run["gap"], run["incoming"][0], run["incoming"][1])
+        if landed[0] is None or math.hypot(landed[0] - old_start[0], (landed[1] or 0.0) - old_start[1]) > 0.05:
+            return None
+        walked = _along_wall(rotated, old_start, new_start)
+        if walked is None:
+            return None
+        arrive = walked
+    piece = list(run["gap"])
+    piece.extend(_emit_wall_walk(arrive))
+    for seg in rotated:
+        piece.extend(seg["comments"])
+        raw = seg["raw"] if seg["raw"].endswith("\n") else seg["raw"] + "\n"
+        piece.append(raw)
     nx, ny = rotated[-1]["x1"], rotated[-1]["y1"]
     if hit is not None:
-        line, sx, sy = hit
+        line, nx, ny = hit
         piece.append(line)
-        nx, ny = sx, sy
+    back = _along_wall(rotated, (nx, ny), old_end)
+    if back is None:
+        return None
+    piece.extend(_emit_wall_walk(back))
     piece.extend(run["tail"])
-    return piece, nx, ny
+    return piece, old_end[0], old_end[1]
 
 
 def reseat_closed_outers(text: str) -> str:
     """Dorsal start and 0.4 mm overlap on closed outers. Retraction is not touched.
 
     ApexLight does not run match(), so this is the seam geometry without the
-    0.5 mm retract and prime. A heel-route ``G1 E±1.5`` stays. The travel that
-    lands on the wall keeps every token except the landing XY.
+    0.5 mm retract and prime. A heel-route ``G1 E±1.5`` stays. pp_d's travels
+    stay too: the dorsal start is a walk along the wall, then the nozzle
+    returns to the old end so the next hop still begins where it was written.
     """
     lines = text.splitlines(keepends=True)
     out: list[str] = []

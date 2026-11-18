@@ -22,7 +22,9 @@ def finalize_apex_light(text: str) -> str:
 
     The dorsal start and 0.4 mm overlap are the same closed-outer rule as
     ``postprocess_g2b.match``. Heel-route retract and prime stay E±1.5.
-    ``match()`` is not called: that pass would replace them with E±0.5.
+    pp_d's lift-and-direct hop is not moved; the nozzle walks the wall to
+    the new start and back. ``match()`` is not called: that pass would
+    replace the heel-route pair with E±0.5.
     """
     text = apex_light_post_edit.apply_post_edit(text)
     text = _reseat_closed_outers(text)
