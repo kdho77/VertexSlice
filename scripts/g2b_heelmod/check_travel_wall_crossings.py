@@ -196,10 +196,14 @@ def _chain_polygons(edges: list[tuple[float, float, float, float]]) -> tuple[int
         i0 = unused.pop()
         x0, y0, x1, y1 = edges[i0]
         ring = [(x0, y0), (x1, y1)]
-        # Walk forward.
+        # Walk forward. Stop on the return to the start. The seam overlap is a
+        # spur on that vertex; following it would carry the walk off the ring
+        # and the loop would no longer count as closed.
         guard = 0
         while guard < len(edges) + 2:
             guard += 1
+            if len(ring) >= 4 and _near(ring[0][0], ring[0][1], ring[-1][0], ring[-1][1], CLOSE_MM * 2):
+                break
             k = key(ring[-1][0], ring[-1][1])
             nxt = None
             for i, end in starts.get(k, ()):
