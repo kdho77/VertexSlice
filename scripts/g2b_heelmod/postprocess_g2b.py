@@ -8,9 +8,14 @@ Closed outer and overhang walls used to start on the belt (min-Y) to match
 the G2b toe file. That stacks the seam on the plantar face. They now start
 at the midpoint of the face away from the belt (max-Y). A flat loop with no
 point above the belt band still uses that toe-file belt start, so a leader
-tab with no dorsal face is unchanged. Inner walls still restart on the belt
-contact at the outer seam's X. Coupon cut and min-layer-time do not use the
-seam point. The inside-wall travel still ends on whatever point the seam uses.
+tab with no dorsal face is unchanged. A loop whose ends miss by more than
+the 0.8 mm wipe margin but by at most two nozzles, and whose path is the
+loop rather than the opening, is the same kind of closed wall. Inner walls
+still restart on the belt contact at the outer seam's X. Coupon cut and
+min-layer-time do not use the seam point. The inside-wall travel still ends
+on whatever point the seam uses. A closed chain of only a few millimetres
+gets the wipe and no overlap: that overlap is a second copy of the wall,
+and the lift-and-direct hop was chosen before the copy existed.
 
 Retract 0.5 and prime 0.5. A closed outer loop then extrudes a 0.4 mm
 overlap and wipes 0.7 mm dry at 60% of that wall's feed. Infill travels get
@@ -50,6 +55,17 @@ WIPE_FRAC = 0.6
 OVERLAP_MM = 0.4
 _EDGE_BAND = 0.25
 _EDGE_MIN_LEN = 2.0
+# Just past the 0.7 mm wipe, so a loop the slicer actually closed still joins.
+_CLOSED_GAP_MM = 0.8
+# The G2b block's nozzle is 1 mm. Two nozzles is still one seam: the ends are
+# a joint that missed, not an open wall. The Jabbour R tab windows at
+# Z 24.72–27.97 sit past 0.8 mm and were left on the belt.
+CLOSED_GAP_MM = 2.0
+# Overlap on a chain this short replays the first leg (step = min(0.4, span))
+# and that extra wall cuts the lift-and-direct chord. The chord ends 0.4 mm
+# off the seam, outside the checker's 0.3 mm window, so the hit is a crossing.
+# 3 mm is under a real outer perimeter and over that arch/heel nub.
+SHORT_LOOP_MM = 3.0
 
 
 def _body(line: str) -> str:
@@ -94,12 +110,38 @@ def _fmt(n: float, nd: int) -> str:
     return f"{n:.{nd}f}"
 
 
-def _belt_split(segments: list[dict]) -> list[dict]:
+def _chain_length(segs: list[dict]) -> float:
+    return sum(math.hypot(s["x1"] - s["x0"], s["y1"] - s["y0"]) for s in segs)
+
+
+def _end_gap(segs: list[dict]) -> float:
+    return math.hypot(segs[-1]["x1"] - segs[0]["x0"], segs[-1]["y1"] - segs[0]["y0"])
+
+
+def _is_closed_loop(segs: list[dict]) -> bool:
+    """True when the chain is a loop, including one the 0.8 mm test called open.
+
+    A gap within two 1 mm nozzles is a seam that did not land, and only when
+    the path is at least four times that gap. A short open curve whose ends
+    happen to sit near each other stays open.
+    """
+    if not segs:
+        return False
+    gap = _end_gap(segs)
+    if gap <= _CLOSED_GAP_MM:
+        return True
+    if len(segs) < 2:
+        return False
+    length = _chain_length(segs)
+    return gap <= CLOSED_GAP_MM and length >= gap * 4.0
+
+
+def _belt_split(segments: list[dict], closed_gap: float = _CLOSED_GAP_MM) -> list[dict]:
     """Rotate a closed wall loop so it starts at the belt-side (min-Y) edge midpoint."""
     if len(segments) < 3:
         return segments
     pts = [(segments[0]["x0"], segments[0]["y0"])] + [(s["x1"], s["y1"]) for s in segments]
-    if math.hypot(pts[-1][0] - pts[0][0], pts[-1][1] - pts[0][1]) > 0.8:
+    if _end_gap(segments) > closed_gap:
         return segments
     ymin = min(p[1] for p in pts)
     best_i = None
@@ -252,13 +294,13 @@ def _dorsal_split(segments: list[dict]) -> list[dict]:
     """
     if len(segments) < 3:
         return segments
-    pts = [(segments[0]["x0"], segments[0]["y0"])] + [(s["x1"], s["y1"]) for s in segments]
-    if math.hypot(pts[-1][0] - pts[0][0], pts[-1][1] - pts[0][1]) > 0.8:
+    if not _is_closed_loop(segments):
         return segments
+    pts = [(segments[0]["x0"], segments[0]["y0"])] + [(s["x1"], s["y1"]) for s in segments]
     ymin = min(p[1] for p in pts)
     ymax = max(p[1] for p in pts)
     if ymax <= ymin + _EDGE_BAND:
-        return _belt_split(segments)
+        return _belt_split(segments, CLOSED_GAP_MM)
 
     def on_dorsal(s: dict) -> bool:
         return s["y0"] >= ymax - _EDGE_BAND and s["y1"] >= ymax - _EDGE_BAND
@@ -271,7 +313,7 @@ def _dorsal_split(segments: list[dict]) -> list[dict]:
             return started
     started = _dorsal_vertex_start(segments, pts)
     if started[0]["y0"] <= ymin + _EDGE_BAND:
-        return _belt_split(segments)
+        return _belt_split(segments, CLOSED_GAP_MM)
     return started
 
 
@@ -305,7 +347,8 @@ def _partial(s: dict, t0: float, t1: float) -> dict:
 
 
 def _path_closed(segs: list[dict]) -> bool:
-    return math.hypot(segs[-1]["x1"] - segs[0]["x0"], segs[-1]["y1"] - segs[0]["y0"]) <= 0.8
+    # Inner walls keep the old margin. Near-closed is an outer-wall seam.
+    return _end_gap(segs) <= _CLOSED_GAP_MM
 
 
 def _hit_anchor(segs: list[dict], anchor_x: float) -> tuple[float, int, float] | None:
@@ -797,6 +840,26 @@ def _rendered_crosses(grid, start: tuple[float, float], rendered: list[str]) -> 
     return False
 
 
+def _overlap_line(chain: list[dict], feed_fallback: float = 1560.0) -> tuple[str, float, float] | None:
+    """0.4 mm of extrusion past a closed joint. None when the chain is not a loop,
+    or when it is short enough that the replay would be a second wall.
+    """
+    if not chain or not _is_closed_loop(chain) or _chain_length(chain) <= SHORT_LOOP_MM:
+        return None
+    guide = chain[0]
+    span = math.hypot(guide["x1"] - guide["x0"], guide["y1"] - guide["y0"])
+    if span <= 1e-6 or not guide.get("e") or guide["e"] <= 0:
+        return None
+    step = min(OVERLAP_MM, span)
+    ux = (guide["x1"] - guide["x0"]) / span
+    uy = (guide["y1"] - guide["y0"]) / span
+    sx = chain[-1]["x1"] + ux * step
+    sy = chain[-1]["y1"] + uy * step
+    feed = float(guide["f"]) if guide.get("f") else feed_fallback
+    line = f"G1 X{_fmt(sx, 3)} Y{_fmt(sy, 3)} E{guide['e'] / span * step:.5f} F{feed:.0f} ;seam overlap\n"
+    return line, sx, sy
+
+
 def _emit_outer_finish(
     out: list[str],
     chain: list[dict],
@@ -807,11 +870,12 @@ def _emit_outer_finish(
 
     The wipe hides a blob, so it stays. The 0.4 mm before it is extruded along
     the wall the loop started on, which is the direction past the joint. An
-    open wall keeps the dry glide only.
+    open wall keeps the dry glide only. A closed chain of a few millimetres
+    keeps the glide and skips the overlap.
     """
     if not chain:
         return None
-    closed = math.hypot(chain[-1]["x1"] - chain[0]["x0"], chain[-1]["y1"] - chain[0]["y0"]) <= 0.8
+    closed = _is_closed_loop(chain)
     guide = chain[0] if closed else chain[-1]
     span = math.hypot(guide["x1"] - guide["x0"], guide["y1"] - guide["y0"])
     if span <= 1e-6:
@@ -820,11 +884,10 @@ def _emit_outer_finish(
     uy = (guide["y1"] - guide["y0"]) / span
     feed = float(guide["f"]) if guide.get("f") else feed_fallback
     sx, sy = chain[-1]["x1"], chain[-1]["y1"]
-    if closed and guide["e"] > 0:
-        step = min(OVERLAP_MM, span)
-        sx = chain[-1]["x1"] + ux * step
-        sy = chain[-1]["y1"] + uy * step
-        out.append(f"G1 X{_fmt(sx, 3)} Y{_fmt(sy, 3)} E{guide['e'] / span * step:.5f} F{feed:.0f} ;seam overlap\n")
+    hit = _overlap_line(chain, feed_fallback)
+    if hit is not None:
+        line, sx, sy = hit
+        out.append(line)
         counts["overlap"] += 1
     wx = sx + ux * WIPE_MM
     wy = sy + uy * WIPE_MM
@@ -877,6 +940,231 @@ def _emit_approach(
     if retract:
         out.append(f"G1 E{PRIME:.2f} F{RETRACT_F:.0f}\n")
     out.append(f"G1 F{TRAVEL_F:.0f}\n")
+
+
+def _retarget_landing(line: str, x: float, y: float) -> str:
+    """Replace the XY on a travel. E, F, Z, and the comment stay."""
+    newline = ""
+    content = line
+    if line.endswith("\r\n"):
+        newline = "\r\n"
+        content = line[:-2]
+    elif line.endswith("\n"):
+        newline = "\n"
+        content = line[:-1]
+    body, sep, com = content.partition(";")
+    words = dict(WORD.findall(body))
+
+    def put(axis: str, value: float, text: str) -> str:
+        token = axis + _fmt(value, 3)
+        if axis in words:
+            return re.sub(rf"{axis}[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?", token, text, count=1)
+        return text.rstrip() + " " + token
+
+    body = put("X", x, body)
+    body = put("Y", y, body)
+    return body + (sep + com if sep else "") + newline
+
+
+def _move_extrusion(line: str) -> bool:
+    if not _is_g01(line):
+        return False
+    w = _words(line)
+    return "E" in w and float(w["E"]) > 0 and ("X" in w or "Y" in w)
+
+
+def _move_travel(line: str) -> bool:
+    if not _is_g01(line):
+        return False
+    w = _words(line)
+    if "E" in w and float(w["E"]) > 0:
+        return False
+    return "X" in w or "Y" in w or "Z" in w
+
+
+def _collect_outer_run(
+    lines: list[str], i: int, typ: str, x: float | None, y: float | None
+) -> dict | None:
+    """Travel plus the outer/overhang extrusion it lands on. None for anything else."""
+    n = len(lines)
+    j = i
+    gap: list[str] = []
+    dest = typ
+    dx, dy = x, y
+    while j < n:
+        lj = lines[j]
+        if lj.startswith(";TYPE:"):
+            dest = lj[6:].strip()
+            gap.append(lj)
+            j += 1
+            continue
+        if lj.startswith(";LAYER_CHANGE") and j != i:
+            break
+        if _move_extrusion(lj):
+            break
+        if (
+            _move_travel(lj)
+            or lj.startswith(";")
+            or _body(lj).startswith(("M", "G92"))
+            or _body(lj) == ""
+        ):
+            if _move_travel(lj):
+                w = _words(lj)
+                if "X" in w:
+                    dx = float(w["X"])
+                if "Y" in w:
+                    dy = float(w["Y"])
+            gap.append(lj)
+            j += 1
+            continue
+        if _is_g01(lj) and not _move_travel(lj) and not _move_extrusion(lj):
+            gap.append(lj)
+            j += 1
+            continue
+        break
+    if j >= n or not _move_extrusion(lines[j]) or dx is None or dy is None:
+        return None
+    if dest not in ("Outer wall", "Overhang wall"):
+        return None
+    segs: list[dict] = []
+    comments: list[str] = []
+    k = j
+    cx, cy = dx, dy
+    end_type = dest
+    while k < n and not _move_travel(lines[k]) and not lines[k].startswith(";LAYER_CHANGE"):
+        lj = lines[k]
+        if lj.startswith(";TYPE:"):
+            new_type = lj[6:].strip()
+            if segs and new_type not in ("Outer wall", "Overhang wall"):
+                break
+            end_type = new_type
+            comments.append(lj if lj.endswith("\n") else lj + "\n")
+            k += 1
+            continue
+        if _move_extrusion(lj):
+            w = _words(lj)
+            nx = float(w["X"]) if "X" in w else cx
+            ny = float(w["Y"]) if "Y" in w else cy
+            segs.append(
+                {
+                    "x0": cx,
+                    "y0": cy,
+                    "x1": nx,
+                    "y1": ny,
+                    "e": float(w["E"]),
+                    "f": w.get("F"),
+                    "raw": lj if lj.endswith("\n") else lj + "\n",
+                    "comments": comments,
+                }
+            )
+            comments = []
+            cx, cy = nx, ny
+            k += 1
+            continue
+        if lj.startswith(";") or _body(lj).startswith("M") or _body(lj) == "":
+            comments.append(lj if lj.endswith("\n") else lj + "\n")
+            k += 1
+            continue
+        break
+    if end_type not in ("Outer wall", "Overhang wall") or not segs:
+        return None
+    return {
+        "gap": gap,
+        "segs": segs,
+        "end": k,
+        "typ": end_type,
+        "tail": comments,
+    }
+
+
+def _render_reseat(run: dict) -> tuple[list[str], float, float] | None:
+    """New lines for one outer run, or None when the run is already fine."""
+    segs = run["segs"]
+    rotated = _dorsal_split(segs)
+    hit = _overlap_line(rotated)
+    moved = math.hypot(rotated[0]["x0"] - segs[0]["x0"], rotated[0]["y0"] - segs[0]["y0"]) > 1e-4
+    if not moved and hit is None:
+        return None
+    gap = list(run["gap"])
+    if moved:
+        for idx in range(len(gap) - 1, -1, -1):
+            if not _move_travel(gap[idx]):
+                continue
+            w = _words(gap[idx])
+            if "X" not in w and "Y" not in w:
+                continue
+            gap[idx] = _retarget_landing(gap[idx], rotated[0]["x0"], rotated[0]["y0"])
+            break
+        else:
+            gap.append(
+                f"G1 X{_fmt(rotated[0]['x0'], 3)} Y{_fmt(rotated[0]['y0'], 3)} F{TRAVEL_F:.0f}\n"
+            )
+    piece = gap
+    for s in rotated:
+        piece.extend(s["comments"])
+        piece.append(s["raw"] if s["raw"].endswith("\n") else s["raw"] + "\n")
+    nx, ny = rotated[-1]["x1"], rotated[-1]["y1"]
+    if hit is not None:
+        line, sx, sy = hit
+        piece.append(line)
+        nx, ny = sx, sy
+    piece.extend(run["tail"])
+    return piece, nx, ny
+
+
+def reseat_closed_outers(text: str) -> str:
+    """Dorsal start and 0.4 mm overlap on closed outers. Retraction is not touched.
+
+    ApexLight does not run match(), so this is the seam geometry without the
+    0.5 mm retract and prime. A heel-route ``G1 E±1.5`` stays. The travel that
+    lands on the wall keeps every token except the landing XY.
+    """
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    x = y = None
+    typ = ""
+    i = 0
+    n = len(lines)
+    changed = False
+
+    def track(line: str) -> None:
+        nonlocal x, y
+        if not _is_g01(line):
+            return
+        w = _words(line)
+        if "X" in w:
+            x = float(w["X"])
+        if "Y" in w:
+            y = float(w["Y"])
+
+    while i < n:
+        line = lines[i]
+        if line.startswith(";TYPE:"):
+            typ = line[6:].strip()
+            out.append(line)
+            i += 1
+            continue
+        if _move_travel(line):
+            run = _collect_outer_run(lines, i, typ, x, y)
+            if run is not None:
+                rendered = _render_reseat(run)
+                if rendered is None:
+                    for ln in lines[i : run["end"]]:
+                        track(ln)
+                        out.append(ln)
+                else:
+                    piece, x, y = rendered
+                    out.extend(piece)
+                    changed = True
+                typ = run["typ"]
+                i = run["end"]
+                continue
+        track(line)
+        out.append(line)
+        i += 1
+    if not changed:
+        return text
+    return "".join(out)
 
 
 def seam(
