@@ -107,12 +107,25 @@ def overlay_g2b(machine: dict, process: dict, filament: dict) -> None:
 # outer-wall 26 mm/s). filter_out_gap_fill 8 drops polylines shorter than
 # 8 mm. Those are scattered heel and arch islands. The forefoot stitch
 # polylines are longer than 8 mm, so the joint stays.
+# Kendon, 2026-11-18: detect_thin_wall goes back to 0. #29 (3717053d3c) turned
+# it on, and the short outer-wall pieces were each treated as a seam. Classic
+# walls, gap fill everywhere, the 8 mm filter, 25% min bead width, and
+# wall_loops 2 stay.
+# Kendon, 2026-11-18 t2245u: the toe skins separate with nothing between
+# them that they can bond to. On the sample belt the thin toe is two 1.0 mm
+# walls and a gap bead that does not reach either wall. That geometry is
+# already in the shared G2b block before #27 (parent of c3510806d2): line
+# width 1, ensure_vertical_shell_thickness none, top_shell_layers 0.
+# Widening the walls to 1.3 mm closed the toe and opened wall-crossing
+# travels, and the 15-30% band stayed open, so the walls stay 1.
+# close_thin_skins() widens the bead until it meets both skins. The 8 mm
+# filter, classic walls, and wall_loops 2 stay.
 APEXCORE_FOREFOOT_STITCH = {
     "wall_generator": "classic",
     "filter_out_gap_fill": "8",
     "gap_fill_target": "everywhere",
     "min_bead_width": "25%",
-    "detect_thin_wall": "1",
+    "detect_thin_wall": "0",
 }
 
 

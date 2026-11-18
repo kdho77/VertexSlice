@@ -13,10 +13,11 @@ path, and the lock drops gap polylines shorter than 8 mm. The belt-edge
 center seam stays aligned. The numbers live in apexcore_95a_locked.json.
 prepare() refuses to slice if a setting drifts from that file.
 
-G2b CONFIG_BLOCK with the ApexCore filament swapped in. No heelmod: no
-layer-range flow, min_bead, ensure_all, min-time, and no global
-infill_wall_overlap or minimum_sparse_infill_area edits. Layer height stays
-0.46 mm. ApexCore additions are nozzle temperature 225 °C, part fan 50% /
+G2b CONFIG_BLOCK with the ApexCore filament swapped in. No heelmod
+layer-range flow, min_bead, or ensure_all. Wall line width stays 1 mm.
+close_thin_skins() widens the thin-section gap bead until it meets both
+skins. No global infill_wall_overlap or minimum_sparse_infill_area edits.
+Layer height stays 0.46 mm. ApexCore additions are nozzle temperature 225 °C, part fan 50% /
 aux 25%, the locked wall/sparse/gap flow ratios, and pressure advance 0.05.
 Layer-change retract is off and retraction length is 0.
 """

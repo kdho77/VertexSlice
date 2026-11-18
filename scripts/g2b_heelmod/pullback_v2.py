@@ -69,7 +69,9 @@ for c in pairs:
     pre=[f'G1 E-0.5 F{rf}']
     if c['Fbefore'] is not None: pre.append(f'G1 F{c["Fbefore"]:g}')
     ins.setdefault(c['start'],[]).extend(pre)
-    after.setdefault(c['last'],[]).extend([f'G1 E0.45 F{pf}',f'G1 F{c["Fafter"]:g}'])
+    # Same prime as the retract. postprocess_g2b uses 0.5 / 0.5. A 0.45
+    # prime left every one of these infill travels 0.05 mm short.
+    after.setdefault(c['last'],[]).extend([f'G1 E0.50 F{pf}',f'G1 F{c["Fafter"]:g}'])
 for i,l in enumerate(lines):
     out+=ins.get(i,[]); out.append(l); out+=after.get(i,[])
 open(OUT,'w',newline='').write('\n'.join(out))

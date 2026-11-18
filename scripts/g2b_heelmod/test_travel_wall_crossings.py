@@ -321,7 +321,7 @@ class PullbackSeamChordTest(unittest.TestCase):
         ])
         out = self._run(src)
         self.assertEqual(out.count("G1 E-0.5 F1800"), 2)
-        self.assertEqual(out.count("G1 E0.45"), 1)
+        self.assertEqual(out.count("G1 E0.50"), 1)
         self.assertLess(out.index("G1 E-0.5 F1800", 1), out.index(";seam inside"))
 
     def test_short_chord_does_not_gain_a_retract(self) -> None:
@@ -340,7 +340,7 @@ class PullbackSeamChordTest(unittest.TestCase):
         ])
         out = self._run(src)
         self.assertEqual(out.count("G1 E-0.5 F1800"), 1)
-        self.assertNotIn("G1 E0.45", out)
+        self.assertNotIn("G1 E0.50", out)
 
     def test_direct_hop_still_retracts(self) -> None:
         src = "\n".join([
@@ -357,7 +357,7 @@ class PullbackSeamChordTest(unittest.TestCase):
         ])
         out = self._run(src)
         self.assertEqual(out.count("G1 E-0.5 F1800"), 2)
-        self.assertEqual(out.count("G1 E0.45"), 1)
+        self.assertEqual(out.count("G1 E0.50"), 1)
 
 
 if __name__ == "__main__":

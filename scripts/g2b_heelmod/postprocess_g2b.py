@@ -935,6 +935,20 @@ def _rendered_crosses(grid, start: tuple[float, float], rendered: list[str]) -> 
     return False
 
 
+def _chain_wall_feed(chain: list[dict], fallback: float = 1560.0) -> float:
+    """Extrusion feed on a wall chain, never the travel feed left on the approach."""
+    for seg in chain:
+        tok = seg.get("f")
+        if tok is None:
+            continue
+        feed = float(tok)
+        if abs(feed - TRAVEL_F) > 1.0:
+            return feed
+    if abs(fallback - TRAVEL_F) > 1.0:
+        return fallback
+    return 1560.0
+
+
 def _overlap_line(chain: list[dict], feed_fallback: float = 1560.0) -> tuple[str, float, float] | None:
     """0.4 mm of extrusion past a closed joint. None when the chain is not a loop,
     or when it is short enough that the replay would be a second wall.
@@ -950,7 +964,7 @@ def _overlap_line(chain: list[dict], feed_fallback: float = 1560.0) -> tuple[str
     uy = (guide["y1"] - guide["y0"]) / span
     sx = chain[-1]["x1"] + ux * step
     sy = chain[-1]["y1"] + uy * step
-    feed = float(guide["f"]) if guide.get("f") else feed_fallback
+    feed = _chain_wall_feed(chain, feed_fallback)
     line = f"G1 X{_fmt(sx, 3)} Y{_fmt(sy, 3)} E{guide['e'] / span * step:.5f} F{feed:.0f} ;seam overlap\n"
     return line, sx, sy
 
@@ -977,9 +991,9 @@ def _emit_outer_finish(
         return None
     ux = (guide["x1"] - guide["x0"]) / span
     uy = (guide["y1"] - guide["y0"]) / span
-    feed = float(guide["f"]) if guide.get("f") else feed_fallback
+    feed = _chain_wall_feed(chain, feed_fallback)
     sx, sy = chain[-1]["x1"], chain[-1]["y1"]
-    hit = _overlap_line(chain, feed_fallback)
+    hit = _overlap_line(chain, feed)
     if hit is not None:
         line, sx, sy = hit
         out.append(line)

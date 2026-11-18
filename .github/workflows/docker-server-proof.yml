@@ -124,17 +124,23 @@ jobs:
       - uses: actions/checkout@v6
         with:
           lfs: 'true'
+      # ubuntu-latest is 26.04 and its Python has no wheel for manifold3d
+      # 2.5.1. Pip then builds it, and current scikit-build-core rejects that
+      # release's cmake.minimum-version key. 3.12 has wheels for every pin.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - name: Registry + Cura ref tests
         run: |
-          python3 -m pip install -q -r server/requirements.txt httpx
-          python3 validation/tests/test_server_registry.py
-          python3 validation/tests/test_server_slice_overrides.py
-          python3 validation/tests/test_materials.py
-          python3 validation/tests/test_apex_light.py
-          python3 validation/tests/test_apex_v2_insole_densities.py
-          python3 validation/tests/test_apex_v2_cura_match.py
-          python3 validation/tests/test_apex_v2_slice.py
-          python3 validation/tests/test_apex_v2_gcode_bookends.py
-          python3 validation/tests/test_first_layer_y.py
-          python3 validation/tests/test_print_direction_tunables.py
-          python3 -m unittest tests.test_server_full_chain tests.test_golden_gate tests.test_threemf_modifiers tests.test_region_infill -v
+          python -m pip install -q -r server/requirements.txt httpx
+          python validation/tests/test_server_registry.py
+          python validation/tests/test_server_slice_overrides.py
+          python validation/tests/test_materials.py
+          python validation/tests/test_apex_light.py
+          python validation/tests/test_apex_v2_insole_densities.py
+          python validation/tests/test_apex_v2_cura_match.py
+          python validation/tests/test_apex_v2_slice.py
+          python validation/tests/test_apex_v2_gcode_bookends.py
+          python validation/tests/test_first_layer_y.py
+          python validation/tests/test_print_direction_tunables.py
+          python -m unittest tests.test_server_full_chain tests.test_golden_gate tests.test_threemf_modifiers tests.test_region_infill -v

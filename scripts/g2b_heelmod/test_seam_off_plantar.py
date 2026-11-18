@@ -21,6 +21,7 @@ from postprocess_g2b import (  # noqa: E402
     PRIME,
     RETRACT,
     SHORT_LOOP_MM,
+    TRAVEL_F,
     _dorsal_split,
     seam,
 )
@@ -517,6 +518,44 @@ class SeamOffPlantar(unittest.TestCase):
         self.assertIn(";glide", out)
         self.assertEqual(PRIME, RETRACT)
         self.assertEqual(OVERLAP_MM, 0.4)
+
+    def test_seam_overlap_uses_outer_wall_feed_not_travel(self) -> None:
+        """Seam overlap must print at wall F (e.g. 1560), never travel F12720."""
+        cases = [
+            _insole_section(),
+            _flat_leader(),
+            "\n".join([
+                "M83",
+                "G90",
+                ";LAYER_CHANGE",
+                ";Z:40",
+                "G1 X70 Y1 F1560",
+                ";TYPE:Outer wall",
+                "G1 X80 Y0 F12720",
+                "G1 X160 Y0 E0.80 F1560",
+                "G1 X160 Y2 E0.02",
+                "G1 X80 Y2 E0.80",
+                "G1 X80 Y0 E0.02",
+                "G1 X90 Y0.4 F12720",
+                ";TYPE:Inner wall",
+                "G1 X150 Y0.4 E0.60 F1560",
+                "G1 X150 Y1.6 E0.012",
+                "G1 X90 Y1.6 E0.60",
+                "G1 X90 Y0.4 E0.012",
+                "",
+            ]),
+        ]
+        wall_f = 1560.0
+        for src in cases:
+            out, _counts = seam(src, retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
+            overlap_lines = [ln for ln in out.splitlines() if ";seam overlap" in ln]
+            self.assertTrue(overlap_lines, msg="expected at least one seam overlap")
+            for ln in overlap_lines:
+                words = dict(WORD.findall(ln.split(";", 1)[0]))
+                self.assertIn("F", words)
+                feed = float(words["F"])
+                self.assertAlmostEqual(feed, wall_f, places=0)
+                self.assertNotAlmostEqual(feed, TRAVEL_F, places=0)
 
     def test_tessellated_dorsal_edge_uses_the_run_midpoint(self) -> None:
         segs = [

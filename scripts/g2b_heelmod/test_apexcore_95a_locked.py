@@ -157,6 +157,24 @@ class ApexCore95ALocked(unittest.TestCase):
         for key, value in APEXCORE_FOREFOOT_STITCH.items():
             self.assertEqual(lock["settings"][key]["value"], value)
             self.assertEqual(stitch["changes"][key]["new"], value)
+        # #29 turned detect_thin_wall on. Kendon 2026-11-18 turned it back off.
+        # The other #29 keys stay, and reduce_crossing_wall stays 1.
+        self.assertEqual(APEXCORE_FOREFOOT_STITCH["detect_thin_wall"], "0")
+        self.assertEqual(lock["settings"]["detect_thin_wall"]["value"], "0")
+        self.assertEqual(stitch["changes"]["detect_thin_wall"]["new"], "0")
+        kept_from_29 = {
+            "wall_generator": "classic",
+            "filter_out_gap_fill": "8",
+            "gap_fill_target": "everywhere",
+            "min_bead_width": "25%",
+        }
+        for key, value in kept_from_29.items():
+            self.assertEqual(APEXCORE_FOREFOOT_STITCH[key], value)
+            self.assertEqual(lock["settings"][key]["value"], value)
+            self.assertEqual(stitch["changes"][key]["new"], value)
+        cfg = json.loads((HERE / "g2b_config.json").read_text())
+        self.assertEqual(cfg["reduce_crossing_wall"], "1")
+        self.assertEqual(cfg["detect_thin_wall"], "0")
         self.assertEqual(lock["settings"]["seam_position"]["value"] if "seam_position" in lock["settings"] else "aligned", "aligned")
         self.assertEqual(lock["settings"]["outer_wall_flow_ratio"]["value"], "1.0142")
         self.assertEqual(lock["settings"]["infill_wall_overlap"]["value"], "15%")
@@ -179,7 +197,18 @@ class ApexCore95ALocked(unittest.TestCase):
             if isinstance(got, list):
                 got = got[0]
             self.assertEqual(str(got), value)
+        self.assertEqual(str(process["detect_thin_wall"]), "0")
+        self.assertEqual(str(process["reduce_crossing_wall"]), "1")
+        self.assertEqual(str(process["wall_generator"]), "classic")
+        self.assertEqual(str(process["filter_out_gap_fill"]), "8")
+        self.assertEqual(str(process["gap_fill_target"]), "everywhere")
+        self.assertEqual(str(process["min_bead_width"]), "25%")
         self.assertEqual(str(process["wall_loops"]), "2")
+        self.assertEqual(str(process["outer_wall_line_width"]), "1")
+        self.assertEqual(str(process["inner_wall_line_width"]), "1")
+        self.assertEqual(str(process["ensure_vertical_shell_thickness"]), "none")
+        self.assertEqual(str(process["top_shell_layers"]), "0")
+        self.assertEqual(str(process["minimum_sparse_infill_area"]), "5")
         self.assertEqual(process["seam_position"], "aligned")
         self.assertEqual(str(process["seam_gap"]), "0")
         self.assertEqual(process["outer_wall_flow_ratio"], "1.0142")
