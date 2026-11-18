@@ -107,12 +107,16 @@ def overlay_g2b(machine: dict, process: dict, filament: dict) -> None:
 # outer-wall 26 mm/s). filter_out_gap_fill 8 drops polylines shorter than
 # 8 mm. Those are scattered heel and arch islands. The forefoot stitch
 # polylines are longer than 8 mm, so the joint stays.
+# Kendon, 2026-11-18: detect_thin_wall goes back to 0. #29 (3717053d3c) turned
+# it on, and the short outer-wall pieces were each treated as a seam. Classic
+# walls, gap fill everywhere, the 8 mm filter, 25% min bead width, and
+# wall_loops 2 stay.
 APEXCORE_FOREFOOT_STITCH = {
     "wall_generator": "classic",
     "filter_out_gap_fill": "8",
     "gap_fill_target": "everywhere",
     "min_bead_width": "25%",
-    "detect_thin_wall": "1",
+    "detect_thin_wall": "0",
 }
 
 
