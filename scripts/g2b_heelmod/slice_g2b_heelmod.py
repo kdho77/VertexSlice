@@ -111,12 +111,22 @@ def overlay_g2b(machine: dict, process: dict, filament: dict) -> None:
 # it on, and the short outer-wall pieces were each treated as a seam. Classic
 # walls, gap fill everywhere, the 8 mm filter, 25% min bead width, and
 # wall_loops 2 stay.
+# Kendon, 2026-11-18 t2245u: the toe skins separate with nothing between
+# them that they can bond to. On the sample belt the thin toe is two 1.0 mm
+# walls and a 0.30 mm gap bead, with 0.20 mm of air on each side of the bead.
+# That geometry is already in the shared G2b block before #27 (parent of
+# c3510806d2): line width 1, ensure_vertical_shell_thickness none,
+# top_shell_layers 0. Turning the shells on does not widen the bead. A 1.3 mm
+# wall overlaps the opposite skin anywhere the section is thinner than two
+# walls. The 8 mm filter, classic walls, and wall_loops 2 stay.
 APEXCORE_FOREFOOT_STITCH = {
     "wall_generator": "classic",
     "filter_out_gap_fill": "8",
     "gap_fill_target": "everywhere",
     "min_bead_width": "25%",
     "detect_thin_wall": "0",
+    "outer_wall_line_width": "1.3",
+    "inner_wall_line_width": "1.3",
 }
 
 
