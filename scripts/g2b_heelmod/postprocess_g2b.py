@@ -17,9 +17,9 @@ on whatever point the seam uses. A closed chain of only a few millimetres
 gets the wipe and no overlap: that overlap is a second copy of the wall,
 and the lift-and-direct hop was chosen before the copy existed. A near-closed
 loop is joined across its opening before the rotate, so the raw lines cannot
-become a chord. On ApexLight the lift-and-direct block stays where it was
-written. The nozzle walks the perimeter to the dorsal start and back, so the
-hop is not slid up the zipper.
+become a chord. ApexLight does not run this seam pass. Its post-edit is
+the production fan lock, the pp_c E-pair drop, and the inside-wall travel
+walk, with heel-route E±1.5 left as written.
 
 Retract 0.5 and prime 0.5. A closed outer loop then extrudes a 0.4 mm
 overlap and wipes 0.7 mm dry at 60% of that wall's feed. Infill travels get
@@ -606,18 +606,77 @@ def _clean_path(path: list[tuple[float, float]]) -> list[tuple[float, float]]:
     return out
 
 
+def _chain_polygons_production(edges: list[tuple[float, float, float, float]]):
+    """Production ring walk. ApexLight, Forge, and Bounce travels use this.
+
+    ApexCore ``seam()`` keeps ``check_travel_wall_crossings._chain_polygons``,
+    which stops on the return to the start so a 0.4 mm overlap spur stays on
+    the ring. That walk is not part of the ApexLight post-edit.
+    """
+    from check_travel_wall_crossings import CLOSE_MM, _near
+
+    if not edges:
+        return 0, 0, []
+
+    def key(x: float, y: float) -> tuple[int, int]:
+        return (int(round(x / CLOSE_MM)), int(round(y / CLOSE_MM)))
+
+    unused = set(range(len(edges)))
+    starts: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    for i, (x0, y0, x1, y1) in enumerate(edges):
+        starts.setdefault(key(x0, y0), []).append((i, 0))
+        starts.setdefault(key(x1, y1), []).append((i, 1))
+
+    closed = 0
+    open_n = 0
+    rings: list[list[tuple[float, float]]] = []
+    while unused:
+        i0 = unused.pop()
+        x0, y0, x1, y1 = edges[i0]
+        ring = [(x0, y0), (x1, y1)]
+        guard = 0
+        while guard < len(edges) + 2:
+            guard += 1
+            k = key(ring[-1][0], ring[-1][1])
+            nxt = None
+            for i, end in starts.get(k, ()):
+                if i not in unused:
+                    continue
+                nxt = (i, end)
+                break
+            if nxt is None:
+                break
+            i, end = nxt
+            unused.remove(i)
+            ex0, ey0, ex1, ey1 = edges[i]
+            ring.append((ex0, ey0) if end == 1 else (ex1, ey1))
+        is_closed = len(ring) >= 4 and _near(ring[0][0], ring[0][1], ring[-1][0], ring[-1][1], CLOSE_MM * 2)
+        if is_closed:
+            closed += 1
+            rings.append(ring)
+        else:
+            open_n += 1
+    return closed, open_n, rings
+
+
 def route_inside_wall(
     edges: list[tuple[float, float, float, float]],
     start: tuple[float, float],
     dest: tuple[float, float],
+    chain_polygons=None,
 ) -> list[tuple[float, float]]:
     """Path from start to dest that does not cut across an outer wall.
 
     A straight hop is kept when it does not cross. Otherwise the path follows
     the largest outer ring, inset toward its centroid, so the nozzle stays
     inside the part. The seam point itself is unchanged: the path ends at dest.
+
+    The default ring walk is the Core one. ApexLight passes the production walk.
     """
-    from check_travel_wall_crossings import _Grid, _chain_polygons
+    from check_travel_wall_crossings import _Grid
+
+    if chain_polygons is None:
+        from check_travel_wall_crossings import _chain_polygons as chain_polygons
 
     if not edges:
         return [start, dest]
@@ -626,7 +685,7 @@ def route_inside_wall(
     bx, by = dest
     if not grid.hits(ax, ay, bx, by):
         return [start, dest]
-    _closed, _open, rings = _chain_polygons(edges)
+    _closed, _open, rings = chain_polygons(edges)
     if not rings:
         return [start, dest]
     ring = max(rings, key=lambda r: abs(sum(
@@ -704,15 +763,16 @@ def _route_off_wall(
     start: tuple[float, float],
     dest: tuple[float, float],
     grid,
+    chain_polygons=None,
 ) -> list[tuple[float, float]] | None:
     """Inside-wall path, or None when no path stays off the real perimeter."""
-    path = route_inside_wall(edges, start, dest)
+    path = route_inside_wall(edges, start, dest, chain_polygons)
     if len(path) >= 3 and not _path_crosses(grid, path):
         return path
     extra = _closing_edges(edges)
     if not extra:
         return None
-    path = route_inside_wall([*edges, *extra], start, dest)
+    path = route_inside_wall([*edges, *extra], start, dest, chain_polygons)
     if len(path) >= 3 and not _path_crosses(grid, path):
         return path
     return None
@@ -806,7 +866,7 @@ def clear_perimeter_crossings(text: str) -> str:
         grid = _Grid(layer_edges)
         if not _crossing(grid, px, py, nx, ny):
             continue
-        path = _route_off_wall(layer_edges, (px, py), (nx, ny), grid)
+        path = _route_off_wall(layer_edges, (px, py), (nx, ny), grid, _chain_polygons_production)
         if path is None:
             continue
         rendered = _render_routed_travel(lines[index], path)
@@ -1251,12 +1311,11 @@ def _render_reseat(run: dict) -> tuple[list[str], float, float] | None:
 
 
 def reseat_closed_outers(text: str) -> str:
-    """Dorsal start and 0.4 mm overlap on closed outers. Retraction is not touched.
+    """Dorsal reseat kept for the Core experiments. Not on the ApexLight path.
 
-    ApexLight does not run match(), so this is the seam geometry without the
-    0.5 mm retract and prime. A heel-route ``G1 E±1.5`` stays. pp_d's travels
-    stay too: the dorsal start is a walk along the wall, then the nozzle
-    returns to the old end so the next hop still begins where it was written.
+    ``finalize_apex_light`` does not call this. ApexCore seams go through
+    ``seam()`` / ``match()``. Calling this on ApexLight is what put the
+    belt hop and the dorsal walk on the wall.
     """
     lines = text.splitlines(keepends=True)
     out: list[str] = []

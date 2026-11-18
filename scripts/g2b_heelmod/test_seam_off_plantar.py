@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import math
 import re
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -297,6 +299,118 @@ def _words(line: str) -> dict[str, str]:
     return dict(WORD.findall(line.split(";", 1)[0]))
 
 
+def _move_bodies(text: str) -> list[str]:
+    """G-code commands, comments stripped. Comment-only lines are not moves."""
+    bodies = []
+    for line in text.splitlines():
+        body = line.split(";", 1)[0].strip()
+        if body:
+            bodies.append(body)
+    return bodies
+
+
+_MAIN_LIGHT = "9e2fe13ccab1e6eee78f223a0135acd47dca4ba4"
+_MAIN_LIGHT_FILES = (
+    "tools/belt_pp/__init__.py",
+    "tools/belt_pp/pipeline.py",
+    "tools/belt_pp/apex_light_post_edit.py",
+    "scripts/g2b_heelmod/postprocess_g2b.py",
+    "scripts/g2b_heelmod/check_travel_wall_crossings.py",
+)
+
+
+def _materialize_main_light() -> Path:
+    """Production ApexLight post-edit tree, isolated from this branch's modules."""
+    root = Path(tempfile.mkdtemp(prefix="apexlight_main_"))
+    for rel in _MAIN_LIGHT_FILES:
+        dest = root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        data = subprocess.check_output(["git", "-C", str(REPO), "show", f"{_MAIN_LIGHT}:{rel}"])
+        dest.write_bytes(data)
+    return root
+
+
+def _finalize_in_tree(root: Path, text: str) -> str:
+    script = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "root = Path(sys.argv[1])\n"
+        "sys.path.insert(0, str(root))\n"
+        "from tools.belt_pp.pipeline import finalize_apex_light\n"
+        "sys.stdout.write(finalize_apex_light(sys.stdin.read()))\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script, str(root)],
+        input=text,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr[-2000:])
+    return proc.stdout
+
+
+def _production_analyze(root: Path, text: str) -> dict:
+    script = (
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "root = Path(sys.argv[1])\n"
+        "sys.path.insert(0, str(root / 'scripts' / 'g2b_heelmod'))\n"
+        "from check_travel_wall_crossings import analyze\n"
+        "report = analyze(sys.stdin.read())\n"
+        "totals = report['totals']\n"
+        "zs = [row['z'] for row in report['layers_with_crossings']]\n"
+        "json.dump({\n"
+        "  'perimeter_crossings': totals['perimeter_crossings'],\n"
+        "  'seam_block_crossings': totals['seam_block_crossings'],\n"
+        "  'chain_hop_crossings': totals['chain_hop_crossings'],\n"
+        "  'gap_crossings': totals['gap_crossings'],\n"
+        "  'reduce_crossing_wall': report['reduce_crossing_wall'],\n"
+        "  'z': zs,\n"
+        "}, sys.stdout)\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script, str(root)],
+        input=text,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr[-2000:])
+    import json
+    return json.loads(proc.stdout)
+
+
+def _overlap_spur_square() -> str:
+    """Closed outer plus a 0.4 mm spur, and a travel that cuts the wall.
+
+    The Core ring walk stops when it returns to the start, so the spur does
+    not pull the ring open and the hop can be routed inside. Production follows
+    the spur and keeps the straight hop. ApexLight must do the latter.
+    """
+    return "\n".join([
+        "M83",
+        "G90",
+        ";LAYER_CHANGE",
+        ";Z:40",
+        "; reduce_crossing_wall = 1",
+        "G1 X-2 Y5 F1560",
+        ";TYPE:Outer wall",
+        "G1 X0 Y0 F12720",
+        "G1 X20 Y0 E0.2 F1560",
+        "G1 X20 Y10 E0.1",
+        "G1 X0 Y10 E0.2",
+        "G1 X0 Y0 E0.1",
+        "G1 X0.400 Y0 E0.004 ;seam overlap",
+        "G1 X10 Y5 F12720",
+        ";TYPE:Sparse infill",
+        "G1 X11 Y5 E0.01",
+        "",
+    ])
+
+
 def _outer_starts(text: str) -> list[tuple[float, float]]:
     """XY where each outer or overhang extrusion begins."""
     x = y = None
@@ -506,7 +620,7 @@ class SeamOffPlantar(unittest.TestCase):
         self.assertAlmostEqual(flat_start[0], 15.0, places=2)
         self.assertAlmostEqual(flat_start[1], 0.05, places=2)
 
-    def test_apex_light_gets_dorsal_overlap_and_keeps_heel_retract(self) -> None:
+    def test_apex_light_keeps_the_production_heel_route(self) -> None:
         for src in (_light_heel_loop(), _light_heel_loop("G1 X81.2 Y0.021 E0.02")):
             out = finalize_apex_light(src)
             self.assertEqual(out.count("G1 E-1.5 F1800"), 1)
@@ -515,17 +629,16 @@ class SeamOffPlantar(unittest.TestCase):
             self.assertNotIn("G1 E0.45", out)
             self.assertNotIn("G1 E0.50", out)
             self.assertIn("G1 X80 Y0.021 F12720 ;heel route", out)
-            self.assertIn(";seam overlap", out)
-            self.assertIn("X119.600 Y2.000", out)
+            self.assertNotIn(";seam overlap", out)
+            self.assertNotIn("X119.600 Y2.000", out)
             start = _outer_starts(out)[0]
-            self.assertAlmostEqual(start[0], 120.0, places=2)
-            self.assertAlmostEqual(start[1], 2.0, places=2)
-            self.assertGreaterEqual(start[1], 1.75)
+            self.assertAlmostEqual(start[0], 80.0, places=2)
+            self.assertAlmostEqual(start[1], 0.021, places=2)
             report = analyze(out)
             self.assertEqual(report["totals"]["perimeter_crossings"], 0)
             self.assertEqual(report["reduce_crossing_wall"], "1")
 
-    def test_light_belt_hop_is_not_left_across_the_islands(self) -> None:
+    def test_light_belt_hop_stays_where_pp_d_wrote_it(self) -> None:
         src = _light_two_islands()
         out = finalize_apex_light(src)
         report = analyze(out)
@@ -539,28 +652,13 @@ class SeamOffPlantar(unittest.TestCase):
         self.assertNotIn("G1 E0.50", out)
         self.assertIn("G1 X80.000 Y-0.400 F12720 ;seam travel", out)
         self.assertNotIn("Y10.400", out)
-        self.assertIn(";seam overlap", out)
-        self.assertEqual(out.count(";seam overlap"), 2)
+        self.assertNotIn(";seam overlap", out)
         starts = _outer_starts(out)
         self.assertGreaterEqual(len(starts), 2)
         for start in starts[:2]:
-            self.assertAlmostEqual(start[1], 10.0, places=2)
-            self.assertGreaterEqual(start[1], 1.75)
-        y_before_second = None
-        y = None
-        seen = 0
-        for line in out.splitlines():
-            if line.startswith(";C seam travel"):
-                seen += 1
-                if seen == 2:
-                    y_before_second = y
-                    break
-            words = _words(line)
-            if "Y" in words:
-                y = float(words["Y"])
-        self.assertAlmostEqual(y_before_second, 0.0, places=2)
+            self.assertAlmostEqual(start[1], 0.0, places=2)
 
-    def test_light_zipper_y_hop_is_not_shifted_onto_the_wall(self) -> None:
+    def test_light_zipper_y_hop_is_not_moved(self) -> None:
         src = _light_zipper_y_hop()
         shifted = src.replace(
             "G1 X149.786 Y0.422 F12720 ;seam travel",
@@ -581,11 +679,35 @@ class SeamOffPlantar(unittest.TestCase):
         self.assertIn("G1 E1.5 F1800", out)
         self.assertNotIn("G1 E-0.5", out)
         self.assertNotIn("G1 E0.50", out)
+        self.assertNotIn(";seam overlap", out)
         start = _outer_starts(out)[0]
         self.assertAlmostEqual(start[0], 149.786, places=2)
-        self.assertAlmostEqual(start[1], 10.0, places=2)
-        self.assertGreaterEqual(start[1], 1.75)
-        self.assertIn(";seam overlap", out)
+        self.assertAlmostEqual(start[1], 0.022, places=2)
+
+    def test_apex_light_post_edit_matches_production_main(self) -> None:
+        main_tree = _materialize_main_light()
+        head_tree = REPO
+        sources = {
+            "heel": _light_heel_loop(),
+            "heel_near": _light_heel_loop("G1 X81.2 Y0.021 E0.02"),
+            "islands": _light_two_islands(),
+            "zipper": _light_zipper_y_hop(),
+            "square": _square_hop(),
+            "spur": _overlap_spur_square(),
+        }
+        for name, src in sources.items():
+            head = _finalize_in_tree(head_tree, src)
+            prod = _finalize_in_tree(main_tree, src)
+            self.assertEqual(_move_bodies(head), _move_bodies(prod), name)
+            self.assertEqual(head.count("G1 E-1.5 F1800"), prod.count("G1 E-1.5 F1800"), name)
+            self.assertEqual(head.count("G1 E1.5 F1800"), prod.count("G1 E1.5 F1800"), name)
+            report = _production_analyze(main_tree, head)
+            self.assertEqual(report["reduce_crossing_wall"], "1", name)
+        for name in ("heel", "heel_near", "islands", "zipper"):
+            head = _finalize_in_tree(head_tree, sources[name])
+            report = _production_analyze(main_tree, head)
+            self.assertEqual(report["perimeter_crossings"], 0, name)
+            self.assertEqual(report["z"], [], name)
 
     def test_near_closed_corner_does_not_add_a_gap_crossing(self) -> None:
         out, counts = seam(
