@@ -15,7 +15,10 @@ still restart on the belt contact at the outer seam's X. Coupon cut and
 min-layer-time do not use the seam point. The inside-wall travel still ends
 on whatever point the seam uses. A closed chain of only a few millimetres
 gets the wipe and no overlap: that overlap is a second copy of the wall,
-and the lift-and-direct hop was chosen before the copy existed.
+and the lift-and-direct hop was chosen before the copy existed. A near-closed
+loop is joined across its opening before the rotate, so the raw lines cannot
+become a chord. On ApexLight the whole lift-and-direct block moves with the
+seam; leaving the hop at the old belt height cut through the part.
 
 Retract 0.5 and prime 0.5. A closed outer loop then extrudes a 0.4 mm
 overlap and wipes 0.7 mm dry at 60% of that wall's feed. Infill travels get
@@ -284,6 +287,35 @@ def _dorsal_vertex_start(segments: list[dict], pts: list[tuple[float, float]]) -
     return segments[best_i:] + segments[:best_i]
 
 
+def _bridge_near_gap(segments: list[dict]) -> list[dict]:
+    """Extrude the opening of a near-closed loop before it is rotated.
+
+    The ends miss by more than the 0.8 mm margin. Rotating the raw lines
+    leaves the nozzle on one end and the next line aimed at the far end of
+    the first leg, so the wall becomes a chord across the part. A gap-infill
+    hop that missed the real wall then crosses that chord. The bridge is the
+    short joint between the ends, at the same E/mm as the first leg.
+    """
+    gap = _end_gap(segments)
+    if gap <= _CLOSED_GAP_MM or gap <= 1e-6:
+        return segments
+    end = segments[-1]
+    start = segments[0]
+    span = math.hypot(start["x1"] - start["x0"], start["y1"] - start["y0"]) or 1.0
+    ee = (start["e"] / span) * gap if start.get("e") else 0.0
+    bridge = dict(start)
+    bridge.update(
+        x0=end["x1"],
+        y0=end["y1"],
+        x1=start["x0"],
+        y1=start["y0"],
+        e=ee,
+        raw=_synth_move(start["x0"], start["y0"], ee, start.get("f")),
+        comments=[],
+    )
+    return [*segments, bridge]
+
+
 def _dorsal_split(segments: list[dict]) -> list[dict]:
     """Rotate a closed loop so it starts off the plantar (belt) face.
 
@@ -291,11 +323,13 @@ def _dorsal_split(segments: list[dict]) -> list[dict]:
     A crest shorter than 2 mm uses the dorsal-most vertex instead, and a tie
     there prefers the lateral end. A flat loop with no point above the belt
     band keeps the toe-file belt start: that is a leader tab with no dorsal face.
+    A near-closed loop is bridged first, so the rotate cannot emit a chord.
     """
     if len(segments) < 3:
         return segments
     if not _is_closed_loop(segments):
         return segments
+    segments = _bridge_near_gap(segments)
     pts = [(segments[0]["x0"], segments[0]["y0"])] + [(s["x1"], s["y1"]) for s in segments]
     ymin = min(p[1] for p in pts)
     ymax = max(p[1] for p in pts)
@@ -1077,6 +1111,79 @@ def _collect_outer_run(
     }
 
 
+def _near_point(ax: float, ay: float, bx: float, by: float, tol: float = 0.02) -> bool:
+    return math.hypot(ax - bx, ay - by) <= tol
+
+
+def _retarget_approach(
+    gap: list[str], old: tuple[float, float], new: tuple[float, float], incoming: tuple[float | None, float | None]
+) -> list[str]:
+    """Aim the whole seam block at the new landing, not only the last lower.
+
+    pp_d leaves a lift, a hop at the old belt height, and a lower. Moving only
+    the lower keeps the hop on the belt, 0.4 mm off every wall, where it cuts
+    the part. The hop shifts with the seam. A lift whose absolute Y now points
+    back down through the part is raised above the nozzle instead.
+    """
+    dx, dy = new[0] - old[0], new[1] - old[1]
+    lifted = (old[0], old[1] + LIFT)
+    cx = incoming[0]
+    cy = incoming[1]
+    out: list[str] = []
+    moved_xy = False
+    for line in gap:
+        if not _move_travel(line):
+            out.append(line)
+            continue
+        w = _words(line)
+        if "X" not in w and "Y" not in w:
+            out.append(line)
+            continue
+        if cx is None or cy is None:
+            # No position yet. A landing is still retargeted; anything else
+            # only seeds the nozzle for the lines after it.
+            sx = float(w["X"]) if "X" in w else None
+            sy = float(w["Y"]) if "Y" in w else None
+            if sx is not None and sy is not None and (
+                _near_point(sx, sy, old[0], old[1]) or _near_point(sx, sy, lifted[0], lifted[1])
+            ):
+                sx += dx
+                sy += dy
+                out.append(_retarget_landing(line, sx, sy))
+                moved_xy = True
+            else:
+                out.append(line)
+            cx, cy = sx if sx is not None else cx, sy if sy is not None else cy
+            continue
+        dest_x = float(w["X"]) if "X" in w else cx
+        dest_y = float(w["Y"]) if "Y" in w else cy
+        before_y = cy
+        if _near_point(dest_x, dest_y, old[0], old[1]) or _near_point(dest_x, dest_y, lifted[0], lifted[1]):
+            dest_x += dx
+            dest_y += dy
+            out.append(_retarget_landing(line, dest_x, dest_y))
+            moved_xy = True
+        elif (
+            ";lift" in line
+            and "X" not in w
+            and dest_y < before_y - 0.05
+        ):
+            dest_y = before_y + LIFT
+            out.append(_retarget_landing(line, dest_x, dest_y))
+            moved_xy = True
+        elif "X" not in w and abs(dest_y - old[1]) <= 0.02 and _near_point(cx, 0.0, new[0], 0.0, 0.02):
+            # Y-only lower after the hop already moved onto the new seam's X.
+            dest_y = new[1]
+            out.append(_retarget_landing(line, dest_x, dest_y))
+            moved_xy = True
+        else:
+            out.append(line)
+        cx, cy = dest_x, dest_y
+    if not moved_xy:
+        out.append(f"G1 X{_fmt(new[0], 3)} Y{_fmt(new[1], 3)} F{TRAVEL_F:.0f}\n")
+    return out
+
+
 def _render_reseat(run: dict) -> tuple[list[str], float, float] | None:
     """New lines for one outer run, or None when the run is already fine."""
     segs = run["segs"]
@@ -1087,18 +1194,7 @@ def _render_reseat(run: dict) -> tuple[list[str], float, float] | None:
         return None
     gap = list(run["gap"])
     if moved:
-        for idx in range(len(gap) - 1, -1, -1):
-            if not _move_travel(gap[idx]):
-                continue
-            w = _words(gap[idx])
-            if "X" not in w and "Y" not in w:
-                continue
-            gap[idx] = _retarget_landing(gap[idx], rotated[0]["x0"], rotated[0]["y0"])
-            break
-        else:
-            gap.append(
-                f"G1 X{_fmt(rotated[0]['x0'], 3)} Y{_fmt(rotated[0]['y0'], 3)} F{TRAVEL_F:.0f}\n"
-            )
+        gap = _retarget_approach(gap, (segs[0]["x0"], segs[0]["y0"]), (rotated[0]["x0"], rotated[0]["y0"]), run["incoming"])
     piece = gap
     for s in rotated:
         piece.extend(s["comments"])
@@ -1147,6 +1243,7 @@ def reseat_closed_outers(text: str) -> str:
         if _move_travel(line):
             run = _collect_outer_run(lines, i, typ, x, y)
             if run is not None:
+                run["incoming"] = (x, y)
                 rendered = _render_reseat(run)
                 if rendered is None:
                     for ln in lines[i : run["end"]]:
@@ -1267,8 +1364,18 @@ def seam(
                     lj = lines[k]
                     if lj.startswith(";TYPE:"):
                         # Outer and overhang share one perimeter. A type comment
-                        # is not a new path; splitting there misses the belt edge.
-                        dest_type = lj[6:].strip()
+                        # between them is not a new path; splitting there misses
+                        # the belt edge. Any other feature ends the wall. Leaving
+                        # the type in the chain made the outer look like gap
+                        # infill, so a near-closed tab was not rotated.
+                        new_type = lj[6:].strip()
+                        if (
+                            segs
+                            and dest_type in ("Outer wall", "Overhang wall")
+                            and new_type not in ("Outer wall", "Overhang wall")
+                        ):
+                            break
+                        dest_type = new_type
                         comments.append(lj if lj.endswith("\n") else lj + "\n")
                         k += 1
                         continue

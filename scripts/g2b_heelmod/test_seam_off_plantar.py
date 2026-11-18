@@ -163,6 +163,78 @@ def _light_heel_loop(last: str = "G1 X80 Y0.021 E0.02") -> str:
     ])
 
 
+def _light_two_islands() -> str:
+    """Two closed outers whose pp_d hop still aims at the belt seam.
+
+    b79a1fb4 moved only the lower. The hop stayed at Y+0.4, off every wall
+    by more than the 0.3 mm seam window, and cut both islands. The M204
+    makes that same hop a chain hop as well as a seam-block travel.
+    """
+    return "\n".join([
+        "M83",
+        "G90",
+        ";LAYER_CHANGE",
+        ";Z:40",
+        "; reduce_crossing_wall = 1",
+        "G1 X20 Y-1 F1560",
+        ";PP_HEELROUTE_START",
+        "G1 E-1.5 F1800",
+        ";TYPE:Outer wall",
+        ";C seam travel: lift + direct",
+        "G1 Y-0.600 F12720 ;lift",
+        "G1 X20.000 Y0.400 F12720 ;seam travel",
+        "G1 Y0.000 F12720 ;lower",
+        "G1 E1.5 F1800",
+        ";PP_HEELROUTE_END",
+        "G1 X40 Y0 E0.20 F1560",
+        "G1 X40 Y10 E0.10",
+        "G1 X0 Y10 E0.40",
+        "G1 X0 Y0 E0.10",
+        "G1 X20 Y0 E0.20",
+        ";TYPE:Outer wall",
+        ";C seam travel: lift + direct",
+        "G1 Y0.400 F12720 ;lift",
+        "M204 S10000",
+        "G1 X80.000 Y0.400 F12720 ;seam travel",
+        "M204 S8000",
+        "G1 Y0.000 F12720 ;lower",
+        "G1 X100 Y0 E0.20 F1560",
+        "G1 X100 Y10 E0.10",
+        "G1 X60 Y10 E0.40",
+        "G1 X60 Y0 E0.10",
+        "G1 X80 Y0 E0.20",
+        "",
+    ])
+
+
+def _gapped_corner_with_infill() -> str:
+    """Near-closed loop whose opening is not collinear with the first leg.
+
+    Rotating the raw lines drew the first leg from the open end, a chord
+    the gap hop crosses. The hop is gap-to-gap, so it is not a seam travel.
+    """
+    return "\n".join([
+        "M83",
+        "G90",
+        ";LAYER_CHANGE",
+        ";Z:27.973",
+        "; reduce_crossing_wall = 1",
+        "G1 X-2 Y3 F1560",
+        ";TYPE:Outer wall",
+        "G1 X0 Y0 F12720",
+        "G1 X0 Y10 E0.10 F1560",
+        "G1 X40 Y10 E0.40",
+        "G1 X40 Y0 E0.10",
+        "G1 X1.5 Y0.2 E0.40",
+        "G1 X8 Y1 F12720",
+        ";TYPE:Gap infill",
+        "G1 X12 Y1 E0.1",
+        "G1 X0.5 Y5 F12720",
+        "G1 X5 Y5 E0.2",
+        "",
+    ])
+
+
 def _square_hop() -> str:
     """The existing inside-wall fixture: open wall on the left, infill on the right."""
     return "\n".join([
@@ -390,6 +462,45 @@ class SeamOffPlantar(unittest.TestCase):
             self.assertEqual(report["totals"]["perimeter_crossings"], 0)
             self.assertEqual(report["reduce_crossing_wall"], "1")
 
+    def test_light_belt_hop_is_not_left_across_the_islands(self) -> None:
+        src = _light_two_islands()
+        out = finalize_apex_light(src)
+        report = analyze(out)
+        self.assertEqual(report["totals"]["perimeter_crossings"], 0)
+        self.assertEqual(report["totals"]["seam_block_crossings"], 0)
+        self.assertEqual(report["totals"]["chain_hop_crossings"], 0)
+        self.assertEqual(report["reduce_crossing_wall"], "1")
+        self.assertEqual(out.count("G1 E-1.5 F1800"), 1)
+        self.assertEqual(out.count("G1 E1.5 F1800"), 1)
+        self.assertNotIn("G1 E-0.5", out)
+        self.assertNotIn("G1 E0.50", out)
+        self.assertNotIn("G1 X80.000 Y0.400", out)
+        self.assertIn("G1 X80.000 Y10.400 F12720 ;seam travel", out)
+        self.assertIn(";seam overlap", out)
+        self.assertEqual(out.count(";seam overlap"), 2)
+
+    def test_near_closed_corner_does_not_add_a_gap_crossing(self) -> None:
+        out, counts = seam(
+            _gapped_corner_with_infill(),
+            retract_min_mm=2.0,
+            skip_infill_travel=True,
+            g2b_anchor=True,
+        )
+        starts = _seam_starts(out)
+        self.assertGreaterEqual(len(starts), 1)
+        self.assertAlmostEqual(starts[0][0], 20.0, places=2)
+        self.assertAlmostEqual(starts[0][1], 10.0, places=2)
+        self.assertEqual(counts["overlap"], 1)
+        self.assertIn("G1 X0.000 Y0.000", out)
+        self.assertIn("G1 X0.5 Y5 F12720", out)
+        self.assertIn("G1 E-0.5 F1800", out)
+        self.assertIn("G1 E0.50 F1800", out)
+        report = analyze(out)
+        self.assertEqual(report["totals"]["perimeter_crossings"], 0)
+        self.assertEqual(report["totals"]["gap_crossings"], 0)
+        self.assertEqual(report["totals"]["seam_block_crossings"], 0)
+        self.assertEqual(report["reduce_crossing_wall"], "1")
+
     def test_wall_crossings_stay_zero(self) -> None:
         for src in (
             _insole_section(),
@@ -398,6 +509,7 @@ class SeamOffPlantar(unittest.TestCase):
             _short_nub_layer(),
             _near_closed_tab(),
             _open_wall(),
+            _gapped_corner_with_infill(),
         ):
             out, _counts = seam(src, retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
             report = analyze(out)
@@ -409,6 +521,7 @@ class SeamOffPlantar(unittest.TestCase):
             _light_heel_loop(),
             _light_heel_loop("G1 X81.2 Y0.021 E0.02"),
             _short_nub_layer(),
+            _light_two_islands(),
         ):
             out = finalize_apex_light(src)
             report = analyze(out)
