@@ -5,7 +5,8 @@ The sample is the insole section (edge), the layer-40 toe column, and the
 heel nub. Main is that gcode run through the unstamped gap chain and the
 same seam postprocessor 918c5373 ships. This branch stamps the gap feed.
 The postprocess does not move outer walls, skins, seams, or retracts.
-The slicer may shift a thin-skin centreline inward; the outer edge stays.
+The slicer does not move or widen an outer wall. An internal bead grows
+about its centre.
 """
 from __future__ import annotations
 
@@ -226,14 +227,14 @@ class SurfaceVersusMain(unittest.TestCase):
 
     def test_layer_40_fill_stays_inside_the_skins(self) -> None:
         # Solid infill is clipped by the pre-fit gap, so the skin main prints
-        # is not eaten. The printed bead is the physical slot, inside the
-        # outer faces.
+        # is not eaten. The gap bead stays on its centre and grows until the
+        # skins touch. The outer faces are the original walls.
         printed = fit_skin_bead(BOTTOM, GAP, TOP)
         self.assertEqual(BOTTOM, (0.0279, 1.0))
         self.assertEqual(TOP, (1.7386, 1.0))
         self.assertEqual(GAP, (0.8759, 0.301))
-        self.assertAlmostEqual(printed[0], 0.88325, delta=0.001)
-        self.assertAlmostEqual(printed[1], 0.7107, delta=0.001)
+        self.assertAlmostEqual(printed[0], 0.8759, delta=0.001)
+        self.assertAlmostEqual(printed[1], 0.7254, delta=0.001)
         self.assertLessEqual(air_between(BOTTOM, printed), 0.02)
         self.assertLessEqual(air_between(printed, TOP), 0.02)
         outer_lo = BOTTOM[0] - BOTTOM[1] / 2.0
