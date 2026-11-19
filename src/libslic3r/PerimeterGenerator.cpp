@@ -13,6 +13,7 @@
 #include "ExPolygonCollection.hpp"
 #include "Geometry.hpp"
 #include "Line.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cassert>
 #include <unordered_set>
@@ -38,14 +39,25 @@ using namespace Slic3r::Feature::FuzzySkin;
 // machine Y 0.0279 / 0.8759 / 1.7386, widths 1.0 / 0.301 / 1.0, air 0.198 and
 // 0.212 mm. The bead is moved to the physical slot center and its width is set
 // to that slot, capped at 1.5 mm. Gyroid is sparse infill and is not touched.
-// A section thicker than 4 mm, or a slot wider than 1.5 mm, is not a skin pocket.
-// Outer walls are only read. The solid-infill clip stays the pre-fit gap, so
-// top and bottom skin, seams, and the outer path match the unfitted slice.
+// A section thicker than 4 mm, or a slot wider than 1.5 mm, is not a skin pocket
+// for that one-bead fit. Wider leftovers stay on the same polylines: the extra
+// width is split onto the gap bead and the two walls that already bound the
+// slot. A slot with no gap bead widens those two walls until they meet.
+// Nothing is appended. A bead is never wider than 1.6 mm. The outer edge of a
+// skin wall stays put: the centreline moves inward by half the added width.
+// The solid-infill clip stays the pre-fit gap.
 static constexpr double BELT_SKIN_MAX_WIDTH_MM = 1.5;
 static constexpr double BELT_SKIN_MAX_THICK_MM = 4.0;
+static constexpr double BELT_SKIN_CAP_MM = 1.6;
+// Cura keeps one outer wall, widened until the two sides meet, up to about
+// 2.7-2.85 mm of section. Thicker sections are left to the infill.
+static constexpr double BELT_ARACHNE_MAX_THICK_MM = 2.85;
 
 struct BeltWallSeg {
     double x0, y0, x1, y1, width;
+    // External or overhang. An internal perimeter is the concentric neighbour
+    // and is not a skin.
+    bool skin;
 };
 
 static void collect_belt_walls(const ExtrusionEntity *entity, std::vector<BeltWallSeg> &out)
@@ -55,12 +67,13 @@ static void collect_belt_walls(const ExtrusionEntity *entity, std::vector<BeltWa
     if (const ExtrusionPath *path = dynamic_cast<const ExtrusionPath *>(entity)) {
         if (!is_perimeter(path->role()) || path->width <= 0.f)
             return;
+        const bool skin = is_external_perimeter(path->role()) || path->role() == erOverhangPerimeter;
         const Points &pts = path->polyline.points;
         for (size_t i = 0; i + 1 < pts.size(); ++i) {
             out.push_back(BeltWallSeg{
                 unscale<double>(pts[i].x()), unscale<double>(pts[i].y()),
                 unscale<double>(pts[i + 1].x()), unscale<double>(pts[i + 1].y()),
-                double(path->width)});
+                double(path->width), skin});
         }
         return;
     }
@@ -177,6 +190,471 @@ static void fit_belt_gap_beads(ThickPolylines &polylines, const std::vector<Belt
             if (shift_n[i] == 0)
                 continue;
             pl.points[i].y() += scaled<coord_t>(shift[i] / double(shift_n[i]));
+        }
+    }
+}
+
+// Nearest same-class wall across a thin section. A concentric outer/inner pair
+// is a different class and is left alone. slot_out is the machine-mm air
+// between the facing edges. inward_sign is +1 when that wall is at higher Y.
+static bool measure_belt_slot(const std::vector<BeltWallSeg> &walls, double x, double y_virt, double width,
+                              bool skin, double &slot_out, double &inward_sign)
+{
+    const double scale = BeltTransform::gantry_y_scale();
+    const double py = scale * y_virt;
+    const double our_top = py + 0.5 * width;
+    const double our_bot = py - 0.5 * width;
+    bool have_up = false, have_down = false;
+    double up_slot = 0.0, up_top = 0.0, up_bot = 0.0;
+    double down_slot = 0.0, down_top = 0.0, down_bot = 0.0;
+    bool up_skin = false, down_skin = false;
+    for (const BeltWallSeg &seg : walls) {
+        if (std::abs(seg.x1 - seg.x0) < std::abs(seg.y1 - seg.y0))
+            continue;
+        double crossed = 0.0;
+        if (!belt_wall_cross_y(seg, x, crossed))
+            continue;
+        const double center = scale * crossed;
+        // The same wall, or the next sample of it. The other skin is farther.
+        if (std::abs(center - py) < 0.5)
+            continue;
+        const double top = center + 0.5 * seg.width;
+        const double bot = center - 0.5 * seg.width;
+        if (bot >= py - 0.02) {
+            const double slot = bot - our_top;
+            if (slot < 0.0)
+                continue;
+            if (!have_up || bot < up_bot) {
+                have_up = true;
+                up_bot = bot;
+                up_top = top;
+                up_skin = seg.skin;
+                up_slot = slot;
+            }
+        } else if (top <= py + 0.02) {
+            const double slot = our_bot - top;
+            if (slot < 0.0)
+                continue;
+            if (!have_down || top > down_top) {
+                have_down = true;
+                down_top = top;
+                down_bot = bot;
+                down_skin = seg.skin;
+                down_slot = slot;
+            }
+        }
+    }
+    const bool ok_up = have_up && up_skin == skin && up_slot >= 0.05 && (up_top - our_bot) <= BELT_SKIN_MAX_THICK_MM;
+    const bool ok_down = have_down && down_skin == skin && down_slot >= 0.05 && (our_top - down_bot) <= BELT_SKIN_MAX_THICK_MM;
+    if (!ok_up && !ok_down)
+        return false;
+    if (ok_up && (!ok_down || up_slot >= down_slot)) {
+        slot_out = up_slot;
+        inward_sign = 1.0;
+    } else {
+        slot_out = down_slot;
+        inward_sign = -1.0;
+    }
+    return true;
+}
+
+// Air between the wall above a gap bead and the wall below it. Both walls have
+// to be the same class, and the section has to be a thin skin.
+static bool measure_belt_gap_slot(const std::vector<BeltWallSeg> &walls, double x, double y_virt, double &slot_out)
+{
+    const double scale = BeltTransform::gantry_y_scale();
+    const double py = scale * y_virt;
+    bool have_up = false, have_down = false;
+    double up_bot = 0.0, up_top = 0.0, down_top = 0.0, down_bot = 0.0;
+    bool up_skin = false, down_skin = false;
+    for (const BeltWallSeg &seg : walls) {
+        if (std::abs(seg.x1 - seg.x0) < std::abs(seg.y1 - seg.y0))
+            continue;
+        double crossed = 0.0;
+        if (!belt_wall_cross_y(seg, x, crossed))
+            continue;
+        const double center = scale * crossed;
+        if (std::abs(center - py) < 0.2)
+            continue;
+        const double top = center + 0.5 * seg.width;
+        const double bot = center - 0.5 * seg.width;
+        if (bot >= py - 0.02 && (!have_up || bot < up_bot)) {
+            have_up = true;
+            up_bot = bot;
+            up_top = top;
+            up_skin = seg.skin;
+        } else if (top <= py + 0.02 && (!have_down || top > down_top)) {
+            have_down = true;
+            down_top = top;
+            down_bot = bot;
+            down_skin = seg.skin;
+        }
+    }
+    if (!have_up || !have_down || up_skin != down_skin)
+        return false;
+    const double slot = up_bot - down_top;
+    const double thick = up_top - down_bot;
+    if (slot < 0.05 || thick > BELT_SKIN_MAX_THICK_MM)
+        return false;
+    slot_out = slot;
+    return true;
+}
+
+// Emitted width of a gap bead sitting in the slot at this X, or 0.
+static double gap_width_in_slot(const std::vector<BeltWallSeg> &gaps, double x, double y_virt, double width,
+                                double inward_sign, double slot)
+{
+    const double scale = BeltTransform::gantry_y_scale();
+    const double py = scale * y_virt;
+    const double face = inward_sign > 0.0 ? py + 0.5 * width : py - 0.5 * width;
+    const double other = face + inward_sign * slot;
+    const double lo = std::min(face, other);
+    const double hi = std::max(face, other);
+    double best = 0.0;
+    for (const BeltWallSeg &seg : gaps) {
+        if (std::abs(seg.x1 - seg.x0) < std::abs(seg.y1 - seg.y0))
+            continue;
+        double crossed = 0.0;
+        if (!belt_wall_cross_y(seg, x, crossed))
+            continue;
+        const double center = scale * crossed;
+        if (center <= lo + 0.02 || center >= hi - 0.02)
+            continue;
+        if (seg.width > best)
+            best = seg.width;
+    }
+    return best;
+}
+
+static void collect_gap_beads(const ThickPolylines &polylines, double height, std::vector<BeltWallSeg> &out)
+{
+    const double adj = height * (1.0 - 0.25 * PI);
+    for (const ThickPolyline &pl : polylines) {
+        const size_t n = pl.points.size();
+        if (n < 2 || pl.width.size() < 2 * (n - 1))
+            continue;
+        for (size_t i = 0; i + 1 < n; ++i) {
+            const double w0 = unscale<double>(pl.width[2 * i]) + adj;
+            const double w1 = unscale<double>(pl.width[2 * i + 1]) + adj;
+            out.push_back(BeltWallSeg{
+                unscale<double>(pl.points[i].x()), unscale<double>(pl.points[i].y()),
+                unscale<double>(pl.points[i + 1].x()), unscale<double>(pl.points[i + 1].y()),
+                0.5 * (w0 + w1), false});
+        }
+    }
+}
+
+// Slots the one-bead fit refused (wider than 1.5 mm). One width for the whole
+// polyline, so variable_width does not split it into a second path. The bead
+// takes a third of the uncovered slot. The two walls take the rest.
+static void widen_wide_gap_beads(ThickPolylines &polylines, const std::vector<BeltWallSeg> &walls, double height)
+{
+    const double adj = height * (1.0 - 0.25 * PI);
+    for (ThickPolyline &pl : polylines) {
+        const size_t n = pl.points.size();
+        if (n < 2 || pl.width.size() < 2 * (n - 1))
+            continue;
+        bool all_wide = true;
+        bool any = false;
+        double target = 0.0;
+        for (size_t i = 0; i + 1 < n; ++i) {
+            const double x0 = unscale<double>(pl.points[i].x());
+            const double y0 = unscale<double>(pl.points[i].y());
+            const double x1 = unscale<double>(pl.points[i + 1].x());
+            const double y1 = unscale<double>(pl.points[i + 1].y());
+            if (std::abs(x1 - x0) < std::abs(y1 - y0))
+                continue;
+            const double ends_x[2] = {x0, x1};
+            const double ends_y[2] = {y0, y1};
+            for (int end = 0; end < 2; ++end) {
+                const double emitted = unscale<double>(pl.width[2 * i + size_t(end)]) + adj;
+                double slot = 0.0;
+                if (!measure_belt_gap_slot(walls, ends_x[end], ends_y[end], slot)) {
+                    all_wide = false;
+                    continue;
+                }
+                if (slot <= BELT_SKIN_MAX_WIDTH_MM) {
+                    all_wide = false;
+                    continue;
+                }
+                any = true;
+                const double share = (slot - emitted) / 3.0;
+                target = std::max(target, std::min(BELT_SKIN_CAP_MM, emitted + std::max(0.0, share)));
+            }
+        }
+        if (!all_wide || !any || target <= 0.0)
+            continue;
+        const double stored = std::max(0.05, target - adj);
+        for (coordf_t &w : pl.width)
+            w = scale_(stored);
+    }
+}
+
+static double belt_scaled_flow(double mm3, float old_w, float new_w, float height)
+{
+    const double adj = double(height) * (1.0 - 0.25 * PI);
+    const double a0 = double(old_w) - adj;
+    const double a1 = double(new_w) - adj;
+    if (a0 <= 0.05 || a1 <= 0.05 || mm3 <= 0.0)
+        return mm3;
+    return mm3 * (a1 / a0);
+}
+
+struct BeltPointAdj {
+    float width;
+    double dy_virt;
+};
+
+static BeltPointAdj belt_wall_point_adj(const std::vector<BeltWallSeg> &walls, const std::vector<BeltWallSeg> &gaps,
+                                        double x, double y, float width, bool skin)
+{
+    BeltPointAdj adj{width, 0.0};
+    double slot = 0.0, sign = 1.0;
+    if (!measure_belt_slot(walls, x, y, double(width), skin, slot, sign))
+        return adj;
+    const double gap_w = gap_width_in_slot(gaps, x, y, double(width), sign, slot);
+    double add = 0.0;
+    if (gap_w + 0.02 >= slot)
+        add = 0.0;
+    else if (gap_w <= 0.05)
+        add = slot / 2.0;
+    else
+        add = (slot - gap_w) / 2.0;
+    add = std::min(add, BELT_SKIN_CAP_MM - double(width));
+    if (add < 0.01)
+        return adj;
+    adj.width = float(double(width) + add);
+    // Half the added width goes inward, so the outer edge stays on the live edge.
+    adj.dy_virt = sign * (add / 2.0) / BeltTransform::gantry_y_scale();
+    return adj;
+}
+
+static void widen_belt_wall_path(ExtrusionPath &path, const std::vector<BeltWallSeg> &walls, const std::vector<BeltWallSeg> &gaps,
+                                 ExtrusionPaths &out)
+{
+    const Points &pts = path.polyline.points;
+    const size_t n = pts.size();
+    if (n < 2 || !is_perimeter(path.role()) || path.width <= 0.f) {
+        out.push_back(path);
+        return;
+    }
+    const bool skin = is_external_perimeter(path.role()) || path.role() == erOverhangPerimeter;
+    std::vector<BeltPointAdj> adj(n);
+    bool changed = false;
+    const bool closed = pts.front() == pts.back();
+    const size_t last = closed ? n - 1 : n;
+    for (size_t i = 0; i < last; ++i) {
+        bool across = false;
+        if (i + 1 < n)
+            across = std::abs(pts[i + 1].x() - pts[i].x()) >= std::abs(pts[i + 1].y() - pts[i].y());
+        if (!across && i > 0)
+            across = std::abs(pts[i].x() - pts[i - 1].x()) >= std::abs(pts[i].y() - pts[i - 1].y());
+        if (!across) {
+            adj[i] = BeltPointAdj{path.width, 0.0};
+            continue;
+        }
+        adj[i] = belt_wall_point_adj(walls, gaps, unscale<double>(pts[i].x()), unscale<double>(pts[i].y()), path.width, skin);
+        if (std::abs(adj[i].dy_virt) > 1e-6 || std::abs(adj[i].width - path.width) > 1e-4f)
+            changed = true;
+    }
+    if (closed)
+        adj[n - 1] = adj[0];
+    if (!changed) {
+        out.push_back(path);
+        return;
+    }
+    size_t run = 0;
+    float run_w = adj[0].width;
+    auto emit = [&](size_t from, size_t to, float width) {
+        if (to <= from)
+            return;
+        Points piece;
+        piece.reserve(to - from + 1);
+        for (size_t i = from; i <= to; ++i) {
+            Point p = pts[i];
+            p.y() += scaled<coord_t>(adj[i].dy_virt);
+            piece.push_back(p);
+        }
+        if (piece.size() < 2)
+            return;
+        ExtrusionPath part(path);
+        part.polyline.points = std::move(piece);
+        if (std::abs(part.width - width) > 1e-4f) {
+            part.mm3_per_mm = belt_scaled_flow(part.mm3_per_mm, part.width, width, part.height);
+            part.width = width;
+        }
+        out.push_back(std::move(part));
+    };
+    for (size_t i = 1; i < n; ++i) {
+        if (std::abs(adj[i].width - run_w) > 0.02f) {
+            emit(run, i, run_w);
+            run = i;
+            run_w = adj[i].width;
+        }
+    }
+    emit(run, n - 1, run_w);
+    if (out.empty())
+        out.push_back(path);
+}
+
+static void widen_belt_skin_walls(ExtrusionEntity *entity, const std::vector<BeltWallSeg> &walls, const std::vector<BeltWallSeg> &gaps)
+{
+    if (entity == nullptr)
+        return;
+    if (ExtrusionLoop *loop = dynamic_cast<ExtrusionLoop *>(entity)) {
+        ExtrusionPaths rebuilt;
+        for (ExtrusionPath &path : loop->paths)
+            widen_belt_wall_path(path, walls, gaps, rebuilt);
+        if (!rebuilt.empty())
+            loop->paths = std::move(rebuilt);
+        return;
+    }
+    if (ExtrusionMultiPath *multi = dynamic_cast<ExtrusionMultiPath *>(entity)) {
+        ExtrusionPaths rebuilt;
+        for (ExtrusionPath &path : multi->paths)
+            widen_belt_wall_path(path, walls, gaps, rebuilt);
+        if (!rebuilt.empty())
+            multi->paths = std::move(rebuilt);
+        return;
+    }
+    if (ExtrusionEntityCollection *coll = dynamic_cast<ExtrusionEntityCollection *>(entity)) {
+        for (ExtrusionEntity *child : coll->entities)
+            widen_belt_skin_walls(child, walls, gaps);
+    }
+}
+
+// Deposited width is not scaled when Y_mach = √2 * Y_virt. A bead planned at
+// width w covers w * sqrt(nx^2 + 2 ny^2) once the gantry stretches Y. The
+// outer wall takes that extra on its inner half, so the outer edge stays.
+static void widen_arachne_belt_beads(std::vector<Arachne::VariableWidthLines> &perimeters, double height)
+{
+    struct Seg {
+        double x0, y0, x1, y1, w;
+        size_t line_id;
+        size_t seg_idx;
+        bool outer;
+    };
+    std::vector<Seg> segs;
+    size_t line_id = 0;
+    const double adj = height * (1.0 - 0.25 * PI);
+    const double scale = BeltTransform::gantry_y_scale();
+    auto emitted = [adj](coord_t stored) { return unscale<double>(stored) + adj; };
+    for (Arachne::VariableWidthLines &lines : perimeters) {
+        for (Arachne::ExtrusionLine &line : lines) {
+            const size_t n = line.junctions.size();
+            for (size_t i = 0; i + 1 < n; ++i) {
+                const Arachne::ExtrusionJunction &a = line.junctions[i];
+                const Arachne::ExtrusionJunction &b = line.junctions[i + 1];
+                segs.push_back(Seg{
+                    unscale<double>(a.p.x()), unscale<double>(a.p.y()),
+                    unscale<double>(b.p.x()), unscale<double>(b.p.y()),
+                    0.5 * (emitted(a.w) + emitted(b.w)), line_id, i, line.inset_idx == 0});
+            }
+            ++line_id;
+        }
+    }
+    auto cross = [](const Seg &seg, double x, double &y, double &along) {
+        const double dx = seg.x1 - seg.x0;
+        if (std::abs(dx) < 1e-6)
+            return false;
+        double t = (x - seg.x0) / dx;
+        if (t < -1e-4 || t > 1.0 + 1e-4)
+            return false;
+        t = std::max(0.0, std::min(1.0, t));
+        y = seg.y0 + t * (seg.y1 - seg.y0);
+        along = t;
+        return true;
+    };
+    line_id = 0;
+    for (Arachne::VariableWidthLines &lines : perimeters) {
+        for (Arachne::ExtrusionLine &line : lines) {
+            const size_t n = line.junctions.size();
+            if (n < 2) {
+                ++line_id;
+                continue;
+            }
+            const bool closed = line.is_closed && line.junctions.front().p == line.junctions.back().p;
+            const size_t last = closed ? n - 1 : n;
+            std::vector<double> new_w(n, -1.0);
+            std::vector<double> dy(n, 0.0);
+            for (size_t i = 0; i < last; ++i) {
+                const size_t j = (i + 1 < n) ? i + 1 : 0;
+                const double x0 = unscale<double>(line.junctions[i].p.x());
+                const double y0 = unscale<double>(line.junctions[i].p.y());
+                const double x1 = unscale<double>(line.junctions[j].p.x());
+                const double y1 = unscale<double>(line.junctions[j].p.y());
+                double tx = x1 - x0, ty = y1 - y0;
+                const double len = std::hypot(tx, ty);
+                const double w = emitted(line.junctions[i].w);
+                if (len < 1e-6)
+                    continue;
+                tx /= len;
+                ty /= len;
+                const double nx = -ty, ny = tx;
+                const double factor = std::sqrt(nx * nx + 2.0 * ny * ny);
+                if (factor < 1.02)
+                    continue;
+                const double py = scale * y0;
+                bool have = false, have_up = false, have_down = false;
+                double best_slot = 0.0, opp_y = 0.0;
+                double up_center = 0.0, up_w = 0.0, down_center = 0.0, down_w = 0.0;
+                for (const Seg &seg : segs) {
+                    if (!seg.outer)
+                        continue;
+                    if (seg.line_id == line_id && (seg.seg_idx == i || (i > 0 && seg.seg_idx + 1 == i)))
+                        continue;
+                    double crossed = 0.0, t = 0.0;
+                    if (!cross(seg, x0, crossed, t))
+                        continue;
+                    const double center = scale * crossed;
+                    if (std::abs(center - py) < 0.5)
+                        continue;
+                    if (center > py && (!have_up || center < up_center)) {
+                        have_up = true;
+                        up_center = center;
+                        up_w = seg.w;
+                    } else if (center < py && (!have_down || center > down_center)) {
+                        have_down = true;
+                        down_center = center;
+                        down_w = seg.w;
+                    }
+                    const double dist = std::abs(center - py);
+                    const double slot = dist - 0.5 * (w + seg.w);
+                    const double thick = dist + 0.5 * (w + seg.w);
+                    if (line.inset_idx == 0 && slot > 0.02 && thick <= BELT_ARACHNE_MAX_THICK_MM && (!have || slot < best_slot)) {
+                        have = true;
+                        best_slot = slot;
+                        opp_y = crossed;
+                    }
+                }
+                bool grow = line.inset_idx == 0 && have;
+                if (line.inset_idx != 0 && have_up && have_down) {
+                    const double span = (up_center + 0.5 * up_w) - (down_center - 0.5 * down_w);
+                    const double air = (up_center - 0.5 * up_w) - (down_center + 0.5 * down_w);
+                    grow = air > 0.02 && span <= BELT_ARACHNE_MAX_THICK_MM;
+                }
+                if (!grow || w >= BELT_SKIN_CAP_MM)
+                    continue;
+                const double grown = std::min(BELT_SKIN_CAP_MM, w * factor);
+                if (grown < w + 0.01)
+                    continue;
+                new_w[i] = grown;
+                if (line.inset_idx == 0)
+                    dy[i] = ((opp_y > y0) ? 1.0 : -1.0) * ((grown - w) / 2.0) / scale;
+            }
+            if (closed) {
+                new_w[n - 1] = new_w[0];
+                dy[n - 1] = dy[0];
+            }
+            for (size_t i = 0; i < n; ++i) {
+                if (new_w[i] < 0.0)
+                    continue;
+                const double stored = std::max(0.05, new_w[i] - adj);
+                line.junctions[i].w = scale_(stored);
+                if (std::abs(dy[i]) > 1e-9)
+                    line.junctions[i].p.y() += scaled<coord_t>(dy[i]);
+            }
+            ++line_id;
         }
     }
 }
@@ -1344,6 +1822,7 @@ void PerimeterGenerator::process_classic()
     std::vector<size_t> surface_order = chain_expolygons(surface_exp);
     for (size_t order_idx = 0; order_idx < surface_order.size(); order_idx++) {
         const Surface &surface = all_surfaces[surface_order[order_idx]];
+        const size_t belt_loops_begin = this->loops->entities.size();
         // detect how many perimeters must be generated for this island
         int loop_number = this->config->wall_loops + surface.extra_perimeters - 1;  // 0-indexed loops
         int sparse_infill_density = this->config->sparse_infill_density.value;
@@ -1743,7 +2222,18 @@ void PerimeterGenerator::process_classic()
 				    skin_clip = polylines;
 				    std::vector<BeltWallSeg> belt_walls;
 				    collect_belt_walls(this->loops, belt_walls);
-				    fit_belt_gap_beads(polylines, belt_walls, this->solid_infill_flow.height());
+				    const double bead_height = this->solid_infill_flow.height();
+				    fit_belt_gap_beads(polylines, belt_walls, bead_height);
+				    // This island only. Previous islands were already widened, and
+				    // their shifted walls must not be measured again.
+				    std::vector<BeltWallSeg> island_walls;
+				    for (size_t wi = belt_loops_begin; wi < this->loops->entities.size(); ++wi)
+				        collect_belt_walls(this->loops->entities[wi], island_walls);
+				    widen_wide_gap_beads(polylines, island_walls, bead_height);
+				    std::vector<BeltWallSeg> gap_beads;
+				    collect_gap_beads(polylines, bead_height, gap_beads);
+				    for (size_t wi = belt_loops_begin; wi < this->loops->entities.size(); ++wi)
+				        widen_belt_skin_walls(this->loops->entities[wi], island_walls, gap_beads);
 				}
 				ExtrusionEntityCollection gap_fill;
 				variable_width(polylines, erGapFill, this->solid_infill_flow, gap_fill.entities);
@@ -2609,6 +3099,11 @@ void PerimeterGenerator::process_arachne()
             }
         }
         
+        // After the walls are ordered. Widening before that would change which
+        // path is nearest and add a travel. The bead count does not change.
+        if (this->print_config != nullptr && this->print_config->printer_structure.value == PrinterStructure::psBelt)
+            widen_arachne_belt_beads(perimeters, this->layer_height);
+
         bool steep_overhang_contour = false;
         bool steep_overhang_hole    = false;
         const WallDirection wall_direction = config->wall_direction;
