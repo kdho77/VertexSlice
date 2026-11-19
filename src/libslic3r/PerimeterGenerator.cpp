@@ -19,6 +19,7 @@
 #include <thread>
 #include "libslic3r/AABBTreeLines.hpp"
 #include "Print.hpp"
+#include "BeltTransform.hpp"
 static const int overhang_sampling_number = 6;
 static const double narrow_loop_length_threshold = 10;
 //BBS: when the width of expolygon is smaller than
@@ -29,6 +30,154 @@ static constexpr double SMALLER_EXT_INSET_OVERLAP_TOLERANCE = 0.22;
 namespace Slic3r {
     
 using namespace Slic3r::Feature::FuzzySkin;
+
+// A thin skin on the belt: two walls with a gap bead between them. Virtual Y
+// is the cross-section coordinate. G-code writes Y_mach = √2 * Y_virt, and the
+// deposited width is not scaled, so beads that meet in virtual Y leave air in
+// machine Y. Layer 40 of the sample insole at X=133 is the measured case:
+// machine Y 0.0279 / 0.8759 / 1.7386, widths 1.0 / 0.301 / 1.0, air 0.198 and
+// 0.212 mm. The bead is moved to the physical slot center and its width is set
+// to that slot, capped at 1.5 mm. Gyroid is sparse infill and is not touched.
+// A section thicker than 4 mm, or a slot wider than 1.5 mm, is not a skin pocket.
+static constexpr double BELT_SKIN_MAX_WIDTH_MM = 1.5;
+static constexpr double BELT_SKIN_MAX_THICK_MM = 4.0;
+
+struct BeltWallSeg {
+    double x0, y0, x1, y1, width;
+};
+
+static void collect_belt_walls(const ExtrusionEntity *entity, std::vector<BeltWallSeg> &out)
+{
+    if (entity == nullptr)
+        return;
+    if (const ExtrusionPath *path = dynamic_cast<const ExtrusionPath *>(entity)) {
+        if (!is_perimeter(path->role()) || path->width <= 0.f)
+            return;
+        const Points &pts = path->polyline.points;
+        for (size_t i = 0; i + 1 < pts.size(); ++i) {
+            out.push_back(BeltWallSeg{
+                unscale<double>(pts[i].x()), unscale<double>(pts[i].y()),
+                unscale<double>(pts[i + 1].x()), unscale<double>(pts[i + 1].y()),
+                double(path->width)});
+        }
+        return;
+    }
+    if (const ExtrusionMultiPath *multi = dynamic_cast<const ExtrusionMultiPath *>(entity)) {
+        for (const ExtrusionPath &path : multi->paths)
+            collect_belt_walls(&path, out);
+        return;
+    }
+    if (const ExtrusionLoop *loop = dynamic_cast<const ExtrusionLoop *>(entity)) {
+        for (const ExtrusionPath &path : loop->paths)
+            collect_belt_walls(&path, out);
+        return;
+    }
+    if (const ExtrusionEntityCollection *coll = dynamic_cast<const ExtrusionEntityCollection *>(entity)) {
+        for (const ExtrusionEntity *child : coll->entities)
+            collect_belt_walls(child, out);
+    }
+}
+
+static bool belt_wall_cross_y(const BeltWallSeg &seg, double x, double &y_virt)
+{
+    const double dx = seg.x1 - seg.x0;
+    if (std::abs(dx) < 1e-6)
+        return false;
+    double t = (x - seg.x0) / dx;
+    if (t < -1e-4 || t > 1.0 + 1e-4)
+        return false;
+    t = std::max(0.0, std::min(1.0, t));
+    y_virt = seg.y0 + t * (seg.y1 - seg.y0);
+    return true;
+}
+
+// y_out is the virtual Y of the physical slot center. width_out is the slot in mm.
+static bool belt_skin_slot(const std::vector<BeltWallSeg> &walls, double x, double y_virt,
+                           double &y_out, double &width_out)
+{
+    const double scale = BeltTransform::gantry_y_scale();
+    const double py = scale * y_virt;
+    bool have_lo = false, have_hi = false;
+    double lo = 0.0, hi = 0.0, lo_w = 0.0, hi_w = 0.0;
+    for (const BeltWallSeg &seg : walls) {
+        double crossed = 0.0;
+        if (!belt_wall_cross_y(seg, x, crossed))
+            continue;
+        const double center = scale * crossed;
+        const double top = center + 0.5 * seg.width;
+        const double bot = center - 0.5 * seg.width;
+        if (top <= py + 0.02 && (!have_lo || top > lo)) {
+            lo = top;
+            lo_w = seg.width;
+            have_lo = true;
+        }
+        if (bot >= py - 0.02 && (!have_hi || bot < hi)) {
+            hi = bot;
+            hi_w = seg.width;
+            have_hi = true;
+        }
+    }
+    if (!have_lo || !have_hi || hi <= lo)
+        return false;
+    const double slot = hi - lo;
+    const double thick = (hi + hi_w) - (lo - lo_w);
+    // Below ~0.2 mm the round-cap term in the extrusion model is larger than the
+    // slot, so the emitted bead could not be the slot width.
+    if (slot > BELT_SKIN_MAX_WIDTH_MM || thick > BELT_SKIN_MAX_THICK_MM || slot < 0.2)
+        return false;
+    y_out = (0.5 * (lo + hi)) / scale;
+    width_out = slot;
+    return true;
+}
+
+static void fit_belt_gap_beads(ThickPolylines &polylines, const std::vector<BeltWallSeg> &walls, double height)
+{
+    const double adj = height * (1.0 - 0.25 * PI);
+    for (ThickPolyline &pl : polylines) {
+        const size_t n = pl.points.size();
+        if (n < 2 || pl.width.size() < 2 * (n - 1))
+            continue;
+        std::vector<double> shift(n, 0.0);
+        std::vector<int> shift_n(n, 0);
+        for (size_t i = 0; i + 1 < n; ++i) {
+            const double x0 = unscale<double>(pl.points[i].x());
+            const double y0 = unscale<double>(pl.points[i].y());
+            const double x1 = unscale<double>(pl.points[i + 1].x());
+            const double y1 = unscale<double>(pl.points[i + 1].y());
+            const bool across_y = std::abs(x1 - x0) >= std::abs(y1 - y0);
+            const double ends_x[2] = {x0, x1};
+            const double ends_y[2] = {y0, y1};
+            for (int end = 0; end < 2; ++end) {
+                const size_t wi = 2 * i + size_t(end);
+                double emitted = unscale<double>(pl.width[wi]) + adj;
+                double target = emitted;
+                if (across_y) {
+                    double y_fit = 0.0, slot = 0.0;
+                    if (belt_skin_slot(walls, ends_x[end], ends_y[end], y_fit, slot)) {
+                        const double dy = y_fit - ends_y[end];
+                        // 0.014 virtual mm is 0.02 mm on the gantry. A bead already
+                        // on the slot center and at least as wide as the slot is left.
+                        const bool covers = emitted + 0.02 >= slot && std::abs(dy) <= 0.014;
+                        if (std::abs(dy) <= 0.5 && !covers) {
+                            target = slot;
+                            shift[i + size_t(end)] += dy;
+                            shift_n[i + size_t(end)] += 1;
+                        }
+                    }
+                }
+                if (target > BELT_SKIN_MAX_WIDTH_MM)
+                    target = BELT_SKIN_MAX_WIDTH_MM;
+                if (std::abs(target - emitted) > 1e-4)
+                    pl.width[wi] = scale_(std::max(0.05, target - adj));
+            }
+        }
+        for (size_t i = 0; i < n; ++i) {
+            if (shift_n[i] == 0)
+                continue;
+            pl.points[i].y() += scaled<coord_t>(shift[i] / double(shift_n[i]));
+        }
+    }
+}
 
 // Hierarchy of perimeters.
 class PerimeterGeneratorLoop {
@@ -1582,6 +1731,12 @@ void PerimeterGenerator::process_classic()
 
 
             if (! polylines.empty()) {
+				if (this->print_config != nullptr &&
+				    this->print_config->printer_structure.value == PrinterStructure::psBelt) {
+				    std::vector<BeltWallSeg> belt_walls;
+				    collect_belt_walls(this->loops, belt_walls);
+				    fit_belt_gap_beads(polylines, belt_walls, this->solid_infill_flow.height());
+				}
 				ExtrusionEntityCollection gap_fill;
 				variable_width(polylines, erGapFill, this->solid_infill_flow, gap_fill.entities);
                 /*  Make sure we don't infill narrow parts that are already gap-filled
