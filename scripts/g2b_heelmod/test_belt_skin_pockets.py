@@ -4,8 +4,8 @@
 Orca plans the walls in virtual Y. BeltTransform then writes
 Y_mach = sqrt(2) * Y_virt and does not scale the bead width, so the skins
 separate. close_inside() is the machine-frame contract: outer walls keep
-their centre and their width, an existing internal bead grows in place up
-to 1.6 mm, and a hole of at most 1.6 mm gets one internal bead.
+their centre and their width, and an existing internal bead grows in place
+up to 1.6 mm. A column with no internal bead is not given one.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path[:0] = [str(HERE), str(REPO / "validation")]
 
-from belt_skin_gate import CAP, air_between, bonded, close_inside  # noqa: E402
+from belt_skin_gate import CAP, air_between, close_inside  # noqa: E402
 from slice_apexcore_g2b import chain_gap_fill_travels  # noqa: E402
 
 # Sample insole, layer ~40, machine Z 26.672, X=133.
@@ -95,19 +95,16 @@ class BeltSkinPocketTest(unittest.TestCase):
 class BeltSkinLeftoverTest(unittest.TestCase):
     """Both materials. The raster is the toe column repeated every 0.2 mm."""
 
-    def test_no_bead_slot_closes_from_the_inside(self) -> None:
+    def test_no_bead_slot_is_not_given_a_new_path(self) -> None:
         # L61 X=99.25: walls 1.706 apart, 1.04 wide, 0.67 mm of air, no gap bead.
+        # Closing it needs a new bead. A new bead is a new travel, so the air stays.
         bottom = (0.0, 1.04)
         top = (1.706, 1.04)
         for material in ("apex_core", "apex_light"):
             with self.subTest(material=material):
                 nb, middles, nt = close_inside(bottom, None, top)
-                self.assertEqual(nb, bottom)
-                self.assertEqual(nt, top)
-                self.assertEqual(len(middles), 1)
-                self.assertLessEqual(middles[0][1], CAP)
-                self.assertAlmostEqual(middles[0][1], 0.666, delta=0.001)
-                self.assertTrue(bonded(nb, middles, nt))
+                self.assertEqual((nb, middles, nt), (bottom, [], top))
+                self.assertAlmostEqual(air_between(nb, nt), 0.666, delta=0.001)
 
     def test_wide_slot_grows_the_gap_and_not_the_walls(self) -> None:
         bottom = (0.0, 1.0)
@@ -116,14 +113,12 @@ class BeltSkinLeftoverTest(unittest.TestCase):
         nb, middles, nt = close_inside(bottom, gap, top)
         self.assertEqual(nb, bottom)
         self.assertEqual(nt, top)
+        self.assertEqual(len(middles), 1)
         self.assertAlmostEqual(middles[0][0], gap[0], delta=0.001)
-        self.assertLessEqual(middles[0][1], CAP)
-        self.assertTrue(bonded(nb, middles, nt))
-        for bead in middles:
-            self.assertLessEqual(bead[1], CAP)
-        added = sum(m[1] for m in middles) - gap[1]
-        uncovered = air_between(bottom, gap) + air_between(gap, top)
-        self.assertAlmostEqual(added, uncovered, delta=0.05)
+        self.assertAlmostEqual(middles[0][1], CAP, delta=0.001)
+        # The cap leaves 0.10 mm on each side. A second bead is not added.
+        self.assertAlmostEqual(air_between(nb, middles[0]), 0.10, delta=0.02)
+        self.assertAlmostEqual(air_between(middles[0], nt), 0.10, delta=0.02)
 
     def test_empty_slot_wider_than_the_cap_is_left_for_infill(self) -> None:
         bottom = (0.0, 1.0)
@@ -136,7 +131,7 @@ class BeltSkinLeftoverTest(unittest.TestCase):
         top = (8.0, 1.0)
         self.assertEqual(close_inside(bottom, (4.0, 0.4), top), (bottom, [(4.0, 0.4)], top))
 
-    def test_raster_both_bands_have_no_air_column(self) -> None:
+    def test_raster_columns_do_not_add_a_bead(self) -> None:
         from belt_skin_gate import COLUMNS
 
         for (material, band), (bottom, gap, top) in COLUMNS.items():
@@ -144,22 +139,23 @@ class BeltSkinLeftoverTest(unittest.TestCase):
                 nb, middles, nt = close_inside(bottom, gap, top)
                 self.assertEqual(nb, bottom)
                 self.assertEqual(nt, top)
-                self.assertTrue(bonded(nb, middles, nt))
+                self.assertEqual(len(middles), 0 if gap is None else 1)
                 for bead in (nb, nt, *middles):
                     self.assertLessEqual(bead[1], CAP)
-                # 0.2 mm raster of the same column. The column does not depend on X.
-                for i in range(100):
-                    self.assertGreaterEqual(i * 0.2, 0.0)
-                    self.assertTrue(bonded(nb, middles, nt))
+                if gap is not None:
+                    self.assertAlmostEqual(middles[0][0], gap[0], delta=0.001)
 
     def test_outer_walls_are_not_rewritten(self) -> None:
         src = (REPO / "src" / "libslic3r" / "PerimeterGenerator.cpp").read_text()
         self.assertIn("close_belt_from_inside", src)
         self.assertIn("close_arachne_belt_beads", src)
         self.assertIn("ThickPolylines skin_clip", src)
+        self.assertIn("apply_uniform_inner_width", src)
         self.assertNotIn("widen_belt_skin_walls", src)
         self.assertNotIn("fit_belt_gap_beads", src)
         self.assertNotIn("widen_arachne_belt_beads", src)
+        self.assertNotIn("belt_holes_to_polylines", src)
+        self.assertNotIn("belt_extra", src)
         # Inset 0 is the outer wall. The closer does not write it.
         self.assertIn("line.inset_idx == 0", src)
         self.assertIn("if (!skin)", src)
@@ -178,6 +174,8 @@ class BeltSkinLeftoverTest(unittest.TestCase):
         locked = (HERE / "apexcore_95a_locked.json").read_text()
         self.assertIn('"value": "25%"', locked)
         self.assertNotIn("odd number", locked)
+        self.assertIn("The postprocessor widens that gap bead until it meets both skins.", locked)
+        self.assertNotIn("fitted in the slicer", locked)
 
 
 if __name__ == "__main__":

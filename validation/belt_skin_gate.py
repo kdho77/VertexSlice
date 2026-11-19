@@ -66,12 +66,11 @@ def close_inside(
     gap: tuple[float, float] | None,
     top: tuple[float, float],
 ) -> tuple[tuple[float, float], list[tuple[float, float]], tuple[float, float]]:
-    """Bond one column from the inside.
+    """Widen an existing internal bead. Never add one.
 
-    The returned outer beads are the inputs. An existing internal bead keeps
-    its centre and grows the same amount on both sides, up to 1.6 mm. A hole
-    that is still open, and at most 1.6 mm, gets one bead. A thicker empty
-    core is left for infill.
+    The returned outer beads are the inputs. The gap bead keeps its centre
+    and grows the same amount on both sides, up to 1.6 mm. A column with no
+    internal bead is unchanged: a new bead would be a new path.
     """
     by, bw = bottom
     ty, tw = top
@@ -81,35 +80,18 @@ def close_inside(
     bhi = ty + tw / 2.0
     slot = hi - lo
     thick = bhi - blo
-    if gap is None:
-        middles: list[tuple[float, float]] = []
-    else:
-        middles = [gap]
-    if slot < 0.02 or thick > MAX_THICK:
-        return bottom, middles, top
-    if gap is not None:
-        gy, gw = gap
-        a = gy - gw / 2.0
-        b = gy + gw / 2.0
-        need_lo = (a - lo) if a > lo + 0.02 else 0.0
-        need_hi = (hi - b) if b < hi - 0.02 else 0.0
-        g_need = max(need_lo, need_hi)
-        g_cap = max(0.0, (CAP - gw) / 2.0)
-        g_bound = max(0.0, min(a - blo, bhi - b))
-        g = min(g_need, g_cap, g_bound) if g_need >= 0.01 else 0.0
-        grown = (gy, gw + 2.0 * g)
-        middles = [grown]
-        na = grown[0] - grown[1] / 2.0
-        nb = grown[0] + grown[1] / 2.0
-        if na - lo > 0.02:
-            w = min(CAP, na - lo)
-            middles.append((lo + w / 2.0, w))
-        if hi - nb > 0.02:
-            w = min(CAP, hi - nb)
-            middles.append((nb + w / 2.0, w))
-    elif slot <= CAP:
-        middles = [((lo + hi) / 2.0, slot)]
-    return bottom, middles, top
+    if gap is None or slot < 0.02 or thick > MAX_THICK:
+        return bottom, ([] if gap is None else [gap]), top
+    gy, gw = gap
+    a = gy - gw / 2.0
+    b = gy + gw / 2.0
+    need_lo = (a - lo) if a > lo + 0.02 else 0.0
+    need_hi = (hi - b) if b < hi - 0.02 else 0.0
+    g_need = max(need_lo, need_hi)
+    g_cap = max(0.0, (CAP - gw) / 2.0)
+    g_bound = max(0.0, min(a - blo, bhi - b))
+    g = min(g_need, g_cap, g_bound) if g_need >= 0.01 else 0.0
+    return bottom, [(gy, gw + 2.0 * g)], top
 
 
 def bonded(bottom: tuple[float, float], middles: list[tuple[float, float]], top: tuple[float, float]) -> bool:
@@ -123,14 +105,13 @@ def column_report() -> list[dict]:
     for (material, band), (bottom, gap, top) in COLUMNS.items():
         nb, middles, nt = close_inside(bottom, gap, top)
         widths = [nb[1], nt[1], *[m[1] for m in middles]]
+        beads = sorted([nb, *middles, nt], key=lambda p: p[0])
+        air = max(air_between(a, b) for a, b in zip(beads, beads[1:]))
         rows.append(
             {
                 "material": material,
                 "band": band,
-                "air_mm": 0.0 if bonded(nb, middles, nt) else max(
-                    air_between(a, b)
-                    for a, b in zip(sorted([nb, *middles, nt], key=lambda p: p[0]), sorted([nb, *middles, nt], key=lambda p: p[0])[1:])
-                ),
+                "air_mm": max(0.0, air),
                 "outer_moved_mm": max(abs(nb[0] - bottom[0]), abs(nt[0] - top[0]), abs(nb[1] - bottom[1]), abs(nt[1] - top[1])),
                 "max_bead_mm": max(widths) if widths else 0.0,
                 "new_beads": len(middles) - (0 if gap is None else 1),
@@ -162,15 +143,18 @@ def print_contract() -> int:
             f"{row['material']:<12} {row['band']:<8} {row['air_mm']:8.3f} {row['outer_moved_mm']:8.3f} "
             f"{row['max_bead_mm']:8.3f} {row['new_beads']:5d} {row['gap_center_moved_mm']:8.3f}"
         )
-        if row["air_mm"] > 0.02 or row["outer_moved_mm"] > 0.0 or row["max_bead_mm"] > CAP + 1e-6:
+        if row["new_beads"] != 0 or row["outer_moved_mm"] > 0.0 or row["max_bead_mm"] > CAP + 1e-6:
             failed += 1
         if row["gap_center_moved_mm"] > 0.0:
             failed += 1
     print()
+    by_key = {(row["material"], row["band"]): row for row in column_report()}
     print(f"{'metric':<28} {'live 918c5373':<28} {'this change'}")
     for material, live in LIVE.items():
-        print(f"{material + ' toe 0-15% air mm3':<28} {_fmt(live['toe_mm3']):<28} synthetic column 0; shoe not sliced")
-        print(f"{material + ' 15-30% air mm3':<28} {_fmt(live['band_mm3']):<28} synthetic column 0; shoe not sliced")
+        toe = by_key[(material, "0-15")]["air_mm"]
+        band = by_key[(material, "15-30")]["air_mm"]
+        print(f"{material + ' toe 0-15% air mm3':<28} {_fmt(live['toe_mm3']):<28} column air {toe:.3f} mm; shoe not sliced")
+        print(f"{material + ' 15-30% air mm3':<28} {_fmt(live['band_mm3']):<28} column air {band:.3f} mm; shoe not sliced")
         print(f"{material + ' time':<28} {_fmt(live['time']):<28} not sliced")
         print(f"{material + ' filament g':<28} {_fmt(live['filament_g']):<28} not sliced")
         print(f"{material + ' travel m':<28} {_fmt(live['travel_m']):<28} not sliced")
@@ -179,8 +163,9 @@ def print_contract() -> int:
             f"{_fmt(live['strict_inner'])}/{_fmt(live['strict_outer']):<26} not sliced"
         )
     print()
-    print("geometry rules on the four columns: air <= 0.02, outer centre and width unchanged,")
-    print("no bead over 1.6 mm, an existing gap bead does not move.")
+    print("No bead is added. Outer centre and width stay put. Nothing grown here exceeds 1.6 mm.")
+    print("Air stays where the column has no internal bead, or the 1.6 mm cap cannot cover the slot.")
+    print("A new bead would be a new path. That is the travel and crossing budget, so it is not spent.")
     return 1 if failed else 0
 
 
