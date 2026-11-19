@@ -29,9 +29,9 @@ RUN ./build_linux.sh -u \
     && ./build_linux.sh -dr
 
 # Slicer compile. ccache is a BuildKit cache mount (id defaults to target
-# /ccache) so a one-file change replays untouched objects. -p disables
-# precompiled headers; that is a compile-time switch only and is what makes
-# ccache hits reliable. PCH does not change slicer settings.
+# /ccache) so a one-file change replays untouched objects. Precompiled
+# headers stay on (build_linux.sh default): -p breaks translation units
+# that rely on the PCH for headers such as stdint.h.
 FROM orca-deps AS orca-builder
 # .dockerignore excludes deps/build. Move it aside so COPY . cannot drop it.
 RUN mv /src/deps/build /tmp/deps-build
@@ -44,9 +44,9 @@ RUN --mount=type=cache,target=/ccache \
     && export CCACHE_COMPRESSLEVEL=6 \
     && export CCACHE_COMPILERCHECK=content \
     && export CCACHE_BASEDIR=/src \
-    && export CCACHE_SLOPPINESS=time_macros \
+    && export CCACHE_SLOPPINESS=pch_defines,time_macros \
     && export ORCA_EXTRA_BUILD_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache" \
-    && CMAKE_BUILD_PARALLEL_LEVEL=4 ./build_linux.sh -psr \
+    && CMAKE_BUILD_PARALLEL_LEVEL=4 ./build_linux.sh -sr \
     && ccache --show-stats
 
 FROM ubuntu:24.04 AS runtime
