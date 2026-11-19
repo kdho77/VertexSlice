@@ -39,6 +39,8 @@ using namespace Slic3r::Feature::FuzzySkin;
 // 0.212 mm. The bead is moved to the physical slot center and its width is set
 // to that slot, capped at 1.5 mm. Gyroid is sparse infill and is not touched.
 // A section thicker than 4 mm, or a slot wider than 1.5 mm, is not a skin pocket.
+// Outer walls are only read. The solid-infill clip stays the pre-fit gap, so
+// top and bottom skin, seams, and the outer path match the unfitted slice.
 static constexpr double BELT_SKIN_MAX_WIDTH_MM = 1.5;
 static constexpr double BELT_SKIN_MAX_THICK_MM = 4.0;
 
@@ -1731,14 +1733,24 @@ void PerimeterGenerator::process_classic()
 
 
             if (! polylines.empty()) {
-				if (this->print_config != nullptr &&
-				    this->print_config->printer_structure.value == PrinterStructure::psBelt) {
+				// Solid infill (visible top and bottom skin) is clipped by the
+				// pre-fit gap. The wider bead is internal air only; using it as
+				// the clip would eat the skin that main 918c5373 prints.
+				ThickPolylines skin_clip;
+				const bool belt_gap = this->print_config != nullptr &&
+				    this->print_config->printer_structure.value == PrinterStructure::psBelt;
+				if (belt_gap) {
+				    skin_clip = polylines;
 				    std::vector<BeltWallSeg> belt_walls;
 				    collect_belt_walls(this->loops, belt_walls);
 				    fit_belt_gap_beads(polylines, belt_walls, this->solid_infill_flow.height());
 				}
 				ExtrusionEntityCollection gap_fill;
 				variable_width(polylines, erGapFill, this->solid_infill_flow, gap_fill.entities);
+				ExtrusionEntityCollection skin_clip_fill;
+				if (belt_gap)
+				    variable_width(skin_clip, erGapFill, this->solid_infill_flow, skin_clip_fill.entities);
+				const ExtrusionEntityCollection &clip = belt_gap ? skin_clip_fill : gap_fill;
                 /*  Make sure we don't infill narrow parts that are already gap-filled
                     (we only consider this surface's gaps to reduce the diff() complexity).
                     Growing actual extrusions ensures that gaps not filled by medial axis
@@ -1747,7 +1759,7 @@ void PerimeterGenerator::process_classic()
                     and use zigzag).  */
                 //FIXME Vojtech: This grows by a rounded extrusion width, not by line spacing,
                 // therefore it may cover the area, but no the volume.
-                last = diff_ex(last, gap_fill.polygons_covered_by_width(10.f));
+                last = diff_ex(last, clip.polygons_covered_by_width(10.f));
                 this->gap_fill->append(std::move(gap_fill.entities));
 
 			}
