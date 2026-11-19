@@ -1,10 +1,11 @@
+# syntax=docker/dockerfile:1
 # VertexSlice headless slicer + HTTP API (Railway-ready). Not deployed by this repo.
 # Build: docker build -f Dockerfile.server -t vertexslice-server:proof .
 # Proof: docker run --rm vertexslice-server:proof /app/scripts/docker_headless_slice_proof.sh
 # One orca-slicer, built from this tree. Bundled qhull 7.2.0 headers must win
 # over any qhull 8.0.1 headers; do not install a second slicer binary.
 
-FROM ubuntu:24.04 AS orca-builder
+FROM ubuntu:24.04 AS orca-base
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LC_ALL=C.UTF-8
@@ -12,16 +13,41 @@ ENV SKIP_RAM_CHECK=1
 # CLI slicing still links libslic3r_gui (PartPlate); do not set SLIC3R_GUI=OFF.
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates sudo git \
+    ca-certificates sudo git ccache \
     && rm -rf /var/lib/apt/lists/* \
     && printf '%s\n' 'force-confdef' 'force-confold' > /etc/dpkg/dpkg.cfg.d/docker-noninteractive
 
+# System packages + ./deps build. Kept separate from slicer sources so a later
+# COPY of the tree does not redo apt or the dependency compile.
+FROM orca-base AS orca-deps
 WORKDIR /src
-COPY . /src
-
+COPY build_linux.sh version.inc CMakeLists.txt ./
+COPY cmake/ cmake/
+COPY deps/ deps/
+COPY scripts/linux.d/ scripts/linux.d/
 RUN ./build_linux.sh -u \
-    && ./build_linux.sh -dr \
-    && CMAKE_BUILD_PARALLEL_LEVEL=4 ./build_linux.sh -sr
+    && ./build_linux.sh -dr
+
+# Slicer compile. ccache is a BuildKit cache mount (id defaults to target
+# /ccache) so a one-file change replays untouched objects. -p disables
+# precompiled headers; that is a compile-time switch only and is what makes
+# ccache hits reliable. PCH does not change slicer settings.
+FROM orca-deps AS orca-builder
+# .dockerignore excludes deps/build. Move it aside so COPY . cannot drop it.
+RUN mv /src/deps/build /tmp/deps-build
+COPY . /src
+RUN --mount=type=cache,target=/ccache \
+    mv /tmp/deps-build /src/deps/build \
+    && export CCACHE_DIR=/ccache \
+    && export CCACHE_MAXSIZE=2G \
+    && export CCACHE_COMPRESS=1 \
+    && export CCACHE_COMPRESSLEVEL=6 \
+    && export CCACHE_COMPILERCHECK=content \
+    && export CCACHE_BASEDIR=/src \
+    && export CCACHE_SLOPPINESS=time_macros \
+    && export ORCA_EXTRA_BUILD_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache" \
+    && CMAKE_BUILD_PARALLEL_LEVEL=4 ./build_linux.sh -psr \
+    && ccache --show-stats
 
 FROM ubuntu:24.04 AS runtime
 
