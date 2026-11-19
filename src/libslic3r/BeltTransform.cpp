@@ -161,4 +161,9 @@ void BeltTransform::set_runtime_y_mach_offset(double offset_mm)
     g_runtime_y_mach_offset = offset_mm;
 }
 
+double BeltTransform::gantry_y_scale()
+{
+    return BELT_I_YY;
+}
+
 }

@@ -118,8 +118,10 @@ def overlay_g2b(machine: dict, process: dict, filament: dict) -> None:
 # width 1, ensure_vertical_shell_thickness none, top_shell_layers 0.
 # Widening the walls to 1.3 mm closed the toe and opened wall-crossing
 # travels, and the 15-30% band stayed open, so the walls stay 1.
-# close_thin_skins() widens the bead until it meets both skins. The 8 mm
-# filter, classic walls, and wall_loops 2 stay.
+# The air is the belt scale: Y_mach = sqrt(2) * Y_virt and the bead width
+# is not scaled. PerimeterGenerator fits that gap bead to the physical slot.
+# There is no post-process widening pass. The 8 mm filter, classic walls,
+# and wall_loops 2 stay.
 APEXCORE_FOREFOOT_STITCH = {
     "wall_generator": "classic",
     "filter_out_gap_fill": "8",

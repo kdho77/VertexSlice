@@ -133,8 +133,8 @@ class OtherApexDetectThinWall(unittest.TestCase):
             self.assertEqual(_scalar(g2b_process["detect_thin_wall"]), PRE_27_DETECT_THIN_WALL["apex_light"])
             self.assertEqual(_scalar(g2b_process["reduce_crossing_wall"]), "1")
             self.assertNotEqual(_scalar(g2b_process["wall_generator"]), "classic")
-            # ApexCore keeps the shared 1 mm wall too. The thin-section
-            # hollow is closed by close_thin_skins(), not a wider wall.
+            # Walls stay 1 mm. The thin-toe gap is closed in the slicer by
+            # fitting the gap bead to the physical slot, not by a wider wall.
             self.assertEqual(_scalar(g2b_process["outer_wall_line_width"]), "1")
             self.assertEqual(_scalar(g2b_process["inner_wall_line_width"]), "1")
 
