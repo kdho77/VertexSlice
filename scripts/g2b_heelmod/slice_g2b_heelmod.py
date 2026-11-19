@@ -111,21 +111,30 @@ def overlay_g2b(machine: dict, process: dict, filament: dict) -> None:
 # it on, and the short outer-wall pieces were each treated as a seam. Classic
 # walls, gap fill everywhere, the 8 mm filter, 25% min bead width, and
 # wall_loops 2 stay.
-# Kendon, 2026-11-18 t2245u: the toe skins separate with nothing between
-# them that they can bond to. On the sample belt the thin toe is two 1.0 mm
-# walls and a gap bead that does not reach either wall. That geometry is
-# already in the shared G2b block before #27 (parent of c3510806d2): line
-# width 1, ensure_vertical_shell_thickness none, top_shell_layers 0.
-# Widening the walls to 1.3 mm closed the toe and opened wall-crossing
-# travels, and the 15-30% band stayed open, so the walls stay 1.
-# close_thin_skins() widens the bead until it meets both skins. The 8 mm
-# filter, classic walls, and wall_loops 2 stay.
+# Kendon, 2026-11-18: the toe skins separate with nothing between them that
+# they can bond to. Two things leave that air. top_shell_layers 0 turns the
+# uncovered dorsal skin into sparse gyroid (prepare_fill_surfaces), and
+# ensure_vertical_shell_thickness none never runs the close that merges a
+# sparse gap narrower than about 1.2 solid-line spacings into internal solid
+# infill. On the sample those gaps are 0.67 mm in the first 15% of length
+# and 1.06 mm in the 15-30% band. Both are under that close. The shared G2b
+# block still has line width 1, ensure none, and top_shell_layers 0, so
+# ApexLight is unchanged. ApexCore sets ensure_all and one top shell.
+# top_shell_thickness stays 0: the Orca 0.6 mm floor would add more than one
+# layer on a 0.46 mm belt. Widening the walls to 1.3 mm closed the toe and
+# opened wall-crossing travels, and the 15-30% band stayed open, so the walls
+# stay 1. A post-process that widened the gap bead (beads to 2.98 mm,
+# out-and-back retraces) is not used. The 8 mm filter, classic walls, and
+# wall_loops 2 stay.
 APEXCORE_FOREFOOT_STITCH = {
     "wall_generator": "classic",
     "filter_out_gap_fill": "8",
     "gap_fill_target": "everywhere",
     "min_bead_width": "25%",
     "detect_thin_wall": "0",
+    "ensure_vertical_shell_thickness": "ensure_all",
+    "top_shell_layers": "1",
+    "top_shell_thickness": "0",
 }
 
 

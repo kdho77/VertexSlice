@@ -133,10 +133,12 @@ class OtherApexDetectThinWall(unittest.TestCase):
             self.assertEqual(_scalar(g2b_process["detect_thin_wall"]), PRE_27_DETECT_THIN_WALL["apex_light"])
             self.assertEqual(_scalar(g2b_process["reduce_crossing_wall"]), "1")
             self.assertNotEqual(_scalar(g2b_process["wall_generator"]), "classic")
-            # ApexCore keeps the shared 1 mm wall too. The thin-section
-            # hollow is closed by close_thin_skins(), not a wider wall.
+            # ApexLight stays on the shared G2b shells. The forefoot stitch
+            # (ensure_all, one top shell) is ApexCore only. Walls stay 1 mm.
             self.assertEqual(_scalar(g2b_process["outer_wall_line_width"]), "1")
             self.assertEqual(_scalar(g2b_process["inner_wall_line_width"]), "1")
+            self.assertEqual(_scalar(g2b_process["ensure_vertical_shell_thickness"]), "none")
+            self.assertEqual(_scalar(g2b_process["top_shell_layers"]), "0")
 
 
 if __name__ == "__main__":
