@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Gate the ApexCore slice: CONFIG_BLOCK matches the golden, and the print is toe-first.
+"""Gate the ApexCore slice: CONFIG_BLOCK matches the golden, the print is toe-first,
+and no gap or solid bead is wider than 1.5 nozzle diameters or retraced.
 
 usage: check_gcode.py SLICED.gcode [GOLDEN.gcode]
 
@@ -11,6 +12,8 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+
+from bead_limits import violations
 
 
 def config_block(text: str) -> list[str]:
@@ -68,6 +71,9 @@ def check(text: str, golden_text: str | None = None) -> None:
             raise SystemExit(
                 f"check_gcode: CONFIG_BLOCK line {i + 1} differs: {left!r} != {right!r}"
             )
+    beads = violations(text)
+    if beads:
+        raise SystemExit("check_gcode: " + "; ".join(beads[:8]))
 
 
 def main(argv: list[str] | None = None) -> int:
