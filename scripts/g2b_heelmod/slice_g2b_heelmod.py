@@ -160,7 +160,9 @@ def assert_g2b_identity(
         "internal_solid_infill_flow_ratio": "1.45",
         "internal_solid_infill_pattern": "monotonic",
         "initial_layer_min_bead_width": "85%",
-        "min_bead_width": "50%",
+        # 85% puts Arachne's 2-to-3 bead switch near 2.7 mm, which is where Cura
+        # stops widening the two sides of one wall and lets them meet.
+        "min_bead_width": "85%",
         "print_direction": "toe_first",
         "outer_wall_speed": "26",
         # Already the outer-wall speed in the shared G2b block. Locked so a

@@ -3,9 +3,9 @@
 
 The sample is the insole section (edge), the layer-40 toe column, and the
 heel nub. Main is that gcode run through the unstamped gap chain and the
-same seam postprocessor 918c5373 ships. This branch stamps the gap feed and,
-in the slicer, widens only the internal gap bead. Outer walls, top and
-bottom skin, seams, retracts, and visible feeds have to match.
+same seam postprocessor 918c5373 ships. This branch stamps the gap feed.
+The postprocess does not move outer walls, skins, seams, or retracts.
+The slicer may shift a thin-skin centreline inward; the outer edge stays.
 """
 from __future__ import annotations
 

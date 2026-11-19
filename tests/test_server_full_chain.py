@@ -126,7 +126,7 @@ class LightEnvTest(unittest.TestCase):
                 "top_shell_thickness": "0",
                 "wall_loops": "2",
                 "wall_generator": "arachne",
-                "min_bead_width": "50%",
+                "min_bead_width": "85%",
                 "min_feature_size": "25%",
                 "wall_transition_length": "100%",
                 "wall_distribution_count": "1",
