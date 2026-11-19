@@ -103,7 +103,7 @@ class OtherApexDetectThinWall(unittest.TestCase):
             {
                 "filter_out_gap_fill": "9999",
                 "wall_generator": "arachne",
-                "min_bead_width": "85%",
+                "min_bead_width": "50%",
                 "wall_transition_length": "100%",
                 "reduce_crossing_wall": "1",
                 "max_travel_detour_distance": "0",
