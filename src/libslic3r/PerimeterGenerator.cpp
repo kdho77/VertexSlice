@@ -501,11 +501,15 @@ static ExtrusionPaths belt_retile_one(const ExtrusionPath &path, const std::vect
                 const double t = (sample->x - x0) / dx;
                 if (t <= 1e-4 || t >= 1.0 - 1e-4)
                     continue;
-                if ((t < 0.02 && cur.tiled) || (t > 0.98 && end.tiled))
-                    continue;
                 const double y_pred = y_a + t * (y_b - y_a);
-                const double w_pred = w_a + t * (w_b - w_a);
-                if (std::abs(sample->y_tgt - y_pred) <= 0.02 && std::abs(sample->share - w_pred) <= 0.05)
+                // Both endpoints already carry this share. A sample on that
+                // chord does not need its own vertex. If either end is untiled,
+                // the run would be emitted at the original width and the slot
+                // would keep its air, so the sample has to be written.
+                const bool ends_carry_share = cur.tiled && end.tiled
+                    && std::abs(sample->share - w_a) <= 0.02
+                    && std::abs(sample->share - w_b) <= 0.02;
+                if (ends_carry_share && std::abs(sample->y_tgt - y_pred) <= 0.02)
                     continue;
                 need.push_back(Cand{t, sample});
             }
@@ -531,7 +535,7 @@ static ExtrusionPaths belt_retile_one(const ExtrusionPath &path, const std::vect
                         const double w_pred = need[ia].sample->share + u * (need[ib].sample->share - need[ia].sample->share);
                         const double dy = std::abs(need[i].sample->y_tgt - y_pred);
                         const double dw = std::abs(need[i].sample->share - w_pred);
-                        if (dy <= 0.02 && dw <= 0.05)
+                        if (dy <= 0.02 && dw <= 0.02)
                             continue;
                         const double err = dy + 0.5 * dw;
                         if (err > worst_err) {
