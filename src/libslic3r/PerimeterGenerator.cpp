@@ -14,6 +14,7 @@
 #include "Geometry.hpp"
 #include "Line.hpp"
 #include <cmath>
+#include <algorithm>
 #include <cassert>
 #include <unordered_set>
 #include <thread>
@@ -1113,6 +1114,706 @@ static void reorient_perimeters(ExtrusionEntityCollection &entities, bool steep_
     }
 }
 
+// Belt-frame interior only. Y in the slicer is compressed by 1/sqrt(2); beads
+// are deposited at physical width, so a virtual inset lands sqrt(2) times too
+// far apart on the flat faces. BELT_Y_SCALE matches BeltTransform.cpp BELT_I_YY.
+static constexpr double BELT_Y_SCALE = 1.41421356;
+static constexpr double BELT_GAP_MAX_WIDTH_MM = 1.5;
+// G-code Y clamp: y_gcode = max(0, y_phys + this). OrthoCAD ApexCore runtime
+// offset (apexcore_95a_locked.json y_mach_offset). A bead that would be
+// flattened onto the belt, or whose footprint reaches y_gcode < half its
+// width, is not emitted.
+static constexpr double BELT_Y_GCODE_OFFSET = -1.146;
+static constexpr double BELT_SHIFT_CAP_MM = 0.45;
+
+struct BeltWallSeg {
+    Vec2d a;
+    Vec2d b;
+    Vec2d inward;
+    double width;
+    double len;
+    bool outer;
+    bool emit;
+    int id;
+};
+
+struct BeltLiveGap {
+    std::vector<Vec2d> pts;
+    double width;
+    bool obstacle;
+    size_t index;
+};
+
+struct BeltObs {
+    std::vector<Vec2d> pts;
+    double width;
+};
+
+static bool belt_layer_active(const PerimeterGenerator& pg)
+{
+    if (pg.print_config == nullptr || std::abs(pg.print_config->belt_angle.value) < 1e-6)
+        return false;
+    // First and last extruding layers stay byte-identical (outer_lock C, interior_lock I6).
+    if (pg.layer_id <= 0 || pg.upper_slices == nullptr)
+        return false;
+    return true;
+}
+
+static double belt_flow_k(const PerimeterGenerator& pg, ExtrusionRole role)
+{
+    // print_flow_ratio and the per-role ratios live on the region; filament_flow_ratio is on the printer config.
+    double k = pg.config->print_flow_ratio.value;
+    if (pg.print_config != nullptr && !pg.print_config->filament_flow_ratio.values.empty())
+        k *= pg.print_config->filament_flow_ratio.get_at(0);
+    if (pg.config->set_other_flow_ratios.value) {
+        if (role == erExternalPerimeter)
+            k *= pg.config->outer_wall_flow_ratio.value;
+        else if (role == erPerimeter)
+            k *= pg.config->inner_wall_flow_ratio.value;
+        else if (role == erOverhangPerimeter)
+            k *= pg.config->overhang_flow_ratio.value;
+        else if (role == erGapFill)
+            k *= pg.config->gap_fill_flow_ratio.value;
+    }
+    if (!(k > 0.2 && k < 3.0))
+        k = 1.0;
+    return k;
+}
+
+static double belt_gate_width(const ExtrusionPath& path, double k, double height)
+{
+    const double adj = height * (1.0 - PI / 4.0);
+    if (path.mm3_per_mm > 1e-9 && height > 1e-6)
+        return path.mm3_per_mm * k / height + adj;
+    if (path.width > 0.05f)
+        return double(path.width);
+    return 0.45;
+}
+
+static Vec2d belt_phys(const Point& p)
+{
+    return Vec2d(unscale<double>(p.x()), BELT_Y_SCALE * unscale<double>(p.y()));
+}
+
+static void belt_scale_y(ExPolygons& polys, double s)
+{
+    auto scale_one = [s](Polygon& poly) {
+        for (Point& pt : poly.points)
+            pt.y() = coord_t(std::llround(double(pt.y()) * s));
+    };
+    for (ExPolygon& ex : polys) {
+        scale_one(ex.contour);
+        for (Polygon& hole : ex.holes)
+            scale_one(hole);
+    }
+}
+
+static ExPolygons belt_offset2_ex(const ExPolygons& src, float delta1, float delta2)
+{
+    ExPolygons scaled = src;
+    belt_scale_y(scaled, BELT_Y_SCALE);
+    ExPolygons out = offset2_ex(scaled, delta1, delta2);
+    belt_scale_y(out, 1.0 / BELT_Y_SCALE);
+    return out;
+}
+
+static ExPolygons belt_offset_ex(const ExPolygons& src, double delta)
+{
+    ExPolygons scaled = src;
+    belt_scale_y(scaled, BELT_Y_SCALE);
+    ExPolygons out = offset_ex(scaled, delta);
+    belt_scale_y(out, 1.0 / BELT_Y_SCALE);
+    return out;
+}
+
+// Move each vertex of an already-computed virtual inset toward the loop it was
+// inset from, until the spacing measured in the physical belt frame equals the
+// virtual spacing. Same vertices, same order: the inner wall does not gain
+// corners. The move is capped under inner_shift SHIFT_MAX.
+static bool belt_nearest(const ExPolygons& src, const Point& v, Vec2d& out)
+{
+    const Vec2d q(unscale<double>(v.x()), unscale<double>(v.y()));
+    double best = 1e100;
+    bool hit = false;
+    auto check = [&](const Polygon& poly) {
+        const size_t n = poly.size();
+        if (n < 2)
+            return;
+        for (size_t i = 0; i < n; ++i) {
+            const Vec2d a(unscale<double>(poly[i].x()), unscale<double>(poly[i].y()));
+            const Vec2d b(unscale<double>(poly[(i + 1) % n].x()), unscale<double>(poly[(i + 1) % n].y()));
+            const Vec2d ab = b - a;
+            const double l2 = ab.squaredNorm();
+            const double u = l2 < 1e-18 ? 0.0 : std::max(0.0, std::min(1.0, (q - a).dot(ab) / l2));
+            const Vec2d proj = a + ab * u;
+            const double d2 = (q - proj).squaredNorm();
+            if (d2 < best) {
+                best = d2;
+                out = proj;
+                hit = true;
+            }
+        }
+    };
+    for (const ExPolygon& ex : src) {
+        check(ex.contour);
+        for (const Polygon& hole : ex.holes)
+            check(hole);
+    }
+    return hit;
+}
+
+static void belt_pull_toward(ExPolygons& dst, const ExPolygons& src)
+{
+    auto pull = [&](Polygon& poly) {
+        for (Point& pt : poly.points) {
+            Vec2d near;
+            if (!belt_nearest(src, pt, near))
+                continue;
+            const Vec2d v(unscale<double>(pt.x()) - near.x(), unscale<double>(pt.y()) - near.y());
+            const double len_v = v.norm();
+            if (len_v < 0.02 || len_v > 6.0)
+                continue;
+            const double len_p = std::hypot(v.x(), BELT_Y_SCALE * v.y());
+            if (len_p <= len_v + 1e-4)
+                continue;
+            double new_phys = len_v;
+            if (len_p - new_phys > BELT_SHIFT_CAP_MM)
+                new_phys = len_p - BELT_SHIFT_CAP_MM;
+            const double s = new_phys / len_p;
+            pt = Point::new_scale(near.x() + v.x() * s, near.y() + v.y() * s);
+        }
+    };
+    for (ExPolygon& ex : dst) {
+        pull(ex.contour);
+        for (Polygon& hole : ex.holes)
+            pull(hole);
+    }
+}
+
+static bool belt_inward(const Vec2d& a, const Vec2d& b, double width, const ExPolygon& island, Vec2d& inward)
+{
+    Vec2d t = b - a;
+    const double len = t.norm();
+    if (len < 1e-6)
+        return false;
+    t /= len;
+    const Vec2d left(-t.y(), t.x());
+    auto inside = [&](const Vec2d& n) {
+        const Vec2d p = (a + b) * 0.5 + n * (width * 0.5 + 0.08);
+        return island.contains(Point::new_scale(p.x(), p.y() / BELT_Y_SCALE));
+    };
+    const bool left_in = inside(left);
+    const bool right_in = inside(-left);
+    if (left_in == right_in)
+        return false;
+    inward = left_in ? left : -left;
+    return true;
+}
+
+static bool belt_emit_side(const Vec2d& inward)
+{
+    if (std::abs(inward.y()) >= std::abs(inward.x()))
+        return inward.y() > 0.2;
+    return inward.x() > 0.2;
+}
+
+static void belt_add_wall_path(const ExtrusionPath& path, std::vector<BeltWallSeg>& out, const ExPolygon& island, const PerimeterGenerator& pg, double height, int& next_id)
+{
+    const ExtrusionRole role = path.role();
+    const bool wall = role == erExternalPerimeter || role == erOverhangPerimeter || role == erPerimeter;
+    if (!wall || path.polyline.points.size() < 2)
+        return;
+    const bool outer = role == erExternalPerimeter || role == erOverhangPerimeter;
+    const double width = std::max(0.2, belt_gate_width(path, belt_flow_k(pg, role), height));
+    const auto& pts = path.polyline.points;
+    for (size_t i = 1; i < pts.size(); ++i) {
+        const Vec2d a = belt_phys(pts[i - 1]);
+        const Vec2d b = belt_phys(pts[i]);
+        const double len = (b - a).norm();
+        if (len < 0.05)
+            continue;
+        Vec2d inward(0, 0);
+        const bool got = belt_inward(a, b, width, island, inward);
+        BeltWallSeg seg;
+        seg.a = a;
+        seg.b = b;
+        seg.inward = got ? inward : Vec2d(0, 0);
+        seg.width = width;
+        seg.len = len;
+        seg.outer = outer;
+        seg.emit = outer && got && belt_emit_side(seg.inward);
+        seg.id = next_id++;
+        out.push_back(seg);
+    }
+}
+
+static void belt_collect_entity(const ExtrusionEntity* entity, std::vector<BeltWallSeg>& out, const ExPolygon& island, const PerimeterGenerator& pg, double height, int& next_id)
+{
+    if (entity == nullptr)
+        return;
+    if (const auto* collection = dynamic_cast<const ExtrusionEntityCollection*>(entity)) {
+        for (const ExtrusionEntity* child : collection->entities)
+            belt_collect_entity(child, out, island, pg, height, next_id);
+        return;
+    }
+    if (const auto* loop = dynamic_cast<const ExtrusionLoop*>(entity)) {
+        for (const ExtrusionPath& path : loop->paths)
+            belt_add_wall_path(path, out, island, pg, height, next_id);
+        return;
+    }
+    if (const auto* multi = dynamic_cast<const ExtrusionMultiPath*>(entity)) {
+        for (const ExtrusionPath& path : multi->paths)
+            belt_add_wall_path(path, out, island, pg, height, next_id);
+        return;
+    }
+    if (const auto* path = dynamic_cast<const ExtrusionPath*>(entity))
+        belt_add_wall_path(*path, out, island, pg, height, next_id);
+}
+
+static void belt_collect_walls(const ExtrusionEntityCollection& coll, std::vector<BeltWallSeg>& out, const ExPolygon& island, const PerimeterGenerator& pg)
+{
+    const double height = pg.layer_height > 1e-6 ? pg.layer_height : 0.46;
+    int next_id = 0;
+    for (const ExtrusionEntity* entity : coll.entities)
+        belt_collect_entity(entity, out, island, pg, height, next_id);
+}
+
+struct BeltCol {
+    double y0;
+    double y1;
+    bool thin;
+};
+
+static std::vector<BeltCol> belt_columns(const std::vector<BeltWallSeg>& walls, double& x_origin)
+{
+    double xmin = 1e100, xmax = -1e100;
+    for (const BeltWallSeg& seg : walls) {
+        // Outer and overhang faces only. Inner walls stay in the raycast but do not bound the thin zone.
+        if (!seg.outer)
+            continue;
+        xmin = std::min(xmin, std::min(seg.a.x(), seg.b.x()));
+        xmax = std::max(xmax, std::max(seg.a.x(), seg.b.x()));
+    }
+    const double step = 0.25;
+    if (!(xmax > xmin)) {
+        x_origin = 0;
+        return {};
+    }
+    const int i0 = (int)std::floor(xmin / step);
+    const int i1 = (int)std::ceil(xmax / step);
+    const int n = std::max(1, i1 - i0 + 1);
+    x_origin = i0 * step;
+    std::vector<BeltCol> cols(n, BeltCol{1e100, -1e100, false});
+    for (const BeltWallSeg& seg : walls) {
+        if (!seg.outer)
+            continue;
+        const double dx = seg.b.x() - seg.a.x();
+        if (std::abs(dx) < 1e-9)
+            continue;
+        const double slope = (seg.b.y() - seg.a.y()) / dx;
+        const double half = std::min(seg.width * 0.5 * std::sqrt(1.0 + slope * slope), seg.width * 2.0);
+        const double x0 = std::min(seg.a.x(), seg.b.x());
+        const double x1 = std::max(seg.a.x(), seg.b.x());
+        const int c0 = (int)std::floor((x0 - x_origin) / step);
+        const int c1 = (int)std::floor((x1 - x_origin) / step);
+        for (int c = c0; c <= c1; ++c) {
+            if (c < 0 || c >= n)
+                continue;
+            const double cx = x_origin + (c + 0.5) * step;
+            if (cx < x0 - 1e-9 || cx > x1 + 1e-9)
+                continue;
+            const double t = (cx - seg.a.x()) / dx;
+            if (t < -1e-6 || t > 1.0 + 1e-6)
+                continue;
+            const double y = seg.a.y() + t * (seg.b.y() - seg.a.y());
+            cols[c].y0 = std::min(cols[c].y0, y - half);
+            cols[c].y1 = std::max(cols[c].y1, y + half);
+        }
+    }
+    for (BeltCol& col : cols)
+        col.thin = col.y1 > col.y0 && (col.y1 - col.y0) <= 4.0;
+    return cols;
+}
+
+static bool belt_thin_at(const std::vector<BeltCol>& cols, double x_origin, double x)
+{
+    if (cols.empty())
+        return false;
+    const int i = (int)std::floor((x - x_origin) / 0.25);
+    return i >= 0 && i < (int)cols.size() && cols[i].thin;
+}
+
+static double belt_dist_seg(const Vec2d& p, const Vec2d& a, const Vec2d& b)
+{
+    const Vec2d v = b - a;
+    const double l2 = v.squaredNorm();
+    const double u = l2 < 1e-18 ? 0.0 : std::max(0.0, std::min(1.0, (p - a).dot(v) / l2));
+    return (p - (a + v * u)).norm();
+}
+
+static double belt_ray_seg(const Vec2d& o, const Vec2d& d, const Vec2d& a, const Vec2d& b)
+{
+    const Vec2d v = b - a;
+    const double den = d.x() * v.y() - d.y() * v.x();
+    if (std::abs(den) < 1e-12)
+        return -1.0;
+    const Vec2d w = a - o;
+    const double t = (w.x() * v.y() - w.y() * v.x()) / den;
+    const double u = (w.x() * d.y() - w.y() * d.x()) / den;
+    if (t > 1e-4 && u >= -1e-4 && u <= 1.0 + 1e-4)
+        return t;
+    return -1.0;
+}
+
+static bool belt_touch(const BeltWallSeg& a, const BeltWallSeg& b)
+{
+    auto near = [](const Vec2d& p, const Vec2d& q) { return (p - q).norm() < 0.2; };
+    return near(a.a, b.a) || near(a.a, b.b) || near(a.b, b.a) || near(a.b, b.b);
+}
+
+static double belt_ray_bead(const Vec2d& o, const Vec2d& d, const BeltWallSeg& wall)
+{
+    Vec2d t = wall.b - wall.a;
+    const double len = t.norm();
+    if (len < 1e-9)
+        return -1.0;
+    t /= len;
+    const Vec2d n(-t.y(), t.x());
+    const double r = wall.width * 0.5;
+    const Vec2d a_l = wall.a + n * r, b_l = wall.b + n * r;
+    const Vec2d a_r = wall.a - n * r, b_r = wall.b - n * r;
+    double best = 1e9;
+    const double hits[4] = {
+        belt_ray_seg(o, d, a_l, b_l), belt_ray_seg(o, d, a_r, b_r),
+        belt_ray_seg(o, d, a_l, a_r), belt_ray_seg(o, d, b_l, b_r)
+    };
+    for (double hit : hits)
+        if (hit > 0.02 && hit < best)
+            best = hit;
+    return best < 1e8 ? best : -1.0;
+}
+
+static double belt_slot_gap(const Vec2d& origin, const Vec2d& dir, const BeltWallSeg& self, const std::vector<BeltWallSeg>& walls)
+{
+    double best = 1e9;
+    for (const BeltWallSeg& other : walls) {
+        if (other.id == self.id || belt_touch(self, other))
+            continue;
+        if (belt_dist_seg(origin, other.a, other.b) < other.width * 0.5 - 0.02)
+            return -1.0;
+        const double hit = belt_ray_bead(origin, dir, other);
+        if (hit > 0.02 && hit < best)
+            best = hit;
+    }
+    if (best > 4.30)
+        return -1.0;
+    return best;
+}
+
+static int belt_bead_count(double gap, double& width)
+{
+    if (gap < 0.05 || gap > 4.30)
+        return 0;
+    int n;
+    if (gap <= 1.40) {
+        n = 1;
+        width = gap < 0.20 ? 0.30 : gap + 0.10;
+    } else if (gap <= 2.85) {
+        n = 2;
+        width = (gap + 0.15) / 2.0;
+    } else {
+        n = 3;
+        width = (gap + 0.20) / 3.0;
+    }
+    if (width < 0.30)
+        width = 0.30;
+    if (width > BELT_GAP_MAX_WIDTH_MM)
+        width = BELT_GAP_MAX_WIDTH_MM;
+    return n;
+}
+
+static bool belt_clamped(const Vec2d& centre, double width, const Vec2d& inward)
+{
+    const Vec2d samples[3] = { centre, centre + inward * (width * 0.5), centre - inward * (width * 0.5) };
+    for (const Vec2d& p : samples) {
+        if (p.y() + BELT_Y_GCODE_OFFSET < width * 0.5)
+            return true;
+    }
+    return false;
+}
+
+static double belt_dist_poly(const Vec2d& p, const std::vector<Vec2d>& pts)
+{
+    double best = 1e9;
+    for (size_t i = 1; i < pts.size(); ++i)
+        best = std::min(best, belt_dist_seg(p, pts[i - 1], pts[i]));
+    return best;
+}
+
+static bool belt_hits_obs(const Vec2d& centre, double width, const std::vector<BeltObs>& obs)
+{
+    for (const BeltObs& o : obs) {
+        const double overlap = (width + o.width) * 0.5 - belt_dist_poly(centre, o.pts);
+        if (overlap > 0.08 * width)
+            return true;
+    }
+    return false;
+}
+
+static void belt_gap_points(const ExtrusionEntity* entity, std::vector<Vec2d>& pts, double& width, double height, double k)
+{
+    if (entity == nullptr)
+        return;
+    if (const auto* collection = dynamic_cast<const ExtrusionEntityCollection*>(entity)) {
+        for (const ExtrusionEntity* child : collection->entities)
+            belt_gap_points(child, pts, width, height, k);
+        return;
+    }
+    if (const auto* loop = dynamic_cast<const ExtrusionLoop*>(entity)) {
+        for (const ExtrusionPath& path : loop->paths)
+            belt_gap_points(&path, pts, width, height, k);
+        return;
+    }
+    if (const auto* multi = dynamic_cast<const ExtrusionMultiPath*>(entity)) {
+        for (const ExtrusionPath& path : multi->paths)
+            belt_gap_points(&path, pts, width, height, k);
+        return;
+    }
+    if (const auto* path = dynamic_cast<const ExtrusionPath*>(entity)) {
+        width = std::max(width, belt_gate_width(*path, k, height));
+        for (const Point& p : path->polyline.points) {
+            const Vec2d q = belt_phys(p);
+            if (pts.empty() || (q - pts.back()).norm() > 0.02)
+                pts.push_back(q);
+        }
+    }
+}
+
+struct BeltStation {
+    Vec2d origin;
+    Vec2d inward;
+    double width;
+    int n;
+};
+
+static void belt_emit_run(std::vector<BeltStation>& run, double height, double k_gap, std::vector<ExtrusionPath*>& out, std::vector<BeltObs>& obs)
+{
+    if (run.size() < 2) {
+        run.clear();
+        return;
+    }
+    const int n = run.front().n;
+    double width = run.front().width;
+    for (const BeltStation& st : run)
+        width = std::min(width, st.width);
+    width = std::min(BELT_GAP_MAX_WIDTH_MM, std::max(0.30, width));
+    const double adj = height * (1.0 - PI / 4.0);
+    const double mm3 = height * (width - adj) / k_gap;
+    for (int bead = 0; bead < n; ++bead) {
+        const double along = (width * 0.5 - 0.05) + bead * (width - 0.05);
+        ExtrusionPath* path = new ExtrusionPath(erGapFill, mm3, float(width), float(height));
+        auto flush_path = [&](ExtrusionPath*& path, std::vector<Vec2d>& physical) {
+            double length = 0;
+            for (size_t i = 1; i < physical.size(); ++i)
+                length += (physical[i] - physical[i - 1]).norm();
+            if (physical.size() >= 2 && length >= 0.5) {
+                out.push_back(path);
+                obs.push_back(BeltObs{physical, width});
+            } else {
+                delete path;
+            }
+            path = new ExtrusionPath(erGapFill, mm3, float(width), float(height));
+            physical.clear();
+        };
+        std::vector<Vec2d> physical;
+        for (const BeltStation& st : run) {
+            const Vec2d c = st.origin + st.inward * along;
+            if (belt_clamped(c, width, st.inward)) {
+                flush_path(path, physical);
+                continue;
+            }
+            if (!physical.empty() && (c - physical.back()).norm() < 0.05)
+                continue;
+            const Vec2d virt(c.x(), c.y() / BELT_Y_SCALE);
+            path->polyline.points.push_back(Point::new_scale(virt.x(), virt.y()));
+            physical.push_back(c);
+        }
+        double length = 0;
+        for (size_t i = 1; i < physical.size(); ++i)
+            length += (physical[i] - physical[i - 1]).norm();
+        if (physical.size() >= 2 && length >= 0.5) {
+            out.push_back(path);
+            obs.push_back(BeltObs{std::move(physical), width});
+        } else {
+            delete path;
+        }
+    }
+    run.clear();
+}
+
+static void belt_apply_gap(PerimeterGenerator& pg, ExtrusionEntityCollection& local, const std::vector<BeltWallSeg>& walls)
+{
+    if (walls.empty() || pg.layer_height < 1e-6)
+        return;
+    const double height = pg.layer_height;
+    const double k_gap = belt_flow_k(pg, erGapFill);
+    double x_origin = 0;
+    const std::vector<BeltCol> cols = belt_columns(walls, x_origin);
+    if (cols.empty())
+        return;
+
+    std::vector<BeltLiveGap> live;
+    std::vector<BeltObs> obs;
+    const size_t original = local.entities.size();
+    for (size_t i = 0; i < original; ++i) {
+        BeltLiveGap gap;
+        gap.width = 0;
+        gap.index = i;
+        gap.obstacle = true;
+        belt_gap_points(local.entities[i], gap.pts, gap.width, height, k_gap);
+        if (gap.pts.size() < 2) {
+            live.push_back(std::move(gap));
+            continue;
+        }
+        int inside = 0, outside = 0;
+        for (size_t s = 1; s < gap.pts.size(); ++s) {
+            const Vec2d a = gap.pts[s - 1], b = gap.pts[s];
+            const double len = (b - a).norm();
+            const int ns = std::max(1, (int)std::ceil(len / 0.5));
+            for (int k = 0; k < ns; ++k) {
+                const Vec2d p = a + (b - a) * ((k + 0.5) / ns);
+                if (belt_thin_at(cols, x_origin, p.x()))
+                    ++inside;
+                else
+                    ++outside;
+            }
+        }
+        // A live bead that straddles the thin zone, or sits outside it, stays byte-identical.
+        gap.obstacle = outside > 0 || inside == 0;
+        if (gap.obstacle)
+            obs.push_back(BeltObs{gap.pts, gap.width});
+        live.push_back(std::move(gap));
+    }
+    if (pg.gap_fill != nullptr) {
+        for (const ExtrusionEntity* entity : pg.gap_fill->entities) {
+            BeltObs o;
+            o.width = 0;
+            belt_gap_points(entity, o.pts, o.width, height, k_gap);
+            if (o.pts.size() >= 2)
+                obs.push_back(std::move(o));
+        }
+    }
+
+    std::vector<ExtrusionPath*> fresh;
+    std::vector<BeltStation> run;
+    auto compatible = [](const BeltStation& a, const BeltStation& b) {
+        if (a.n != b.n || a.inward.dot(b.inward) < 0.5)
+            return false;
+        if (std::abs(a.width - b.width) > 0.05)
+            return false;
+        return (a.origin - b.origin).norm() < 0.8;
+    };
+    for (const BeltWallSeg& seg : walls) {
+        if (!seg.emit)
+            continue;
+        const Vec2d tangent = (seg.b - seg.a) / seg.len;
+        for (double s = 0.125; s < seg.len - 0.05; s += 0.25) {
+            const Vec2d pos = seg.a + tangent * s;
+            const Vec2d origin = pos + seg.inward * (seg.width * 0.5);
+            auto flush = [&]() { belt_emit_run(run, height, k_gap, fresh, obs); };
+            if (!belt_thin_at(cols, x_origin, pos.x())) {
+                flush();
+                continue;
+            }
+            const double gap = belt_slot_gap(origin, seg.inward, seg, walls);
+            double width = 0;
+            const int n = belt_bead_count(gap, width);
+            if (n == 0) {
+                flush();
+                continue;
+            }
+            bool blocked = false;
+            for (int bead = 0; bead < n && !blocked; ++bead) {
+                const double along = (width * 0.5 - 0.05) + bead * (width - 0.05);
+                const Vec2d centre = origin + seg.inward * along;
+                if (belt_clamped(centre, width, seg.inward) || belt_hits_obs(centre, width, obs))
+                    blocked = true;
+            }
+            if (blocked) {
+                flush();
+                continue;
+            }
+            BeltStation st{origin, seg.inward, width, n};
+            if (!run.empty() && !compatible(run.back(), st))
+                flush();
+            run.push_back(st);
+        }
+    }
+    belt_emit_run(run, height, k_gap, fresh, obs);
+
+    std::vector<std::vector<Vec2d>> fresh_pts(fresh.size());
+    std::vector<double> fresh_w(fresh.size());
+    for (size_t i = 0; i < fresh.size(); ++i) {
+        fresh_w[i] = fresh[i]->width > 0 ? fresh[i]->width : 0.45;
+        fresh_pts[i].reserve(fresh[i]->polyline.points.size());
+        for (const Point& q : fresh[i]->polyline.points)
+            fresh_pts[i].push_back(belt_phys(q));
+    }
+    std::vector<size_t> drop;
+    for (const BeltLiveGap& gap : live) {
+        if (gap.obstacle || gap.pts.size() < 2)
+            continue;
+        int hit = 0, tot = 0;
+        for (size_t s = 1; s < gap.pts.size(); ++s) {
+            const Vec2d a = gap.pts[s - 1], b = gap.pts[s];
+            const double len = (b - a).norm();
+            const int ns = std::max(1, (int)std::ceil(len / 0.5));
+            for (int k = 0; k < ns; ++k) {
+                const Vec2d p = a + (b - a) * ((k + 0.5) / ns);
+                ++tot;
+                for (size_t fi = 0; fi < fresh.size(); ++fi) {
+                    if ((gap.width + fresh_w[fi]) * 0.5 - belt_dist_poly(p, fresh_pts[fi]) > 0.02) {
+                        ++hit;
+                        break;
+                    }
+                }
+            }
+        }
+        if (tot > 0 && hit * 10 >= tot)
+            drop.push_back(gap.index);
+    }
+    std::sort(drop.begin(), drop.end());
+    drop.erase(std::unique(drop.begin(), drop.end()), drop.end());
+    for (size_t i = drop.size(); i-- > 0; )
+        local.remove(drop[i]);
+
+    // Nearest-neighbour chain so the new beads travel inside the slot.
+    std::vector<ExtrusionPath*> ordered;
+    while (!fresh.empty()) {
+        if (ordered.empty()) {
+            ordered.push_back(fresh.back());
+            fresh.pop_back();
+            continue;
+        }
+        const Vec2d end = belt_phys(ordered.back()->last_point());
+        size_t best = 0;
+        double best_d = 1e100;
+        bool rev = false;
+        for (size_t i = 0; i < fresh.size(); ++i) {
+            const double d0 = (belt_phys(fresh[i]->first_point()) - end).norm();
+            const double d1 = (belt_phys(fresh[i]->last_point()) - end).norm();
+            if (d0 < best_d) { best_d = d0; best = i; rev = false; }
+            if (d1 < best_d) { best_d = d1; best = i; rev = true; }
+        }
+        if (rev)
+            fresh[best]->reverse();
+        ordered.push_back(fresh[best]);
+        fresh.erase(fresh.begin() + best);
+    }
+    for (ExtrusionPath* path : ordered)
+        local.entities.push_back(path);
+}
+
 void PerimeterGenerator::process_classic()
 {
     group_region_by_fuzzify(*this);
@@ -1193,6 +1894,8 @@ void PerimeterGenerator::process_classic()
     std::vector<size_t> surface_order = chain_expolygons(surface_exp);
     for (size_t order_idx = 0; order_idx < surface_order.size(); order_idx++) {
         const Surface &surface = all_surfaces[surface_order[order_idx]];
+        const bool belt_physical = belt_layer_active(*this);
+        std::vector<BeltWallSeg> island_walls;
         // detect how many perimeters must be generated for this island
         int loop_number = this->config->wall_loops + surface.extra_perimeters - 1;  // 0-indexed loops
         int sparse_infill_density = this->config->sparse_infill_density.value;
@@ -1302,6 +2005,10 @@ void PerimeterGenerator::process_classic()
                         append(gaps, diff_ex(
                             offset(last,    - float(0.5 * distance)),
                             offset(offsets,   float(0.5 * distance + 10))));  // safety offset
+                    // Gap detection stays on the virtual inset. The wall itself is then
+                    // pulled in so its physical spacing matches that inset distance.
+                    if (belt_physical && i <= loop_number && !offsets.empty())
+                        belt_pull_toward(offsets, last);
                 }
                 if (offsets.empty() && offsets_with_smaller_width.empty()) {
                     // Store the number of loops actually generated.
@@ -1538,8 +2245,11 @@ void PerimeterGenerator::process_classic()
             }
             
             // append perimeters for this slice as a collection
-            if (! entities.empty())
+            if (! entities.empty()) {
+                if (belt_physical)
+                    belt_collect_walls(entities, island_walls, surface.expolygon, *this);
                 this->loops->append(entities);
+            }
 
         } // for each loop of an island
 
@@ -1593,9 +2303,16 @@ void PerimeterGenerator::process_classic()
                 //FIXME Vojtech: This grows by a rounded extrusion width, not by line spacing,
                 // therefore it may cover the area, but no the volume.
                 last = diff_ex(last, gap_fill.polygons_covered_by_width(10.f));
+                if (belt_physical)
+                    belt_apply_gap(*this, gap_fill, island_walls);
                 this->gap_fill->append(std::move(gap_fill.entities));
 
-			}
+			} else if (belt_physical) {
+                ExtrusionEntityCollection gap_fill;
+                belt_apply_gap(*this, gap_fill, island_walls);
+                if (!gap_fill.empty())
+                    this->gap_fill->append(std::move(gap_fill.entities));
+            }
         }
 
         // create one more offset to be used as boundary for fill
@@ -1634,6 +2351,14 @@ void PerimeterGenerator::process_classic()
             not_filled_exp,
             float(-inset - min_perimeter_infill_spacing / 2.),
             float(min_perimeter_infill_spacing / 2.));
+        if (belt_physical) {
+            ExPolygons infill_phys = belt_offset2_ex(
+                not_filled_exp,
+                float(-inset - min_perimeter_infill_spacing / 2.),
+                float(min_perimeter_infill_spacing / 2.));
+            if (!infill_phys.empty())
+                infill_exp = std::move(infill_phys);
+        }
         // append infill areas to fill_surfaces
         //if any top_fills, grow them by ext_perimeter_spacing/2 to have the real un-anchored fill
         ExPolygons top_infill_exp = intersection_ex(fill_clip, offset_ex(top_fills, double(ext_perimeter_spacing / 2)));
@@ -1656,6 +2381,18 @@ void PerimeterGenerator::process_classic()
                 polyWithoutOverlap = offset_ex(
                     not_filled_exp,
                     double(-inset - infill_peri_overlap));
+            if (belt_physical) {
+                ExPolygons phys = (min_perimeter_infill_spacing / 2 > infill_peri_overlap)
+                    ? belt_offset2_ex(
+                        not_filled_exp,
+                        float(-inset - min_perimeter_infill_spacing / 2.),
+                        float(min_perimeter_infill_spacing / 2 - infill_peri_overlap))
+                    : belt_offset_ex(
+                        not_filled_exp,
+                        double(-inset - infill_peri_overlap));
+                if (!phys.empty())
+                    polyWithoutOverlap = std::move(phys);
+            }
             if (!top_fills.empty())
                 polyWithoutOverlap = union_ex(polyWithoutOverlap, top_infill_exp);
             this->fill_no_overlap->insert(this->fill_no_overlap->end(), polyWithoutOverlap.begin(), polyWithoutOverlap.end());
@@ -2107,6 +2844,8 @@ void PerimeterGenerator::process_arachne()
     // we need to process each island separately because we might have different
     // extra perimeters for each one
     for (const Surface& surface : all_surfaces) {
+        const bool belt_physical = belt_layer_active(*this);
+        std::vector<BeltWallSeg> arachne_walls;
         coord_t bead_width_0 = ext_perimeter_spacing;
         // detect how many perimeters must be generated for this island
         int loop_number = this->config->wall_loops + surface.extra_perimeters - 1; // 0-indexed loops
@@ -2451,6 +3190,8 @@ void PerimeterGenerator::process_arachne()
             steep_overhang_hole    = true;
         }
         if (ExtrusionEntityCollection extrusion_coll = traverse_extrusions(*this, ordered_extrusions, steep_overhang_contour, steep_overhang_hole); !extrusion_coll.empty()) {
+            if (belt_physical)
+                belt_collect_walls(extrusion_coll, arachne_walls, surface.expolygon, *this);
             // All walls are counter-clockwise initially, so we don't need to reorient it if that's what we want
             if (wall_direction != WallDirection::CounterClockwise) {
                 reorient_perimeters(extrusion_coll, steep_overhang_contour, steep_overhang_hole,
@@ -2514,6 +3255,12 @@ void PerimeterGenerator::process_arachne()
             if (!top_expolygons.empty())
                 polyWithoutOverlap = union_ex(polyWithoutOverlap, top_expolygons);
             this->fill_no_overlap->insert(this->fill_no_overlap->end(), polyWithoutOverlap.begin(), polyWithoutOverlap.end());
+        }
+        if (belt_physical && !arachne_walls.empty()) {
+            ExtrusionEntityCollection gap_fill;
+            belt_apply_gap(*this, gap_fill, arachne_walls);
+            if (!gap_fill.empty())
+                this->gap_fill->append(std::move(gap_fill.entities));
         }
     }
 }
