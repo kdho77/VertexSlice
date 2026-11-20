@@ -517,11 +517,10 @@ static ExtrusionPaths belt_retile_one(const ExtrusionPath &path, const std::vect
                 if (t <= 1e-4 || t >= 1.0 - 1e-4)
                     continue;
                 const double y_line = scale * (y0 + t * (y1 - y0));
-                // The sample's own segment is the normal case. Also take a
-                // sample stored on another path when its center lies on this
-                // line: the two skins of one loop are about 2 mm apart.
-                const bool owns = sample.owner == &path && sample.seg == seg;
-                if (!owns && std::abs(sample.y_phys - y_line) > 0.35)
+                // The bucket belongs to this path. A long wall is one segment,
+                // so a station applies when it lies on the segment. The other
+                // skin of the same loop is about 2 mm away and stays off.
+                if (sample.seg != seg && std::abs(sample.y_phys - y_line) > 0.8)
                     continue;
                 on.push_back(&sample);
             }
@@ -826,7 +825,11 @@ static void tile_belt_thin_slots(ExtrusionEntityCollection *walls, ExtrusionEnti
             size_t best = s;
             for (size_t t = s + 1; t < surface.size(); ++t) {
                 const double span = crosses[surface[t]].top - crosses[surface[s]].bot;
-                if (span > BELT_SKIN_MAX_THICK_MM + 1e-6)
+                const double center = crosses[surface[t]].y_phys - crosses[surface[s]].y_phys;
+                // A measured face can sit past 4 mm when mm3 is fatter than the
+                // bead the gate stacks. Centers within 3.2 mm are still the
+                // thin section (4 mm minus two 0.4 mm half-widths).
+                if (span > BELT_SKIN_MAX_THICK_MM + 1e-6 && center > 3.2)
                     break;
                 best = t;
             }
@@ -839,9 +842,13 @@ static void tile_belt_thin_slots(ExtrusionEntityCollection *walls, ExtrusionEnti
                     static int rej_prints = 0;
                     if (rej_prints < 40 && center <= 3.2 && span > BELT_SKIN_MAX_THICK_MM && rej_lo.y_phys < 4.0) {
                         ++rej_prints;
-                        std::fprintf(stderr,
-                            "belt_slot_reject layer=%d x=%.2f span=%.3f center=%.3f wlo=%.3f whi=%.3f ylo=%.3f yhi=%.3f\n",
-                            layer_id, x, span, center, rej_lo.width, rej_hi.width, rej_lo.y_phys, rej_hi.y_phys);
+                        if (FILE *fp = std::fopen("/tmp/belt_slot_debug.txt", "a")) {
+                            std::fprintf(fp,
+                                "reject L%d x=%.2f span=%.3f center=%.3f wlo=%.3f whi=%.3f ylo=%.3f yhi=%.3f taglo=%.3f taghi=%.3f\n",
+                                layer_id, x, span, center, rej_lo.width, rej_hi.width, rej_lo.y_phys, rej_hi.y_phys,
+                                double(rej_lo.path->width), double(rej_hi.path->width));
+                            std::fclose(fp);
+                        }
                     }
                 }
                 ++s;
@@ -895,9 +902,18 @@ static void tile_belt_thin_slots(ExtrusionEntityCollection *walls, ExtrusionEnti
             // Outer faces belong to the surface walls, even if a gap bead sorts
             // next to them. Rank 0 / k-1 are those walls after the Y sort when
             // every other center lies between them.
-            const double face_bot = lo.bot;
-            const double face_top = hi.top;
-            const double thick = face_top - face_bot;
+            double face_bot = lo.bot;
+            double face_top = hi.top;
+            double thick = face_top - face_bot;
+            const double center = hi.y_phys - lo.y_phys;
+            if (k >= 2 && thick > BELT_SKIN_MAX_THICK_MM && center <= 3.2 && thick <= 4.4) {
+                // Faces are just past the cap. Pull them in equally so the
+                // beads still meet; each face moves by at most 0.2 mm.
+                const double mid = 0.5 * (face_bot + face_top);
+                face_bot = mid - 0.5 * BELT_SKIN_MAX_THICK_MM;
+                face_top = mid + 0.5 * BELT_SKIN_MAX_THICK_MM;
+                thick = BELT_SKIN_MAX_THICK_MM;
+            }
             if (k < 2 || thick > BELT_SKIN_MAX_THICK_MM + 1e-6 || thick < 0.2) {
                 s = best;
                 continue;
@@ -909,6 +925,25 @@ static void tile_belt_thin_slots(ExtrusionEntityCollection *walls, ExtrusionEnti
             }
             if (share < 0.45)
                 share = 0.45;
+            if (std::abs(x - 140.0) < 0.01 && layer_id >= 100 && layer_id <= 125) {
+                static int dbg_prints = 0;
+                if (dbg_prints < 40) {
+                    ++dbg_prints;
+                    if (FILE *fp = std::fopen("/tmp/belt_slot_debug.txt", "a")) {
+                        std::fprintf(fp, "L%d x=%.2f k=%d T=%.3f center=%.3f share=%.3f nsurf=%zu\n",
+                            layer_id, x, k, thick, center, share, surface.size());
+                        for (int si : surface)
+                            std::fprintf(fp, "  surf y=%.3f meas=%.3f tag=%.3f %s\n",
+                                crosses[si].y_phys, crosses[si].width, double(crosses[si].path->width),
+                                belt_role_name(crosses[si].role));
+                        for (int rank = 0; rank < k; ++rank)
+                            std::fprintf(fp, "  mem %d y=%.3f w=%.3f %s\n",
+                                rank, crosses[members[rank]].y_phys, crosses[members[rank]].width,
+                                belt_role_name(crosses[members[rank]].role));
+                        std::fclose(fp);
+                    }
+                }
+            }
             if (l61_prints < 12 && std::abs(x - 99.25) <= 0.13) {
                 const double y_lo = crosses[members.front()].y_phys;
                 const double y_hi = crosses[members.back()].y_phys;

@@ -153,6 +153,7 @@ jobs:
           # in the artifact either way.
           cleanup_slice() {
             docker logs vs-slice > belt-air-gcode/server.log 2>&1 || true
+            docker cp vs-slice:/tmp/belt_slot_debug.txt belt-air-gcode/belt_slot_debug.txt 2>/dev/null || true
             docker rm -f vs-slice >/dev/null 2>&1 || true
           }
           trap cleanup_slice EXIT
