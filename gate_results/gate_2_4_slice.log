@@ -1,0 +1,17 @@
+=== 2026-11-20T23:20:04+00:00 START live_apex_core_orthocad ===
+OK live_apex_core_orthocad 6s bytes=3405150
+=== 2026-11-20T23:20:10+00:00 START live_apex_core_insole2 ===
+OK live_apex_core_insole2 0s bytes=721398
+=== 2026-11-20T23:20:10+00:00 START live_apex_light_orthocad ===
+OK live_apex_light_orthocad 164s bytes=3060975
+=== 2026-11-20T23:22:54+00:00 START live_apex_light_insole2 ===
+OK live_apex_light_insole2 125s bytes=899122
+=== 2026-11-20T23:24:59+00:00 START cand_apex_core_orthocad ===
+OK cand_apex_core_orthocad 5s bytes=3184623
+=== 2026-11-20T23:25:04+00:00 START cand_apex_core_insole2 ===
+OK cand_apex_core_insole2 1s bytes=784224
+=== 2026-11-20T23:25:05+00:00 START cand_apex_light_orthocad ===
+OK cand_apex_light_orthocad 280s bytes=3218764
+=== 2026-11-20T23:29:45+00:00 START cand_apex_light_insole2 ===
+OK cand_apex_light_insole2 132s bytes=899122
+ALL_SLICES_OK

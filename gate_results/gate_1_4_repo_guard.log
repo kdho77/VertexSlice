@@ -1,0 +1,40 @@
+== file list: b7e90bd1eb5b92d83e57ccf8213b680588d5c37f..f0f65c2afb6dbf5d0b4a7dd04f032c9e0105c804
+ok:   M .github/workflows/docker-server-proof.yml
+ok:   M scripts/g2b_heelmod/postprocess_g2b.py
+ok:   M scripts/g2b_heelmod/test_seam_off_plantar.py
+ok:   M src/libslic3r/PerimeterGenerator.cpp
+ok:   A validation/air_bands.py
+ok:   A validation/air_vs_cura.py
+ok:   A validation/belt_air_columns.py
+ok:   A validation/inner_shift.py
+ok:   A validation/interior_lock.py
+ok:   A validation/outer_lock.py
+ok:   A validation/print_budget.py
+ok:   A validation/repo_guard.sh
+ok:   A validation/run_inside_only_gates.sh
+ok:   A validation/seam_bottom.py
+ok:   A validation/seam_joint.py
+ok:   A validation/sequence_lock.py
+ok:   A validation/skin_bond.py
+== workflow must be additive inside the frozen block
+== frozen block position: immediately after the Golden chain gate step, before validation_unit:
+ok:   block follows the Golden chain gate step and precedes validation_unit:
+== MUST-MATCH files (HEAD must equal main)
+ok:   scripts/g2b_heelmod/apexcore_95a_locked.json
+ok:   scripts/g2b_heelmod/check_travel_wall_crossings.py
+ok:   validation/reference_gcode/apex_cura_insole_ref.gcode
+ok:   validation/test_models/orthocad_sample_top_insole.stl
+ok:   validation/test_models/insole_sample.stl
+== frozen gate files at HEAD
+ok:   validation/outer_lock.py
+ok:   validation/interior_lock.py
+ok:   validation/sequence_lock.py
+ok:   validation/air_vs_cura.py
+ok:   validation/air_bands.py
+ok:   validation/print_budget.py
+ok:   validation/skin_bond.py
+ok:   validation/inner_shift.py
+ok:   validation/seam_bottom.py
+ok:   validation/seam_joint.py
+ok:   validation/belt_air_columns.py
+REPO GUARD: PASS
