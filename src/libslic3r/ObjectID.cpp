@@ -2,10 +2,6 @@
 
 namespace Slic3r {
 
-// One-translation-unit cache probe. static_assert emits no code. Reverted after the timed rebuild.
-static constexpr int vertexslice_cache_probe = 1;
-static_assert(vertexslice_cache_probe == 1, "cache probe");
-
 size_t ObjectBase::s_last_id = 0;
 
 // Unique object / instance ID for the wipe tower.
