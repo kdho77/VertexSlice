@@ -464,9 +464,18 @@ static ExtrusionPaths belt_retile_one(const ExtrusionPath &path, const std::vect
         const double dx = x1 - x0;
         std::vector<const BeltSlotSample *> on;
         if (std::abs(dx) >= 1e-6) {
-            for (const BeltSlotSample &sample : *samples)
-                if (sample.seg == seg)
-                    on.push_back(&sample);
+            for (const BeltSlotSample &sample : *samples) {
+                const double t = (sample.x - x0) / dx;
+                if (t <= 1e-4 || t >= 1.0 - 1e-4)
+                    continue;
+                const double y_line = scale * (y0 + t * (y1 - y0));
+                // The stored segment index is the normal case. Also accept a
+                // sample that lies on this segment: a loop carries both skins,
+                // and the Y test keeps the opposite skin off this one.
+                if (sample.seg != seg && std::abs(sample.y_phys - y_line) > 0.4)
+                    continue;
+                on.push_back(&sample);
+            }
             std::sort(on.begin(), on.end(), [&](const BeltSlotSample *a, const BeltSlotSample *b) {
                 return (a->x - x0) / dx < (b->x - x0) / dx;
             });
@@ -493,23 +502,15 @@ static ExtrusionPaths belt_retile_one(const ExtrusionPath &path, const std::vect
         };
         std::vector<Cand> need;
         if (std::abs(dx) >= 1e-6) {
-            const double y_a = scale * unscale<double>(cur.out.y());
-            const double y_b = scale * unscale<double>(end.out.y());
-            const double w_a = cur.width;
-            const double w_b = end.width;
             for (const BeltSlotSample *sample : on) {
                 const double t = (sample->x - x0) / dx;
                 if (t <= 1e-4 || t >= 1.0 - 1e-4)
                     continue;
-                const double y_pred = y_a + t * (y_b - y_a);
-                // Both endpoints already carry this share. A sample on that
-                // chord does not need its own vertex. If either end is untiled,
-                // the run would be emitted at the original width and the slot
-                // would keep its air, so the sample has to be written.
-                const bool ends_carry_share = cur.tiled && end.tiled
-                    && std::abs(sample->share - w_a) <= 0.02
-                    && std::abs(sample->share - w_b) <= 0.02;
-                if (ends_carry_share && std::abs(sample->y_tgt - y_pred) <= 0.02)
+                // Compare with the line that is extruded today. A planned
+                // endpoint chord can pass near the target while this segment
+                // is still emitted at the original width, which leaves the air.
+                const double y_line = scale * (y0 + t * (y1 - y0));
+                if (std::abs(sample->y_tgt - y_line) <= 0.01 && std::abs(sample->share - emitted) <= 0.02)
                     continue;
                 need.push_back(Cand{t, sample});
             }
@@ -559,8 +560,13 @@ static ExtrusionPaths belt_retile_one(const ExtrusionPath &path, const std::vect
             const Cand &cand = need[idx];
             const Point at = on_segment(cand.sample->x);
             Point moved;
-            if (!belt_shift_along_normal(pts[seg], at, pts[seg + 1], cand.sample->y_tgt, scale, moved))
-                continue;
+            if (!belt_shift_along_normal(pts[seg], at, pts[seg + 1], cand.sample->y_tgt, scale, moved)) {
+                // A shallow wall's normal is vertical. If the tangent test
+                // refuses the shift, move Y only; a steep wall stays put.
+                if (std::abs((y1 - y0) / dx) > 0.05)
+                    continue;
+                moved = Point(scaled<coord_t>(cand.sample->x), scaled<coord_t>(cand.sample->y_tgt / scale));
+            }
             events.push_back(Event{cand.t, 1, moved, cand.sample->share, true});
         }
         if (!events.empty()) {
