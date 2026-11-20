@@ -453,12 +453,15 @@ static ExtrusionPaths belt_paths_from_seq(const ExtrusionPath &original, const s
     return out;
 }
 
-static ExtrusionPaths belt_retile_one(const ExtrusionPath &path, const std::vector<BeltSlotSample> &samples,
+static ExtrusionPaths belt_retile_one(const ExtrusionPath &path, const std::vector<BeltSlotSample> *own,
                                       const std::map<std::pair<coord_t, coord_t>, BeltPointPlan> &shared,
                                       const PrintRegionConfig *cfg)
 {
-    if (samples.empty() || path.polyline.points.size() < 2)
+    // Only this path's stations. A layer-wide list also matches a neighbour
+    // whose center is within 0.35 mm and can pin a bead at its old width.
+    if (own == nullptr || own->empty() || path.polyline.points.size() < 2)
         return {path};
+    const std::vector<BeltSlotSample> &samples = *own;
     const double scale = BeltTransform::gantry_y_scale();
     const double ratio = belt_flow_ratio(cfg, path.role());
     const double emitted = belt_measured_width(path, ratio);
@@ -648,12 +651,16 @@ static ExtrusionPaths belt_retile_one(const ExtrusionPath &path, const std::vect
 }
 
 static void belt_retile_tree(ExtrusionEntity *entity,
-                             const std::vector<BeltSlotSample> &samples,
+                             const std::unordered_map<ExtrusionPath *, std::vector<BeltSlotSample>> &samples,
                              const std::map<std::pair<coord_t, coord_t>, BeltPointPlan> &shared,
                              const PrintRegionConfig *cfg)
 {
     if (entity == nullptr)
         return;
+    const auto own_of = [&](ExtrusionPath *path) -> const std::vector<BeltSlotSample> * {
+        const auto found = samples.find(path);
+        return found == samples.end() ? nullptr : &found->second;
+    };
     if (ExtrusionLoop *loop = dynamic_cast<ExtrusionLoop *>(entity)) {
         const bool closed = !loop->paths.empty()
             && loop->paths.front().polyline.points.size() >= 2
@@ -661,7 +668,7 @@ static void belt_retile_tree(ExtrusionEntity *entity,
             && loop->paths.front().first_point() == loop->paths.back().last_point();
         ExtrusionPaths rebuilt;
         for (ExtrusionPath &path : loop->paths) {
-            ExtrusionPaths parts = belt_retile_one(path, samples, shared, cfg);
+            ExtrusionPaths parts = belt_retile_one(path, own_of(&path), shared, cfg);
             for (ExtrusionPath &part : parts)
                 rebuilt.push_back(std::move(part));
         }
@@ -683,7 +690,7 @@ static void belt_retile_tree(ExtrusionEntity *entity,
     if (ExtrusionMultiPath *multi = dynamic_cast<ExtrusionMultiPath *>(entity)) {
         ExtrusionPaths rebuilt;
         for (ExtrusionPath &path : multi->paths) {
-            ExtrusionPaths parts = belt_retile_one(path, samples, shared, cfg);
+            ExtrusionPaths parts = belt_retile_one(path, own_of(&path), shared, cfg);
             for (ExtrusionPath &part : parts)
                 rebuilt.push_back(std::move(part));
         }
@@ -694,7 +701,7 @@ static void belt_retile_tree(ExtrusionEntity *entity,
         for (size_t i = 0; i < coll->entities.size(); ++i) {
             ExtrusionEntity *child = coll->entities[i];
             if (ExtrusionPath *path = dynamic_cast<ExtrusionPath *>(child)) {
-                ExtrusionPaths parts = belt_retile_one(*path, samples, shared, cfg);
+                ExtrusionPaths parts = belt_retile_one(*path, own_of(path), shared, cfg);
                 if (parts.size() <= 1) {
                     if (!parts.empty())
                         *path = std::move(parts[0]);
@@ -781,8 +788,11 @@ static void tile_belt_thin_slots(ExtrusionEntityCollection *walls, ExtrusionEnti
             cross.seg = seg.seg;
             cross.y_phys = scale * y_virt;
             cross.width = seg.width;
-            cross.bot = cross.y_phys - 0.5 * seg.width;
-            cross.top = cross.y_phys + 0.5 * seg.width;
+            // A bead whose mm3 is already wider than the 1.6 mm cap must not
+            // push the wall-to-wall face past 4 mm and drop the whole slot.
+            const double face_w = std::min(seg.width, BELT_SKIN_MAX_WIDTH_MM);
+            cross.bot = cross.y_phys - 0.5 * face_w;
+            cross.top = cross.y_phys + 0.5 * face_w;
             cross.role = seg.role;
             crosses.push_back(cross);
         }
@@ -804,16 +814,41 @@ static void tile_belt_thin_slots(ExtrusionEntityCollection *walls, ExtrusionEnti
         }
         crosses.swap(uniq);
 
-        // Consecutive surface walls (outer or overhang) are the thin section.
-        // Inner walls and gap fill between them are the other beads. A stack
-        // with only one surface wall is left alone.
+        // The thin section is the outermost pair of surface walls that still
+        // fits in 4 mm. Pairing each consecutive pair let a short neighbour
+        // claim the bottom bead (share already equal to its width) and the
+        // real slot never wrote a sample on the long wall.
         std::vector<int> surface;
         for (int i = 0; i < int(crosses.size()); ++i)
             if (belt_surface_role(crosses[i].role))
                 surface.push_back(i);
-        for (size_t s = 0; s + 1 < surface.size(); ++s) {
+        for (size_t s = 0; s + 1 < surface.size(); ) {
+            size_t best = s;
+            for (size_t t = s + 1; t < surface.size(); ++t) {
+                const double span = crosses[surface[t]].top - crosses[surface[s]].bot;
+                if (span > BELT_SKIN_MAX_THICK_MM + 1e-6)
+                    break;
+                best = t;
+            }
+            if (best == s) {
+                if (s + 1 < surface.size()) {
+                    const Cross &rej_lo = crosses[surface[s]];
+                    const Cross &rej_hi = crosses[surface[s + 1]];
+                    const double center = rej_hi.y_phys - rej_lo.y_phys;
+                    const double span = rej_hi.top - rej_lo.bot;
+                    static int rej_prints = 0;
+                    if (rej_prints < 40 && center <= 3.2 && span > BELT_SKIN_MAX_THICK_MM && rej_lo.y_phys < 4.0) {
+                        ++rej_prints;
+                        std::fprintf(stderr,
+                            "belt_slot_reject layer=%d x=%.2f span=%.3f center=%.3f wlo=%.3f whi=%.3f ylo=%.3f yhi=%.3f\n",
+                            layer_id, x, span, center, rej_lo.width, rej_hi.width, rej_lo.y_phys, rej_hi.y_phys);
+                    }
+                }
+                ++s;
+                continue;
+            }
             const int i_lo = surface[s];
-            const int i_hi = surface[s + 1];
+            const int i_hi = surface[best];
             const Cross &lo = crosses[i_lo];
             const Cross &hi = crosses[i_hi];
             std::vector<int> members;
@@ -857,16 +892,16 @@ static void tile_belt_thin_slots(ExtrusionEntityCollection *walls, ExtrusionEnti
                 pull(i_hi, false);
             }
             const int k = int(members.size());
-            if (k < 2)
-                continue;
             // Outer faces belong to the surface walls, even if a gap bead sorts
             // next to them. Rank 0 / k-1 are those walls after the Y sort when
             // every other center lies between them.
             const double face_bot = lo.bot;
             const double face_top = hi.top;
             const double thick = face_top - face_bot;
-            if (thick > BELT_SKIN_MAX_THICK_MM + 1e-6 || thick < 0.2)
+            if (k < 2 || thick > BELT_SKIN_MAX_THICK_MM + 1e-6 || thick < 0.2) {
+                s = best;
                 continue;
+            }
             double share = (thick + BELT_SLOT_OVERLAP_MM * double(k - 1)) / double(k);
             if (share > BELT_SKIN_MAX_WIDTH_MM) {
                 belt_report_clamp(layer_id, x, thick, k, share);
@@ -899,14 +934,26 @@ static void tile_belt_thin_slots(ExtrusionEntityCollection *walls, ExtrusionEnti
                     : (rank == k - 1 ? face_top - 0.5 * share
                                      : face_bot + rank * (share - BELT_SLOT_OVERLAP_MM) + 0.5 * share);
                 auto &bucket = samples[bead.path];
-                if (!bucket.empty() && bucket.back().seg == bead.seg && std::abs(bucket.back().x - x) < 0.01)
+                // The wider slot wins. A nearer pair must not freeze the bead
+                // at a share that leaves air against the far skin.
+                if (!bucket.empty() && bucket.back().seg == bead.seg && std::abs(bucket.back().x - x) < 0.01) {
+                    if (share > bucket.back().share + 0.01)
+                        bucket.back() = BeltSlotSample{bead.path, x, bead.seg, bead.y_phys, share, y_tgt};
                     continue;
+                }
                 bucket.push_back(BeltSlotSample{bead.path, x, bead.seg, bead.y_phys, share, y_tgt});
             }
+            s = best;
         }
     }
     if (samples.empty())
         return;
+
+    for (auto &entry : samples) {
+        std::sort(entry.second.begin(), entry.second.end(), [](const BeltSlotSample &a, const BeltSlotSample &b) {
+            return a.x < b.x;
+        });
+    }
 
     std::map<std::pair<coord_t, coord_t>, BeltPointPlan> shared;
     for (ExtrusionPath *path : paths) {
@@ -937,15 +984,9 @@ static void tile_belt_thin_slots(ExtrusionEntityCollection *walls, ExtrusionEnti
         }
     }
 
-    std::vector<BeltSlotSample> flat;
-    for (const auto &entry : samples)
-        flat.insert(flat.end(), entry.second.begin(), entry.second.end());
-    std::sort(flat.begin(), flat.end(), [](const BeltSlotSample &a, const BeltSlotSample &b) {
-        return a.x < b.x;
-    });
     if (walls != nullptr)
-        belt_retile_tree(walls, flat, shared, cfg);
-    belt_retile_tree(&gaps, flat, shared, cfg);
+        belt_retile_tree(walls, samples, shared, cfg);
+    belt_retile_tree(&gaps, samples, shared, cfg);
 }
 
 // Hierarchy of perimeters.
