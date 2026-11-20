@@ -162,6 +162,54 @@ jobs:
           fi
           exit "$status"
 
+      - name: Toe skin air proof
+        run: |
+          set +e
+          docker run --rm -e APEX_MIN_LAYER_TIME=4 \
+            -v "$PWD:/proof" \
+            vertexslice-server:proof \
+            python3 /app/validation/belt_skin_slice_proof.py --out /proof/toe-skin-proof.json
+          status=$?
+          set -e
+          python3 - << 'PY'
+          import json, os
+          from pathlib import Path
+          path = Path("toe-skin-proof.json")
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if not path.is_file() or not summary:
+              raise SystemExit(0)
+          report = json.loads(path.read_text())
+          lines = ["### Toe skin physical gate", ""]
+          for row in report["materials"]:
+              audit = row.get("audit", {})
+              lines.append(
+                  f"- **{row['material']}** widened={row['widened']} "
+                  f"md5 {row['md5_unbonded']} -> {row['md5_bonded']} "
+                  f"diff +{row['diff']['lines_added']}/-{row['diff']['lines_removed']} "
+                  f"{row.get('filament_g','')} {row.get('total_filament_g','')} "
+                  f"slice {row['slice_s']}s"
+              )
+              for name, limit in audit.get("limits", {}).items():
+                  mark = "pass" if limit["ok"] else "FAIL"
+                  lines.append(f"  - {mark} {name}: {limit['detail']}")
+              added = audit.get("added_segments", {})
+              if added:
+                  lines.append(f"  - added segments {added}")
+          lines.append("")
+          with open(summary, "a", encoding="utf-8") as handle:
+              handle.write("\n".join(lines) + "\n")
+          PY
+          exit "$status"
+
+      - name: Upload toe skin proof
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: toe-skin-proof
+          path: toe-skin-proof.json
+          if-no-files-found: error
+          retention-days: 14
+
   validation_unit:
     name: Validation scripts (no binary)
     runs-on: ubuntu-latest

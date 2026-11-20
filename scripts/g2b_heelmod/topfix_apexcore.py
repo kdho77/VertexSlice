@@ -18,6 +18,7 @@ without Kendon's approval.
 from __future__ import annotations
 
 import math
+import os
 import re
 import sys
 from collections import defaultdict
@@ -242,6 +243,10 @@ def main() -> None:
     src, dest = Path(args[0]), Path(args[1])
     text = src.read_text(errors="replace")
     out, removed = topfix(text, reference)
+    if os.environ.get("BELT_SKIN_BOND", "1") != "0":
+        from belt_skin_bond import bond_gcode
+
+        out = bond_gcode(out, material="apex_core")
     dest.write_text(out)
     layers = sorted({p["layer"] for p in removed})
     print("topfix", "removed", len(removed), "layers", layers)
