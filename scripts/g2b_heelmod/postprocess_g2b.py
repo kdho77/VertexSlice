@@ -783,9 +783,11 @@ def clear_perimeter_crossings(text: str) -> str:
 
     Same inside-wall walk the G2b seam pass uses. Extrusion lines, feeds on
     those lines, and every travel that does not cross are copied unchanged.
-    A file with no perimeter crossing is returned as the same string.
+    A file with no perimeter crossing is returned as the same string, except
+    ApexLight, which also gets the inside skin bond.
     """
     from check_travel_wall_crossings import OUTER, OVERHANG, _Grid, _body, _is_move, _words
+    from belt_skin_bond import bond_apex_light
 
     lines = text.splitlines(keepends=True)
     x = y = None
@@ -856,7 +858,7 @@ def clear_perimeter_crossings(text: str) -> str:
             travels.append((index, layer_i, px, py, x, y))
 
     if not travels:
-        return text
+        return bond_apex_light(text)
 
     replacements: dict[int, list[str]] = {}
     for index, layer_i, px, py, nx, ny in travels:
@@ -878,11 +880,11 @@ def clear_perimeter_crossings(text: str) -> str:
         replacements[index] = rendered
 
     if not replacements:
-        return text
+        return bond_apex_light(text)
     out: list[str] = []
     for index, raw in enumerate(lines):
         out.extend(replacements.get(index, [raw]))
-    return "".join(out)
+    return bond_apex_light("".join(out))
 
 
 def _render_routed_travel(raw: str, path: list[tuple[float, float]]) -> list[str] | None:

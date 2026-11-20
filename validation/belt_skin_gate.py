@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import math
 import re
+import sys
 from pathlib import Path
 
 CAP = 1.6
@@ -183,7 +184,8 @@ _MOVE = re.compile(
     r"^(?P<cmd>G0|G1)\s*(?P<body>.*)$",
     re.IGNORECASE,
 )
-_WORD = re.compile(r"([XYZEF])\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
+# Orca writes Y.021 with no digit before the decimal. That is still a number.
+_WORD = re.compile(r"([XYZEF])\s*(-?(?:\d+\.?\d*|\.\d+))", re.IGNORECASE)
 
 
 def _words(body: str) -> dict[str, float]:
@@ -294,11 +296,38 @@ def print_gcode(live_path: Path, branch_path: Path) -> int:
     return failed
 
 
+def measure_file(path: Path) -> dict:
+    """Toe-band air from a real G-code file. Same 0.2 mm raster the bond fills."""
+    g2b = Path(__file__).resolve().parents[1] / "scripts" / "g2b_heelmod"
+    if str(g2b) not in sys.path:
+        sys.path.insert(0, str(g2b))
+    from belt_skin_bond import measure_toe_air
+
+    return measure_toe_air(path.read_text(errors="replace"))
+
+
+def print_measure(path: Path) -> int:
+    import json
+
+    report = measure_file(path)
+    print(json.dumps({"file": str(path), **report}, indent=2))
+    failed = 0
+    for name, band in report["bands"].items():
+        air = band["air_mm3"]
+        print(f"toe {name}% air_mm3={air} layers={band['layers']} columns={band['columns']} worst_mm={band['worst_mm']}")
+        if air > 0.0:
+            failed += 1
+    return failed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Belt skin gate: synthetic columns, or two G-code files")
     parser.add_argument("--live", type=Path)
     parser.add_argument("--branch", type=Path)
+    parser.add_argument("--measure", type=Path, help="G-code file. Exit 1 when either toe band has air.")
     args = parser.parse_args()
+    if args.measure:
+        return print_measure(args.measure)
     status = print_contract()
     if args.live or args.branch:
         if not (args.live and args.branch):
