@@ -901,8 +901,8 @@ static void tile_belt_thin_slots(ExtrusionEntityCollection *walls, ExtrusionEnti
                 shared.emplace(key, plan);
             } else {
                 have->second.width = 0.5 * (have->second.width + plan.width);
-                have->second.out.x() = coord_t((long long(have->second.out.x()) + long long(plan.out.x())) / 2);
-                have->second.out.y() = coord_t((long long(have->second.out.y()) + long long(plan.out.y())) / 2);
+                have->second.out.x() = coord_t((static_cast<int64_t>(have->second.out.x()) + static_cast<int64_t>(plan.out.x())) / 2);
+                have->second.out.y() = coord_t((static_cast<int64_t>(have->second.out.y()) + static_cast<int64_t>(plan.out.y())) / 2);
             }
         }
     }
