@@ -105,6 +105,6 @@ Live ORCA binary before replace: `1bc7e1ba0504dab6d61b7623b741a04c4d6158be1cb8e3
 
 ## Handoff
 
-- **Results branch:** `cursor/pr38-gate-results-1120` (c7a4a368e2d4a30ed279ab54a39a8bfef0964e0c).
+- **Results branch:** `cursor/pr38-gate-results-1120` @ `58d243e346bdb3a5fa248210d3786ae2f36820a2` (see latest tip if RESULTS.md was amended after logs commit).
 - **504 root cause:** Internal `SLICE_GATEWAY_TIMEOUT_S=260` on live image; CI first live orthocad `apex_core` slice exceeded budget.
 - **Residuals:** (1) Inside-only gate suite **FAIL** on orthocad pairs and part of insole2 apex_core—see matrix. (2) Candidate built FROM live + binary/g2b replacements, not a full `Dockerfile.server` rebuild (CI used full build; residual risk if other layers drift). (3) Local slices used 880s gateway timeout; CI at 260s may still 504 on slow runners for heavy live orthocad core slices.
