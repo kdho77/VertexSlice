@@ -179,19 +179,22 @@ jobs:
           if not path.is_file() or not summary:
               raise SystemExit(0)
           report = json.loads(path.read_text())
-          lines = ["### Toe skin air", ""]
+          lines = ["### Toe skin physical gate", ""]
           for row in report["materials"]:
-              bands = row["bands"]
+              audit = row.get("audit", {})
               lines.append(
-                  f"- **{row['material']}** 0-15% {bands['0-15']['air_mm3']} mm3, "
-                  f"15-30% {bands['15-30']['air_mm3']} mm3, "
-                  f"filled_runs={row['filled_runs']} widened={row['widened']}, "
-                  f"md5 {row['md5_unbonded']} -> {row['md5_bonded']}, "
-                  f"diff +{row['diff']['lines_added']}/-{row['diff']['lines_removed']}, "
-                  f"{row['time']}, {row['filament_g']}, slice {row['slice_s']}s"
+                  f"- **{row['material']}** widened={row['widened']} "
+                  f"md5 {row['md5_unbonded']} -> {row['md5_bonded']} "
+                  f"diff +{row['diff']['lines_added']}/-{row['diff']['lines_removed']} "
+                  f"{row.get('filament_g','')} {row.get('total_filament_g','')} "
+                  f"slice {row['slice_s']}s"
               )
-              if row["reasons"]:
-                  lines.append(f"  - fail: {', '.join(row['reasons'])}")
+              for name, limit in audit.get("limits", {}).items():
+                  mark = "pass" if limit["ok"] else "FAIL"
+                  lines.append(f"  - {mark} {name}: {limit['detail']}")
+              added = audit.get("added_segments", {})
+              if added:
+                  lines.append(f"  - added segments {added}")
           lines.append("")
           with open(summary, "a", encoding="utf-8") as handle:
               handle.write("\n".join(lines) + "\n")

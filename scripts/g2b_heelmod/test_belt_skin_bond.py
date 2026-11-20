@@ -13,6 +13,7 @@ sys.path[:0] = [str(HERE), str(REPO / "validation")]
 
 from belt_skin_bond import bond_apex_light, bond_gcode, measure_toe_air  # noqa: E402
 from belt_skin_gate import score_gcode  # noqa: E402
+from belt_skin_physical import audit_texts  # noqa: E402
 
 
 def _pocket(filament_id: str = "ApexCore") -> str:
@@ -81,6 +82,19 @@ class BeltSkinBondTest(unittest.TestCase):
                 self.assertIn(line, out.splitlines())
         again = bond_gcode(out, material="apex_core")
         self.assertEqual(again, out)
+
+    def test_hairline_fill_fails_the_physical_gate(self) -> None:
+        # The shape this bond emitted before the printable-width limit: a
+        # 0.10 mm strip at 750 mm/s that starts on an outer-wall vertex.
+        live = _pocket()
+        hair = live.replace(
+            "G1 X20 Y1.706 E3.000",
+            "G1 X20 Y1.706 E3.000\nG1 X0.000 Y0.853 E0.01000 F45000\nG1 X20.000 Y0.853 E0.20000 F45000",
+        )
+        audit = audit_texts(live, hair)
+        for name in ("1_width", "2_feed", "3_outer_wall", "4_air", "5_time_filament"):
+            self.assertFalse(audit["limits"][name]["ok"], name)
+        self.assertFalse(audit["ok"])
 
     def test_thick_body_is_not_filled(self) -> None:
         lines = _pocket().splitlines()

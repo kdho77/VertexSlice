@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Slice SAMPLE_Top through the production chains and fail on leftover toe air.
+"""Slice SAMPLE_Top through the production chains and apply the physical gate.
 
 The unbonded slice is the e42391c7 geometry: this change does not touch the
 slicer binary. BELT_SKIN_BOND=0 keeps the chain from bonding, then this script
-applies the same bond the chain hooks call. The job fails when either toe band
-still has air, when the bonded G-code matches the unbonded file once timestamp
-lines are stripped, or when the fill counter stays at zero.
+applies the same bond the chain hooks call. The job fails when any limit in
+validation/belt_skin_physical.py fails. Widths come from the extrusion, not
+from the planned ;WIDTH.
 """
 from __future__ import annotations
 
@@ -19,7 +19,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(REPO), str(REPO / "scripts" / "g2b_heelmod"), str(REPO / "validation")]
 
-from belt_skin_bond import bond_gcode, gcode_md5, measure_toe_air  # noqa: E402
+from belt_skin_bond import bond_gcode, gcode_md5  # noqa: E402
+from belt_skin_physical import audit_texts  # noqa: E402
 from server.profile_registry import get_profile  # noqa: E402
 from server.slice_engine import slice_stl  # noqa: E402
 
@@ -74,26 +75,17 @@ def _one(material: str, work: Path) -> dict:
     )
     raw = path.read_text(errors="replace")
     bonded = bond_gcode(raw, material=material)
-    air = measure_toe_air(bonded)
+    audit = audit_texts(raw, bonded)
     filled, widened = _counter(bonded)
     raw_md5 = gcode_md5(raw)
     out_md5 = gcode_md5(bonded)
-    bands = air["bands"]
-    reasons = []
-    for name, info in bands.items():
-        if info["air_mm3"] > 0:
-            reasons.append(f"{name} air {info['air_mm3']} mm3")
-    if out_md5 == raw_md5:
-        reasons.append("gcode identical to unbonded e42391c7 output")
-    if filled + widened <= 0:
-        reasons.append("fill counter is 0")
+    reasons = [name for name, row in audit["limits"].items() if not row["ok"]]
     elapsed = float(stats.get("elapsed_s", 0.0))
     if material == "apex_light" and elapsed >= 260.0:
         reasons.append(f"slice {elapsed:.1f}s")
     return {
         "material": material,
         "slice_s": round(elapsed, 1),
-        "bands": bands,
         "filled_runs": filled,
         "widened": widened,
         "md5_unbonded": raw_md5,
@@ -101,6 +93,8 @@ def _one(material: str, work: Path) -> dict:
         "diff": _diff_stat(raw, bonded),
         "time": _footer(bonded, "; estimated printing time"),
         "filament_g": _footer(bonded, "; filament used [g]"),
+        "total_filament_g": _footer(bonded, "; total filament used [g]"),
+        "audit": audit,
         "ok": not reasons,
         "reasons": reasons,
     }
