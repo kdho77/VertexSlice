@@ -162,6 +162,62 @@ jobs:
           fi
           exit "$status"
 
+      # >>> INSIDE-ONLY GATES (FROZEN: paste unchanged immediately after the Golden chain gate step and before validation_unit:; the PM verifies this text byte for byte) >>>
+      - name: Inside-only gates 1/4 - repo guard (file allow-list, MUST-MATCH shas, additive workflow)
+        run: |
+          set -euo pipefail
+          HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+          git fetch --no-tags --depth=1 origin b7e90bd1eb5b92d83e57ccf8213b680588d5c37f "$HEAD_SHA"
+          echo "73c139ccf65261d79cd7f28945ba7da8485bc352ece4aefed403bb2a30336dc0  validation/repo_guard.sh" | sha256sum -c -
+          bash validation/repo_guard.sh b7e90bd1eb5b92d83e57ccf8213b680588d5c37f "$HEAD_SHA"
+
+      - name: Inside-only gates 2/4 - slice LIVE image and candidate image through POST /v1/slice
+        run: |
+          set -euo pipefail
+          mkdir -p gate_out
+          echo "1bfbf6c612863d3514c9c80932a947a4e895a9cd4bd52138b379cded5f9bed4d  validation/run_inside_only_gates.sh" | sha256sum -c -
+          docker pull "ghcr.io/kdho77/vertexslice-server@sha256:dd5127f59f5acc9674ae0bc5e48705432481db5d61f23cb8c90b4e0c0cbf1fa4"
+          docker rm -f vs_live vs_cand 2>/dev/null || true
+          docker run -d --name vs_live -p 18081:8080 "ghcr.io/kdho77/vertexslice-server@sha256:dd5127f59f5acc9674ae0bc5e48705432481db5d61f23cb8c90b4e0c0cbf1fa4"
+          docker run -d --name vs_cand -p 18082:8080 vertexslice-server:proof
+          for port in 18081 18082; do
+            ok=0
+            for i in $(seq 1 90); do
+              if curl -fsS "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then ok=1; break; fi
+              sleep 2
+            done
+            [ "$ok" = 1 ] || { echo "server on ${port} did not become healthy"; exit 1; }
+          done
+          for who in live:18081 cand:18082; do
+            for mat in apex_core apex_light; do
+              for stl in orthocad:orthocad_sample_top_insole insole2:insole_sample; do
+                curl -sS -f -m 900 -D "gate_out/${who%%:*}_${mat}_${stl%%:*}.hdr" -o "gate_out/${who%%:*}_${mat}_${stl%%:*}.gcode" \
+                  -F profile_id=apex-v2-insole-95a -F "model=@validation/test_models/${stl##*:}.stl" \
+                  -F wall_loops=1 -F infill_density=26 -F print_direction=toe_first -F belt_insole_place=true -F "material=${mat}" \
+                  "http://127.0.0.1:${who##*:}/v1/slice"
+              done
+            done
+          done
+          docker rm -f vs_live vs_cand
+
+      - name: Inside-only gates 3/4 - run every frozen gate on every live/candidate pair
+        run: |
+          set -euo pipefail
+          python3 -m venv .gatevenv
+          . .gatevenv/bin/activate
+          python -m pip install -q numpy shapely
+          bash validation/run_inside_only_gates.sh gate_out
+
+      - name: Inside-only gates 4/4 - upload slices and gate results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: inside-only-gates-${{ github.sha }}
+          path: gate_out
+          if-no-files-found: error
+          retention-days: 14
+      # <<< INSIDE-ONLY GATES (FROZEN) <<<
+
   validation_unit:
     name: Validation scripts (no binary)
     runs-on: ubuntu-latest
