@@ -219,7 +219,7 @@ static const char *belt_role_name(ExtrusionRole role)
 // written. The air gate measures that E, so the slot has to be planned in the
 // width the gate will see, and mm3 has to be raised so the gate still sees
 // the share after those ratios.
-static double belt_flow_ratio(const PrintConfig *cfg, ExtrusionRole role)
+static double belt_flow_ratio(const PrintRegionConfig *cfg, ExtrusionRole role)
 {
     if (cfg == nullptr)
         return 1.0;
@@ -448,7 +448,7 @@ static ExtrusionPaths belt_paths_from_seq(const ExtrusionPath &original, const s
 
 static ExtrusionPaths belt_retile_one(const ExtrusionPath &path, const std::vector<BeltSlotSample> *samples,
                                       const std::map<std::pair<coord_t, coord_t>, BeltPointPlan> &shared,
-                                      const PrintConfig *cfg)
+                                      const PrintRegionConfig *cfg)
 {
     if (samples == nullptr || samples->empty() || path.polyline.points.size() < 2)
         return {path};
@@ -632,7 +632,7 @@ static ExtrusionPaths belt_retile_one(const ExtrusionPath &path, const std::vect
 static void belt_retile_tree(ExtrusionEntity *entity,
                              const std::unordered_map<ExtrusionPath *, std::vector<BeltSlotSample>> &samples,
                              const std::map<std::pair<coord_t, coord_t>, BeltPointPlan> &shared,
-                             const PrintConfig *cfg)
+                             const PrintRegionConfig *cfg)
 {
     if (entity == nullptr)
         return;
@@ -700,7 +700,7 @@ static void belt_retile_tree(ExtrusionEntity *entity,
 }
 
 static void tile_belt_thin_slots(ExtrusionEntityCollection *walls, ExtrusionEntityCollection &gaps, int layer_id,
-                                 const PrintConfig *cfg)
+                                 const PrintRegionConfig *cfg)
 {
     std::vector<ExtrusionPath *> paths;
     if (walls != nullptr)
@@ -2546,7 +2546,7 @@ void PerimeterGenerator::process_classic()
         // becomes G-code. The infill clip above still uses the pre-fit gap.
         if (this->print_config != nullptr &&
             this->print_config->printer_structure.value == PrinterStructure::psBelt)
-            tile_belt_thin_slots(island_walls, gap_fill, this->layer_id, this->print_config);
+            tile_belt_thin_slots(island_walls, gap_fill, this->layer_id, this->config);
         if (! gap_fill.empty())
             this->gap_fill->append(std::move(gap_fill.entities));
 
@@ -3412,7 +3412,7 @@ void PerimeterGenerator::process_arachne()
             if (this->print_config != nullptr &&
                 this->print_config->printer_structure.value == PrinterStructure::psBelt) {
                 ExtrusionEntityCollection no_gaps;
-                tile_belt_thin_slots(&extrusion_coll, no_gaps, this->layer_id, this->print_config);
+                tile_belt_thin_slots(&extrusion_coll, no_gaps, this->layer_id, this->config);
             }
             this->loops->append(extrusion_coll);
         }
