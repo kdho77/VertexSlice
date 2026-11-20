@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-"""G2b post-process: shear E fix, off-belt seam, min-layer-time, coupon cut.
+"""G2b post-process: shear E fix, belt seam, min-layer-time, coupon cut.
 
 efix rescales every extruding XY move from the belt-shear length
 sqrt(dx^2+2*dy^2) back to the true XY length. It never changes F.
 
-Closed outer and overhang walls used to start on the belt (min-Y) to match
-the G2b toe file. That stacks the seam on the plantar face. They now start
-at the midpoint of the face away from the belt (max-Y). A flat loop with no
-point above the belt band still uses that toe-file belt start, so a leader
-tab with no dorsal face is unchanged. A loop whose ends miss by more than
-the 0.8 mm wipe margin but by at most two nozzles, and whose path is the
-loop rather than the opening, is the same kind of closed wall. Inner walls
-still restart on the belt contact at the outer seam's X. Coupon cut and
-min-layer-time do not use the seam point. The inside-wall travel still ends
+Closed outer and overhang walls start on the belt (min-Y), the plantar face.
+A flat loop with no point above the belt band uses that same belt start, so
+a leader tab is unchanged. A loop whose ends miss by more than the 0.8 mm
+wipe margin but by at most two nozzles, and whose path is the loop rather
+than the opening, is the same kind of closed wall: it is bridged, then
+started on the belt. Inner walls still restart on the belt contact at the
+outer seam's X. Coupon cut and min-layer-time do not use the seam point. The inside-wall travel still ends
 on whatever point the seam uses. A closed chain of only a few millimetres
 gets the wipe and no overlap: that overlap is a second copy of the wall,
 and the lift-and-direct hop was chosen before the copy existed. A near-closed
@@ -317,39 +315,19 @@ def _bridge_near_gap(segments: list[dict]) -> list[dict]:
     return [*segments, bridge]
 
 
-def _dorsal_split(segments: list[dict]) -> list[dict]:
-    """Rotate a closed loop so it starts off the plantar (belt) face.
+def _plantar_split(segments: list[dict]) -> list[dict]:
+    """Rotate a closed loop so it starts on the plantar (belt) face.
 
-    The start is the midpoint of the max-Y edge, the face away from the belt.
-    A crest shorter than 2 mm uses the dorsal-most vertex instead, and a tie
-    there prefers the lateral end. A flat loop with no point above the belt
-    band keeps the toe-file belt start: that is a leader tab with no dorsal face.
-    A near-closed loop is bridged first, so the rotate cannot emit a chord.
+    The start is the midpoint of the longest min-Y edge. A near-closed loop
+    is bridged first, so the rotate cannot emit a chord across the opening.
+    Open walls are not bridged.
     """
     if len(segments) < 3:
         return segments
-    if not _is_closed_loop(segments):
-        return segments
-    segments = _bridge_near_gap(segments)
-    pts = [(segments[0]["x0"], segments[0]["y0"])] + [(s["x1"], s["y1"]) for s in segments]
-    ymin = min(p[1] for p in pts)
-    ymax = max(p[1] for p in pts)
-    if ymax <= ymin + _EDGE_BAND:
+    if _is_closed_loop(segments):
+        segments = _bridge_near_gap(segments)
         return _belt_split(segments, CLOSED_GAP_MM)
-
-    def on_dorsal(s: dict) -> bool:
-        return s["y0"] >= ymax - _EDGE_BAND and s["y1"] >= ymax - _EDGE_BAND
-
-    run = _longest_edge_run(segments, on_dorsal)
-    if run is not None and run[2] >= _EDGE_MIN_LEN:
-        i, t = _run_midpoint(segments, run[0], run[1])
-        started = _start_on_segment(segments, i, t)
-        if started[0]["y0"] > ymin + _EDGE_BAND:
-            return started
-    started = _dorsal_vertex_start(segments, pts)
-    if started[0]["y0"] <= ymin + _EDGE_BAND:
-        return _belt_split(segments, CLOSED_GAP_MM)
-    return started
+    return _belt_split(segments)
 
 
 def _synth_move(x1: float, y1: float, ee: float, ff: str | None) -> str:
@@ -436,9 +414,9 @@ def _rotate_at(segs: list[dict], i: int, t: float) -> list[dict]:
 
 
 def _wall_chains(segs: list[dict], kind: str, anchor_x: float | None, anchor: bool) -> tuple[list[list[dict]], float | None]:
-    """Outer and overhang walls start off the belt. Other walls start at that seam's X.
+    """Outer and overhang walls start on the belt. Other walls start at that seam's X.
 
-    A closed outer loop starts at the midpoint of its max-Y edge. Inner walls,
+    A closed outer loop starts at the midpoint of its min-Y edge. Inner walls,
     when the G2b anchor is on, still restart on the belt contact at that X.
     An open wall that crosses the anchor in its middle is extruded as two runs,
     both beginning on the belt. That is the extra seam the G2b toe file inserts.
@@ -447,7 +425,7 @@ def _wall_chains(segs: list[dict], kind: str, anchor_x: float | None, anchor: bo
         return [segs], anchor_x
     if not anchor or kind in ("Outer wall", "Overhang wall"):
         if kind in ("Outer wall", "Overhang wall"):
-            segs = _dorsal_split(segs)
+            segs = _plantar_split(segs)
         else:
             segs = _belt_split(segs)
         new_anchor = segs[0]["x0"] if kind in ("Outer wall", "Overhang wall") else anchor_x
@@ -1282,14 +1260,12 @@ def _gap_nozzle(gap: list[str], x: float | None, y: float | None) -> tuple[float
 def _render_reseat(run: dict) -> tuple[list[str], float, float] | None:
     """New lines for one outer run, or None when the run should be left alone.
 
-    The lift-and-direct block is not moved. Sliding it from the belt seam to
-    the dorsal seam is a short Y hop along the zipper, and both ends of that
-    hop sit outside the 0.3 mm seam window. The nozzle instead walks the
-    perimeter, extrudes from the dorsal start, and walks back to the point
-    the following travels were written from.
+    The lift-and-direct block is not moved. The nozzle walks the perimeter,
+    extrudes from the belt start, and walks back to the point the following
+    travels were written from.
     """
     segs = run["segs"]
-    rotated = _dorsal_split(segs)
+    rotated = _plantar_split(segs)
     hit = _overlap_line(rotated)
     old_start = (segs[0]["x0"], segs[0]["y0"])
     old_end = (segs[-1]["x1"], segs[-1]["y1"])
