@@ -144,10 +144,18 @@ jobs:
       - name: Slice orthocad and gate thin-section air
         run: |
           set -euo pipefail
+          mkdir -p belt-air-gcode
           docker rm -f vs-slice >/dev/null 2>&1 || true
           docker run -d --name vs-slice -p 8080:8080 \
             -e VERTEXSLICE_API_KEY=ci-proof \
             vertexslice-server:proof
+          # The air gate aborts this step. Keep the slicer stderr (belt_slot_*)
+          # in the artifact either way.
+          cleanup_slice() {
+            docker logs vs-slice > belt-air-gcode/server.log 2>&1 || true
+            docker rm -f vs-slice >/dev/null 2>&1 || true
+          }
+          trap cleanup_slice EXIT
           ready=0
           for _ in $(seq 1 60); do
             if curl -sf http://127.0.0.1:8080/health >/dev/null; then
@@ -157,7 +165,6 @@ jobs:
             sleep 2
           done
           test "$ready" = 1
-          mkdir -p belt-air-gcode
           model="validation/test_models/orthocad_sample_top_insole.stl"
           test -f "$model"
           for mat in apex_core apex_light; do
@@ -180,8 +187,6 @@ jobs:
             python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); t=r["totals"]; print(sys.argv[1], "perimeter", t["perimeter_crossings"], "outer", t["outer_only_crossings"], "reduce_crossing_wall", r["reduce_crossing_wall"]); assert t["perimeter_crossings"]==0 and t["outer_only_crossings"]==0, t; assert str(r["reduce_crossing_wall"])=="1"' \
               "belt-air-gcode/${mat}-crossings.json"
           done
-          docker logs vs-slice > belt-air-gcode/server.log 2>&1 || true
-          docker rm -f vs-slice >/dev/null
 
       - name: Upload thin-section G-code
         uses: actions/upload-artifact@v5
