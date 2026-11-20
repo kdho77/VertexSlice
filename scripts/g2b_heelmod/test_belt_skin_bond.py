@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The toe slot with no internal bead gets two strips, and nothing else moves."""
+"""Inner gap beads grow to a printable width. An empty outer-only slot does not."""
 from __future__ import annotations
 
 import os
@@ -43,6 +43,30 @@ def _pocket(filament_id: str = "ApexCore") -> str:
     )
 
 
+def _pocket_with_gap_bead() -> str:
+    # E matches width 0.30 over 20 mm at layer height 0.46 and a 1.75 mm filament.
+    # The bead sits in the 0.666 mm slot between the two outer walls.
+    lines = _pocket().splitlines()
+    bead = [
+        "; layer_height = 0.46",
+        "; gap_infill_speed = 26",
+        "; internal_solid_infill_speed = 26",
+        "; machine_max_speed_x = 500",
+        "; machine_max_speed_y = 500",
+        ";TYPE:Gap infill",
+        ";WIDTH:0.300",
+        "G1 X0 Y0.853 F3000",
+        "G1 X20 Y0.853 E1.14761",
+    ]
+    # Insert the profile speeds and the bead before the time footer.
+    out = []
+    for line in lines:
+        if line.startswith("; estimated printing time"):
+            out.extend(bead)
+        out.append(line)
+    return "\n".join(out) + "\n"
+
+
 def _subsequence(original: list[str], updated: list[str], skip: set[str]) -> bool:
     index = 0
     for line in updated:
@@ -56,36 +80,29 @@ def _subsequence(original: list[str], updated: list[str], skip: set[str]) -> boo
 
 
 class BeltSkinBondTest(unittest.TestCase):
-    def test_empty_slot_is_filled_and_original_lines_stay(self) -> None:
+    def test_outer_only_slot_is_not_sprayed(self) -> None:
+        # Two outer walls and no inner bead. A hairline strip would start on
+        # the outer wall and be under 0.45 mm. Leave the file unchanged.
         src = _pocket()
-        before = measure_toe_air(src)
-        self.assertGreater(before["bands"]["0-15"]["air_mm3"], 0.0)
+        self.assertEqual(bond_gcode(src, material="apex_core"), src)
+
+    def test_inner_bead_grows_and_outer_wall_stays(self) -> None:
+        src = _pocket_with_gap_bead()
         out = bond_gcode(src, material="apex_core")
-        after = measure_toe_air(out)
-        self.assertEqual(after["bands"]["0-15"]["air_mm3"], 0.0)
-        self.assertEqual(after["bands"]["15-30"]["air_mm3"], 0.0)
-        self.assertIn("belt_skin_bond filled_runs=", out)
-        counter = [line for line in out.splitlines() if line.startswith("; belt_skin_bond filled_runs=")]
-        self.assertTrue(counter)
-        filled = int(counter[0].split("filled_runs=")[1].split()[0])
-        widened = int(counter[0].split("widened=")[1])
-        self.assertGreater(filled + widened, 0)
-        # No new bead over the cap. Path points of the original moves stay.
-        self.assertEqual(score_gcode_text(out)["beads_over_1_6"], 0)
-        live = score_gcode_text(src)
-        branch = score_gcode_text(out)
-        self.assertLessEqual(branch["travel_mm"], live["travel_mm"] + 0.05)
+        self.assertIn("widened=", out)
+        widened = int(out.split("widened=")[1].split()[0])
+        self.assertGreater(widened, 0)
         for line in src.splitlines():
-            if line.startswith("G1") and "E" not in line.split(";", 1)[0]:
+            if "Y0 " in line or "Y1.706" in line:
                 self.assertIn(line, out.splitlines())
-            if line.startswith(";TYPE:"):
-                self.assertIn(line, out.splitlines())
-        again = bond_gcode(out, material="apex_core")
-        self.assertEqual(again, out)
+        audit = audit_texts(src, out)
+        self.assertTrue(audit["limits"]["1_width"]["ok"], audit["limits"]["1_width"])
+        self.assertTrue(audit["limits"]["2_feed"]["ok"], audit["limits"]["2_feed"])
+        self.assertTrue(audit["limits"]["3_outer_wall"]["ok"], audit["limits"]["3_outer_wall"])
+        self.assertLess(measure_toe_air(out)["bands"]["0-15"]["air_mm3"], measure_toe_air(src)["bands"]["0-15"]["air_mm3"])
 
     def test_hairline_fill_fails_the_physical_gate(self) -> None:
-        # The shape this bond emitted before the printable-width limit: a
-        # 0.10 mm strip at 750 mm/s that starts on an outer-wall vertex.
+        # The shape PR #36 emitted: a 0.10 mm strip at 750 mm/s off an outer vertex.
         live = _pocket()
         hair = live.replace(
             "G1 X20 Y1.706 E3.000",
@@ -125,11 +142,11 @@ class BeltSkinBondTest(unittest.TestCase):
 
     def test_apex_light_hook_fills_and_forge_does_not(self) -> None:
         light = _pocket("ApexLight")
-        out = bond_apex_light(light)
-        self.assertIn("filled_runs=", out)
-        self.assertEqual(measure_toe_air(out)["bands"]["0-15"]["air_mm3"], 0.0)
-        # Existing width comments are not rewritten.
-        self.assertIn(";WIDTH:1.040", out)
+        # No inner bead, so ApexLight is not given an unprintable strip.
+        self.assertEqual(bond_apex_light(light), light)
+        grown = bond_apex_light(_pocket_with_gap_bead().replace("ApexCore", "ApexLight"))
+        self.assertIn("widened=", grown)
+        self.assertIn(";WIDTH:1.040", grown)
         forge = _pocket("ApexForge")
         self.assertEqual(bond_apex_light(forge), forge)
         bounce = _pocket("ApexBounce")
@@ -140,18 +157,17 @@ class BeltSkinBondTest(unittest.TestCase):
         from postprocess_g2b import clear_perimeter_crossings
         import topfix_apexcore
 
-        light = _pocket("ApexLight")
+        light = _pocket_with_gap_bead().replace("ApexCore", "ApexLight")
         bonded = clear_perimeter_crossings(light)
-        self.assertIn("; belt_skin_bond filled_runs=", bonded)
-        filled = int(bonded.split("filled_runs=")[1].split()[0])
-        self.assertGreater(filled, 0)
+        self.assertIn("widened=", bonded)
+        self.assertGreater(int(bonded.split("widened=")[1].split()[0]), 0)
         forge = _pocket("ApexForge")
         self.assertNotIn("; belt_skin_bond", clear_perimeter_crossings(forge))
         work = Path("/tmp/belt-skin-bond-topfix")
         work.mkdir(exist_ok=True)
         src = work / "in.gcode"
         dest = work / "out.gcode"
-        src.write_text(_pocket("ApexCore"))
+        src.write_text(_pocket_with_gap_bead())
         old = sys.argv
         sys.argv = ["topfix_apexcore.py", str(src), str(dest)]
         try:
@@ -159,8 +175,8 @@ class BeltSkinBondTest(unittest.TestCase):
         finally:
             sys.argv = old
         written = dest.read_text()
-        self.assertIn("; belt_skin_bond filled_runs=", written)
-        self.assertGreater(int(written.split("filled_runs=")[1].split()[0]), 0)
+        self.assertIn("widened=", written)
+        self.assertGreater(int(written.split("widened=")[1].split()[0]), 0)
 
     def test_disabled_env_keeps_apex_light(self) -> None:
         os.environ["BELT_SKIN_BOND"] = "0"

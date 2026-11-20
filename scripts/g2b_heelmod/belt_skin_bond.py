@@ -19,6 +19,7 @@ import os
 import re
 import statistics
 import sys
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -35,8 +36,10 @@ TOUCH_MM = 0.02
 MAX_THICK_MM = 5.0
 # Wider than this, the two strips would pass 1.6 mm, or the void is infill.
 MAX_SLOT_MM = 3.1
-# The strips tile the slot. A 0.02 mm overlap was extra plastic the filament
-# cap does not have; the raster already treats 0.02 mm as touching.
+# A bead narrower than this cannot be printed from a 1 mm nozzle. The old
+# two-strip fill went down to 0.05 mm and the machine cannot lay it down.
+MIN_WIDTH_MM = 0.45
+MIN_LEN = 0.1
 OVERLAP_MM = 0.0
 TOE_END = 0.30
 BAND_SPLIT = 0.15
@@ -269,9 +272,10 @@ def _parse(text: str) -> tuple[list[str], list[Layer], float]:
 def _band(z: float, z0: float, z1: float) -> str | None:
     span = z1 - z0
     frac = 0.0 if span <= 1e-6 else (z - z0) / span
-    if frac < -1e-9 or frac >= TOE_END:
+    # Inclusive of the layer that lands on the 30% boundary (SAMPLE_Top layer 130).
+    if frac < -1e-9 or frac > TOE_END + 1e-4:
         return None
-    if frac < BAND_SPLIT:
+    if frac <= BAND_SPLIT:
         return "0-15"
     return "15-30"
 
@@ -585,6 +589,12 @@ def _apply_footer(text: str, added_mm: float, added_s: float) -> str:
             return f"; filament used [g] = {old_g * (new_mm / old_mm):.2f}"
 
         text = _FIL_G.sub(_g_sub, text, count=1)
+
+        def _scale(match: re.Match[str]) -> str:
+            return f"{match.group(1)}{float(match.group(2)) * (new_mm / old_mm):.2f}"
+
+        text = re.sub(r"(; filament used \[cm3\] = )([0-9.]+)", _scale, text, count=1)
+        text = re.sub(r"(; total filament used \[g\] = )([0-9.]+)", _scale, text)
     return text
 
 
@@ -713,10 +723,174 @@ def _rewrite_extrusion(line: str, scale: float, feed: float | None) -> str:
     return _WORD.sub(_sub, body) + sep + comment
 
 
+def _layer_height(text: str) -> float:
+    match = re.search(r"^;\s*layer_height\s*=\s*([0-9.]+)", text, re.M)
+    return float(match.group(1)) if match else 0.46
+
+
+def _feed_cap_mm_min(text: str) -> float:
+    """Slowest of gap infill, solid infill, and the machine max, in mm/min."""
+
+    def read(key: str, default: float) -> float:
+        match = re.search(rf"^;\s*{key}\s*=\s*([0-9.]+)", text, re.M)
+        return float(match.group(1)) if match else default
+
+    mm_s = min(read("gap_infill_speed", 26.0), read("internal_solid_infill_speed", 26.0))
+    machine = min(read("machine_max_speed_x", 500.0), read("machine_max_speed_y", 500.0))
+    return min(mm_s, machine) * 60.0
+
+
+def _e_width(seg: Seg, area: float, lh: float) -> float:
+    dist = math.hypot(seg.x1 - seg.x0, seg.y1 - seg.y0)
+    if dist <= 1e-6 or lh <= 0.0 or area <= 0.0:
+        return seg.width
+    return seg.e * area / (dist * lh)
+
+
+def _filament_budget_mm(text: str) -> float:
+    """Millimetres of filament still inside +3% of the published live grams."""
+    published = None
+    match = re.search(r'filament_settings_id\s*=\s*"?([^"\n]+)', text)
+    if match:
+        name = match.group(1)
+        if "ApexCore" in name and "Forge" not in name:
+            published = 84.05
+        elif "ApexLight" in name and "Forge" not in name and "Bounce" not in name:
+            published = 75.70
+    mm = _FIL_MM.search(text)
+    grams = _FIL_G.search(text)
+    if published is None or mm is None or grams is None:
+        return 1.0e9
+    footer_mm = float(mm.group(1))
+    footer_g = float(grams.group(1))
+    if footer_g <= 1e-6:
+        return 0.0
+    room_g = published * 1.03 - footer_g
+    if room_g <= 0.0:
+        return 0.0
+    return room_g * footer_mm / footer_g
+
+
+def _widen_plan(
+    layers: list[Layer],
+    z0: float,
+    z1: float,
+    area: float,
+    lh: float,
+    feed_cap: float,
+    budget_mm: float,
+) -> dict[int, tuple[float, float, float | None]]:
+    """Grow an existing non-outer bead until it meets the nearer skin.
+
+    The centreline stays put, so the outer wall path and the seams do not move.
+    Nothing is emitted under 0.45 mm or over the profile feed cap. A slot that
+    cannot take a legal bead is left alone.
+    """
+    candidates: list[tuple[float, float, int, tuple[float, float, float | None]]] = []
+    for layer in layers:
+        if _band(layer.z, z0, z1) is None:
+            continue
+        widths = {id(seg): _e_width(seg, area, lh) for seg in layer.segs}
+        bins: dict[int, list[Seg]] = defaultdict(list)
+        for seg in layer.segs:
+            lo = int(math.floor(min(seg.x0, seg.x1)))
+            hi = int(math.floor(max(seg.x0, seg.x1)))
+            for key in range(lo, hi + 1):
+                bins[key].append(seg)
+        for seg in layer.segs:
+            if _outer_role(seg.role):
+                continue
+            dist = math.hypot(seg.x1 - seg.x0, seg.y1 - seg.y0)
+            if dist < MIN_LEN or abs(seg.y1 - seg.y0) > abs(seg.x1 - seg.x0):
+                continue
+            own = widths[id(seg)]
+            if own <= 0.05 or own > CAP:
+                continue
+            steps = max(1, int(dist / 0.2))
+            min_gap = None
+            thin = False
+            for step in range(steps + 1):
+                t = step / steps
+                x = seg.x0 + t * (seg.x1 - seg.x0)
+                y = seg.y0 + t * (seg.y1 - seg.y0)
+                intervals = []
+                for other in bins.get(int(math.floor(x)), ()):
+                    span = other.x1 - other.x0
+                    if abs(span) < 1e-9:
+                        continue
+                    tt = (x - other.x0) / span
+                    if tt < 0.0 or tt > 1.0:
+                        continue
+                    yy = other.y0 + tt * (other.y1 - other.y0)
+                    half = widths[id(other)] / 2.0
+                    intervals.append((yy - half, yy + half, other is seg))
+                intervals.sort()
+                me = next((i for i, row in enumerate(intervals) if row[2]), None)
+                if me is None:
+                    continue
+                if intervals[-1][1] - intervals[0][0] > MAX_THICK_MM:
+                    continue
+                thin = True
+                lo, hi, _me = intervals[me]
+                for side in (me - 1, me + 1):
+                    if side < 0 or side >= len(intervals):
+                        continue
+                    gap = (lo - intervals[side][1]) if side < me else (intervals[side][0] - hi)
+                    if TOUCH_MM < gap <= MAX_SLOT_MM and (min_gap is None or gap < min_gap):
+                        min_gap = gap
+            if not thin or min_gap is None:
+                continue
+            grown = min(CAP, own + 2.0 * min_gap)
+            if grown < MIN_WIDTH_MM:
+                if (MIN_WIDTH_MM - own) / 2.0 <= min_gap + 1e-6:
+                    grown = MIN_WIDTH_MM
+                else:
+                    continue
+            if grown <= own + 0.01:
+                continue
+            new_e = grown * dist * lh / area
+            new_feed = None
+            if seg.feed > feed_cap + 1.0:
+                new_feed = feed_cap
+            candidates.append((new_e - seg.e, seg.line_index, own, new_e, grown, new_feed))
+    # Every bead grows by the same fraction when the full close would pass the
+    # filament cap. Dropping whole beads leaves the columns they covered open.
+    total = sum(added for added, *_rest in candidates if added > 0.0)
+    factor = 1.0 if total <= budget_mm or total <= 0.0 else budget_mm / total
+    planned: dict[int, tuple[float, float, float | None]] = {}
+    for added, line_index, own, new_e, grown, new_feed in candidates:
+        if added <= 0.0 or grown <= 0.0:
+            continue
+        own_e = own * new_e / grown
+        width = own + factor * (grown - own)
+        if width < MIN_WIDTH_MM or width <= own + 0.01:
+            continue
+        planned[line_index] = (own_e + factor * (new_e - own_e), width, new_feed)
+    return planned
+
+
+def _rewrite_absolute(line: str, new_e: float, new_feed: float | None) -> str:
+    body, sep, comment = line.partition(";")
+
+    def _sub(match: re.Match[str]) -> str:
+        letter = match.group(1).upper()
+        if letter == "E":
+            return "E" + _fmt(new_e, 5)
+        if letter == "F" and new_feed is not None:
+            return "F" + _fmt(new_feed, 0)
+        return match.group(0)
+
+    rewritten = _WORD.sub(_sub, body)
+    if new_feed is not None and not re.search(r"F\s*-?(?:\d+\.?\d*|\.\d+)", body, re.I):
+        rewritten = rewritten.rstrip() + f" F{_fmt(new_feed, 0)}"
+    return rewritten + sep + comment
+
+
 def bond_gcode(text: str, material: str = "apex_core") -> str:
-    """Close toe skin slots. Existing beads grow in place up to 1.6 mm; a
-    two-strip fill takes whatever that cannot reach. No runs and no widened
-    beads -> the same string.
+    """Widen existing inner beads so they meet the skins.
+
+    Hairline strips are not emitted. They are under 0.45 mm, faster than the
+    machine, and they break the outer wall. No bead widened -> the same string.
     """
     if "; belt_skin_bond filled_runs=" in text:
         print(f"belt_skin_bond material={material} filled_runs=0 widened=0 already_bonded=1", flush=True)
@@ -724,82 +898,33 @@ def bond_gcode(text: str, material: str = "apex_core") -> str:
     if not _relative_e(text):
         print(f"belt_skin_bond material={material} filled_runs=0 widened=0 relative_e=0", flush=True)
         return text
-    lines, layers, factor = _parse(text)
+    lines, layers, _factor = _parse(text)
     if not layers:
         print(f"belt_skin_bond material={material} filled_runs=0 widened=0 layers=0", flush=True)
         return text
     zs = [layer.z for layer in layers]
-    z0, z1 = min(zs), max(zs)
-    # In-place widening puts half the new plastic outside the slot and moves the
-    # outer surface. The fill stays inside the slot and keeps every existing
-    # centreline. Widening stays available for a bead that is not an outer wall
-    # once a slice shows that is the cheaper close.
-    widened_width = {} if material in ("apex_light", "apex_core") else _plan_widen(layers, z0, z1)
     area = math.pi * (_diameter(text) / 2.0) ** 2
-    widen_e = 0.0
-    widen_s = 0.0
-    seg_by_line: dict[int, Seg] = {}
-    widen_scale: dict[int, float] = {}
-    widen_feed: dict[int, float] = {}
-    for layer in layers:
-        for seg in layer.segs:
-            seg_by_line[seg.line_index] = seg
-            new_w = widened_width.get(seg.line_index)
-            if new_w is None:
-                continue
-            scale = new_w / seg.width
-            widen_scale[seg.line_index] = scale
-            widen_e += seg.e * (scale - 1.0)
-            length = math.hypot(seg.x1 - seg.x0, seg.y1 - seg.y0)
-            mm3_per_mm = (seg.e * scale / length) * area if length > 1e-6 else 0.0
-            if mm3_per_mm > 1e-9 and seg.feed > 0.0:
-                speed = seg.feed / 60.0
-                limit = VOLUMETRIC_MM3_S / mm3_per_mm
-                if speed > limit > 0.0:
-                    widen_s += length / limit - length / speed
-                    widen_feed[seg.line_index] = limit * 60.0
-            seg.width = new_w
-    runs: list[Run] = []
-    unanchored = 0
-    per_layer: dict[float, int] = {}
-    for index, layer in enumerate(layers):
-        band = _band(layer.z, z0, z1)
-        if band is None:
-            continue
-        found, missed = _runs_for_layer(index, layer, band)
-        unanchored += missed
-        runs.extend(found)
-        if found:
-            per_layer[layer.z] = per_layer.get(layer.z, 0) + len(found)
-    widened = len(widened_width)
-    if not runs and widened == 0:
-        detail = ""
-        if os.environ.get("BELT_SKIN_BOND_DEBUG") == "1":
-            detail = " " + _debug_gaps(layers, z0, z1)
+    lh = _layer_height(text)
+    feed_cap = _feed_cap_mm_min(text)
+    planned = _widen_plan(layers, min(zs), max(zs), area, lh, feed_cap, _filament_budget_mm(text))
+    if not planned:
         print(
-            f"belt_skin_bond material={material} filled_runs=0 widened=0 "
-            f"unanchored={unanchored} layers=0{detail}",
+            f"belt_skin_bond material={material} filled_runs=0 widened=0 unanchored=0 layers=0",
             flush=True,
         )
         return text
 
-    floor = _min_layer_time(text)
-    inserts: dict[int, list[str]] = {}
-    added_mm = widen_e
-    layer_added: dict[int, float] = {}
-    for run in runs:
-        block, e_mm, seconds = _render(run, factor, area)
-        if not block:
-            continue
-        inserts.setdefault(run.anchor.insert_after, []).extend(block)
-        added_mm += e_mm
-        layer_added[run.layer_index] = layer_added.get(run.layer_index, 0.0) + seconds
-
-    added_s = widen_s
-    for index, extra in layer_added.items():
-        old = layers[index].seconds
-        new = old + extra
-        added_s += max(floor, new) - max(floor, old)
+    seg_by_line = {seg.line_index: seg for layer in layers for seg in layer.segs}
+    added_mm = 0.0
+    added_s = 0.0
+    per_layer: dict[float, int] = {}
+    for line_index, (new_e, _width, new_feed) in planned.items():
+        seg = seg_by_line[line_index]
+        added_mm += new_e - seg.e
+        if new_feed is not None and seg.feed > 0.0:
+            dist = math.hypot(seg.x1 - seg.x0, seg.y1 - seg.y0)
+            added_s += dist / (new_feed / 60.0) - dist / (seg.feed / 60.0)
+        per_layer[seg.line_index] = per_layer.get(seg.line_index, 0) + 1
 
     out_lines: list[str] = []
     active_width: float | None = None
@@ -812,24 +937,16 @@ def bond_gcode(text: str, material: str = "apex_core") -> str:
                 pass
             out_lines.append(line)
             continue
-        seg = seg_by_line.get(index)
-        if seg is not None:
-            wanted = seg.width
-            if active_width is None or abs(active_width - wanted) > 0.0005:
-                out_lines.append(f";WIDTH:{_fmt(wanted, 4)}")
-                active_width = wanted
-            if index in widen_scale:
-                out_lines.append(_rewrite_extrusion(line, widen_scale[index], widen_feed.get(index)))
-            else:
-                out_lines.append(line)
-        else:
+        change = planned.get(index)
+        if change is None:
             out_lines.append(line)
-        extra = inserts.get(index)
-        if extra:
-            out_lines.extend(extra)
-            active_width = None
-    rendered = sum(1 for block_line in out_lines if block_line.startswith("; belt_skin_bond run "))
-    comment = f"; belt_skin_bond filled_runs={rendered} widened={widened}"
+            continue
+        _new_e, new_width, new_feed = change
+        if active_width is None or abs(active_width - new_width) > 0.0005:
+            out_lines.append(f";WIDTH:{_fmt(new_width, 4)}")
+            active_width = new_width
+        out_lines.append(_rewrite_absolute(line, _new_e, new_feed))
+    comment = f"; belt_skin_bond filled_runs=0 widened={len(planned)}"
     placed = False
     for index, line in enumerate(out_lines):
         if line.startswith("; estimated printing time"):
@@ -842,11 +959,9 @@ def bond_gcode(text: str, material: str = "apex_core") -> str:
     if text.endswith("\n"):
         joined += "\n"
     joined = _apply_footer(joined, added_mm, added_s)
-    layer_bits = ",".join(f"{z:.3f}:{n}" for z, n in sorted(per_layer.items()))
     print(
-        f"belt_skin_bond material={material} filled_runs={rendered} widened={widened} "
-        f"unanchored={unanchored} layers={len(per_layer)} added_mm={added_mm:.2f} "
-        f"added_s={added_s:.2f} per_layer={layer_bits}",
+        f"belt_skin_bond material={material} filled_runs=0 widened={len(planned)} "
+        f"unanchored=0 layers={len(per_layer)} added_mm={added_mm:.2f} added_s={added_s:.2f}",
         flush=True,
     )
     return joined
