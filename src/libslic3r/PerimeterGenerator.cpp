@@ -215,28 +215,57 @@ static const char *belt_role_name(ExtrusionRole role)
     return "other";
 }
 
-static double belt_emitted_width(const ExtrusionPath &path)
+// G-code multiplies mm3 by print_flow_ratio and the role ratio before E is
+// written. The air gate measures that E, so the slot has to be planned in the
+// width the gate will see, and mm3 has to be raised so the gate still sees
+// the share after those ratios.
+static double belt_flow_ratio(const PrintConfig *cfg, ExtrusionRole role)
+{
+    if (cfg == nullptr)
+        return 1.0;
+    double ratio = cfg->print_flow_ratio.value;
+    if (cfg->set_other_flow_ratios.value) {
+        double role_ratio = 1.0;
+        switch (role) {
+        case erExternalPerimeter: role_ratio = cfg->outer_wall_flow_ratio.value; break;
+        case erPerimeter:         role_ratio = cfg->inner_wall_flow_ratio.value; break;
+        case erOverhangPerimeter: role_ratio = cfg->overhang_flow_ratio.value; break;
+        case erGapFill:           role_ratio = cfg->gap_fill_flow_ratio.value; break;
+        default: break;
+        }
+        ratio *= role_ratio;
+    }
+    if (!(ratio > 0.2) || ratio > 3.0)
+        ratio = 1.0;
+    return ratio;
+}
+
+static double belt_measured_width(const ExtrusionPath &path, double ratio)
 {
     const double h = path.height > 1e-4f ? double(path.height) : 0.46;
     const double adj = h * (1.0 - 0.25 * PI);
-    if (path.mm3_per_mm > 0.0)
-        return path.mm3_per_mm / h + adj;
-    return std::max(0.0, double(path.width));
+    double mm3 = path.mm3_per_mm;
+    if (!(mm3 > 0.0))
+        mm3 = h * std::max(0.0, double(path.width) - adj);
+    return mm3 * ratio / h + adj;
 }
 
-static void belt_apply_width(ExtrusionPath &path, double width)
+static void belt_apply_width(ExtrusionPath &path, double width, double ratio)
 {
     const float h = path.height > 1e-4f ? path.height : 0.46f;
     const double adj = double(h) * (1.0 - 0.25 * PI);
-    if (width < adj + 0.05)
-        width = adj + 0.05;
     if (width < 0.45)
         width = 0.45;
     if (width > BELT_SKIN_MAX_WIDTH_MM)
         width = BELT_SKIN_MAX_WIDTH_MM;
-    const Flow flow(float(width), h, 0.4f);
-    path.mm3_per_mm = flow.mm3_per_mm();
-    path.width = flow.width();
+    if (!(ratio > 0.2))
+        ratio = 1.0;
+    // (mm3 * ratio) / h + adj == width, which is what belt_air_columns.py measures.
+    double mm3 = (width - adj) * double(h) / ratio;
+    if (mm3 < 1e-6)
+        mm3 = 1e-6;
+    path.mm3_per_mm = mm3;
+    path.width = float(width);
     path.height = h;
 }
 
@@ -363,7 +392,7 @@ static bool belt_plan_from_samples(const Points &pts, size_t index, const std::v
     return true;
 }
 
-static ExtrusionPaths belt_paths_from_seq(const ExtrusionPath &original, const std::vector<BeltSeqVtx> &seq)
+static ExtrusionPaths belt_paths_from_seq(const ExtrusionPath &original, const std::vector<BeltSeqVtx> &seq, double ratio)
 {
     ExtrusionPaths out;
     bool any_tiled = false;
@@ -406,7 +435,7 @@ static ExtrusionPaths belt_paths_from_seq(const ExtrusionPath &original, const s
                 path.mm3_per_mm = original.mm3_per_mm;
                 path.width = original.width;
             } else {
-                belt_apply_width(path, sum / double(count));
+                belt_apply_width(path, sum / double(count), ratio);
             }
             out.push_back(std::move(path));
         }
@@ -418,12 +447,14 @@ static ExtrusionPaths belt_paths_from_seq(const ExtrusionPath &original, const s
 }
 
 static ExtrusionPaths belt_retile_one(const ExtrusionPath &path, const std::vector<BeltSlotSample> *samples,
-                                      const std::map<std::pair<coord_t, coord_t>, BeltPointPlan> &shared)
+                                      const std::map<std::pair<coord_t, coord_t>, BeltPointPlan> &shared,
+                                      const PrintConfig *cfg)
 {
     if (samples == nullptr || samples->empty() || path.polyline.points.size() < 2)
         return {path};
     const double scale = BeltTransform::gantry_y_scale();
-    const double emitted = belt_emitted_width(path);
+    const double ratio = belt_flow_ratio(cfg, path.role());
+    const double emitted = belt_measured_width(path, ratio);
     const Points &pts = path.polyline.points;
 
     const auto endpoint_plan = [&](size_t index) {
@@ -510,7 +541,9 @@ static ExtrusionPaths belt_retile_one(const ExtrusionPath &path, const std::vect
                 // endpoint chord can pass near the target while this segment
                 // is still emitted at the original width, which leaves the air.
                 const double y_line = scale * (y0 + t * (y1 - y0));
-                if (std::abs(sample->y_tgt - y_line) <= 0.01 && std::abs(sample->share - emitted) <= 0.02)
+                // Skip only when the width the air gate measures is already the
+                // share. The pre-ratio flow can match the share while E is still short.
+                if (std::abs(sample->y_tgt - y_line) <= 0.008 && std::abs(sample->share - emitted) <= 0.008)
                     continue;
                 need.push_back(Cand{t, sample});
             }
@@ -593,12 +626,13 @@ static ExtrusionPaths belt_retile_one(const ExtrusionPath &path, const std::vect
         emit(end.out, end.width, end.tiled);
         cur = end;
     }
-    return belt_paths_from_seq(path, seq);
+    return belt_paths_from_seq(path, seq, ratio);
 }
 
 static void belt_retile_tree(ExtrusionEntity *entity,
                              const std::unordered_map<ExtrusionPath *, std::vector<BeltSlotSample>> &samples,
-                             const std::map<std::pair<coord_t, coord_t>, BeltPointPlan> &shared)
+                             const std::map<std::pair<coord_t, coord_t>, BeltPointPlan> &shared,
+                             const PrintConfig *cfg)
 {
     if (entity == nullptr)
         return;
@@ -611,7 +645,7 @@ static void belt_retile_tree(ExtrusionEntity *entity,
         for (ExtrusionPath &path : loop->paths) {
             const auto found = samples.find(&path);
             const std::vector<BeltSlotSample> *sam = found == samples.end() ? nullptr : &found->second;
-            ExtrusionPaths parts = belt_retile_one(path, sam, shared);
+            ExtrusionPaths parts = belt_retile_one(path, sam, shared, cfg);
             for (ExtrusionPath &part : parts)
                 rebuilt.push_back(std::move(part));
         }
@@ -635,7 +669,7 @@ static void belt_retile_tree(ExtrusionEntity *entity,
         for (ExtrusionPath &path : multi->paths) {
             const auto found = samples.find(&path);
             const std::vector<BeltSlotSample> *sam = found == samples.end() ? nullptr : &found->second;
-            ExtrusionPaths parts = belt_retile_one(path, sam, shared);
+            ExtrusionPaths parts = belt_retile_one(path, sam, shared, cfg);
             for (ExtrusionPath &part : parts)
                 rebuilt.push_back(std::move(part));
         }
@@ -648,7 +682,7 @@ static void belt_retile_tree(ExtrusionEntity *entity,
             if (ExtrusionPath *path = dynamic_cast<ExtrusionPath *>(child)) {
                 const auto found = samples.find(path);
                 const std::vector<BeltSlotSample> *sam = found == samples.end() ? nullptr : &found->second;
-                ExtrusionPaths parts = belt_retile_one(*path, sam, shared);
+                ExtrusionPaths parts = belt_retile_one(*path, sam, shared, cfg);
                 if (parts.size() <= 1) {
                     if (!parts.empty())
                         *path = std::move(parts[0]);
@@ -659,13 +693,14 @@ static void belt_retile_tree(ExtrusionEntity *entity,
                     coll->entities[i] = multi_path;
                 }
             } else {
-                belt_retile_tree(child, samples, shared);
+                belt_retile_tree(child, samples, shared, cfg);
             }
         }
     }
 }
 
-static void tile_belt_thin_slots(ExtrusionEntityCollection *walls, ExtrusionEntityCollection &gaps, int layer_id)
+static void tile_belt_thin_slots(ExtrusionEntityCollection *walls, ExtrusionEntityCollection &gaps, int layer_id,
+                                 const PrintConfig *cfg)
 {
     std::vector<ExtrusionPath *> paths;
     if (walls != nullptr)
@@ -686,7 +721,7 @@ static void tile_belt_thin_slots(ExtrusionEntityCollection *walls, ExtrusionEnti
     double xmin = 0.0, xmax = 0.0;
     bool have_x = false;
     for (ExtrusionPath *path : paths) {
-        const double width = belt_emitted_width(*path);
+        const double width = belt_measured_width(*path, belt_flow_ratio(cfg, path->role()));
         if (!(width > 0.05))
             continue;
         const Points &pts = path->polyline.points;
@@ -918,8 +953,8 @@ static void tile_belt_thin_slots(ExtrusionEntityCollection *walls, ExtrusionEnti
     }
 
     if (walls != nullptr)
-        belt_retile_tree(walls, samples, shared);
-    belt_retile_tree(&gaps, samples, shared);
+        belt_retile_tree(walls, samples, shared, cfg);
+    belt_retile_tree(&gaps, samples, shared, cfg);
 }
 
 // Hierarchy of perimeters.
@@ -2511,7 +2546,7 @@ void PerimeterGenerator::process_classic()
         // becomes G-code. The infill clip above still uses the pre-fit gap.
         if (this->print_config != nullptr &&
             this->print_config->printer_structure.value == PrinterStructure::psBelt)
-            tile_belt_thin_slots(island_walls, gap_fill, this->layer_id);
+            tile_belt_thin_slots(island_walls, gap_fill, this->layer_id, this->print_config);
         if (! gap_fill.empty())
             this->gap_fill->append(std::move(gap_fill.entities));
 
@@ -3377,7 +3412,7 @@ void PerimeterGenerator::process_arachne()
             if (this->print_config != nullptr &&
                 this->print_config->printer_structure.value == PrinterStructure::psBelt) {
                 ExtrusionEntityCollection no_gaps;
-                tile_belt_thin_slots(&extrusion_coll, no_gaps, this->layer_id);
+                tile_belt_thin_slots(&extrusion_coll, no_gaps, this->layer_id, this->print_config);
             }
             this->loops->append(extrusion_coll);
         }
