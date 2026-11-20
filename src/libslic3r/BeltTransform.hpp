@@ -36,6 +36,12 @@ public:
 
     // Per-export adjustment (e.g. Cura-matched gantry Y for OrthoCAD insoles).
     static void set_runtime_y_mach_offset(double offset_mm);
+
+    // Y_mach = gantry_y_scale() * Y_virt. The coefficient stays √2: it is the
+    // 45° gantry travel, and changing it would rescale every belt print.
+    // Extrusion width is not multiplied by this scale. Gap fill has to plan
+    // in physical millimeters or X-directed beads separate (PerimeterGenerator).
+    static double gantry_y_scale();
 };
 
 } // namespace Slic3r

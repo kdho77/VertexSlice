@@ -14,8 +14,8 @@ ratio, +10% in the heel range, 225 C and fan 50/25 left as the filament
 preset has them. Pressure advance stays ADVANCE=0.05.
 The same physical heel plane (min_z 191.30) is layer ordinal 293 on
 ApexLight's 0.46 mm spacing and ordinal 320 on ApexCore's 0.42 mm spacing.
-ApexCore's default min_bead_width is already 85%, so a second global bead
-slice does not change its geometry.
+ApexLight's global min_bead_width stays 50%, the live value. 85% moves
+Arachne's outer walls and the slice no longer finishes under the server cutoff.
 """
 from __future__ import annotations
 
@@ -118,8 +118,9 @@ def overlay_g2b(machine: dict, process: dict, filament: dict) -> None:
 # width 1, ensure_vertical_shell_thickness none, top_shell_layers 0.
 # Widening the walls to 1.3 mm closed the toe and opened wall-crossing
 # travels, and the 15-30% band stayed open, so the walls stay 1.
-# close_thin_skins() widens the bead until it meets both skins. The 8 mm
-# filter, classic walls, and wall_loops 2 stay.
+# The air is the belt scale: Y_mach = sqrt(2) * Y_virt and the bead width
+# is not scaled. PerimeterGenerator grows the internal bead in place.
+# Outer walls are not moved. The 8 mm filter, classic walls, and wall_loops 2 stay.
 APEXCORE_FOREFOOT_STITCH = {
     "wall_generator": "classic",
     "filter_out_gap_fill": "8",
@@ -158,6 +159,8 @@ def assert_g2b_identity(
         "internal_solid_infill_flow_ratio": "1.45",
         "internal_solid_infill_pattern": "monotonic",
         "initial_layer_min_bead_width": "85%",
+        # Live ApexLight. 85% re-beads the outer wall and the slice exceeds
+        # the server cutoff. The heel range below still overrides this.
         "min_bead_width": "50%",
         "print_direction": "toe_first",
         "outer_wall_speed": "26",

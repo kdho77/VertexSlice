@@ -15,8 +15,9 @@ prepare() refuses to slice if a setting drifts from that file.
 
 G2b CONFIG_BLOCK with the ApexCore filament swapped in. No heelmod
 layer-range flow, min_bead, or ensure_all. Wall line width stays 1 mm.
-close_thin_skins() widens the thin-section gap bead until it meets both
-skins. No global infill_wall_overlap or minimum_sparse_infill_area edits.
+The thin-toe gap bead grows in place in PerimeterGenerator
+(Y_mach = sqrt(2) * Y_virt). Outer walls are not moved or widened.
+No global infill_wall_overlap or minimum_sparse_infill_area edits.
 Layer height stays 0.46 mm. ApexCore additions are nozzle temperature 225 °C, part fan 50% /
 aux 25%, the locked wall/sparse/gap flow ratios, and pressure advance 0.05.
 Layer-change retract is off and retraction length is 0.
@@ -216,6 +217,31 @@ _WORD = re.compile(r"([XYZEF])([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)")
 # axis into separate paths, and the planner travels between them instead of
 # following the chain. 0.3 mm is the join tolerance; measured joins were 0.
 _GAP_JOIN_MM = 0.3
+# gap_infill_speed is 26 mm/s. A travel is F12720. An extrusion that omits F
+# inherits that travel feed; 29 gap moves on the sample did.
+_GAP_EXTRUDE_FEED = 1560.0
+_TRAVEL_FEED = 6000.0
+
+
+def _stamp_extrude_feed(line: str) -> str:
+    """Put an extrusion feed on a gap bead so it cannot run at travel F."""
+    nl = "\n" if line.endswith("\n") else ""
+    body, sep, comment = line.rstrip("\n").partition(";")
+    words = _g1_words(body)
+    if "E" not in words or float(words["E"]) <= 0:
+        return line
+    if "F" in words and float(words["F"]) < _TRAVEL_FEED:
+        return line
+    if "F" in words:
+        body = re.sub(
+            r"F[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?",
+            f"F{_GAP_EXTRUDE_FEED:.0f}",
+            body,
+            count=1,
+        )
+    else:
+        body = body.rstrip() + f" F{_GAP_EXTRUDE_FEED:.0f}"
+    return body + (sep + comment if sep else "") + nl
 
 
 def _g1_words(line: str) -> dict[str, str]:
@@ -492,11 +518,11 @@ def _emit_bead(out: list[str], bead: dict, rev: bool) -> tuple[float, float]:
     pts = bead["pts"]
     moves = bead["moves"]
     if not rev:
-        out.extend(moves)
+        out.extend(_stamp_extrude_feed(move) for move in moves)
         return pts[-1]
     for k, move in enumerate(reversed(moves)):
         dest = pts[-(k + 2)]
-        out.append(_rewrite_dest(move, dest[0], dest[1]))
+        out.append(_stamp_extrude_feed(_rewrite_dest(move, dest[0], dest[1])))
     return pts[0]
 
 
