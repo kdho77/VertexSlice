@@ -139,6 +139,59 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # Production path: HTTP /v1/slice -> slice_engine -> run_material_chain.
+      # belt_air_columns.py exits non-zero when a thin toe column has air and no infill.
+      - name: Slice orthocad and gate thin-section air
+        run: |
+          set -euo pipefail
+          docker rm -f vs-slice >/dev/null 2>&1 || true
+          docker run -d --name vs-slice -p 8080:8080 \
+            -e VERTEXSLICE_API_KEY=ci-proof \
+            vertexslice-server:proof
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8080/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "$ready" = 1
+          mkdir -p belt-air-gcode
+          model="validation/test_models/orthocad_sample_top_insole.stl"
+          test -f "$model"
+          for mat in apex_core apex_light; do
+            echo "slicing ${mat} through /v1/slice"
+            curl -fS --max-time 320 \
+              -H "X-API-Key: ci-proof" \
+              -F "profile_id=apex-v2-insole-95a" \
+              -F "material=${mat}" \
+              -F "belt_insole_place=true" \
+              -F "model=@${model};filename=orthocad_sample_top_insole.stl" \
+              "http://127.0.0.1:8080/v1/slice" \
+              -o "belt-air-gcode/${mat}.gcode"
+            test -s "belt-air-gcode/${mat}.gcode"
+            docker cp "belt-air-gcode/${mat}.gcode" "vs-slice:/tmp/${mat}.gcode"
+            docker exec -e BELT_AIR_GATE=1 vs-slice \
+              python3 /app/validation/belt_air_columns.py "/tmp/${mat}.gcode"
+            docker exec vs-slice \
+              python3 /app/scripts/g2b_heelmod/check_travel_wall_crossings.py \
+              "/tmp/${mat}.gcode" --json > "belt-air-gcode/${mat}-crossings.json"
+            python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); t=r["totals"]; print(sys.argv[1], "perimeter", t["perimeter_crossings"], "outer", t["outer_only_crossings"], "reduce_crossing_wall", r["reduce_crossing_wall"]); assert t["perimeter_crossings"]==0 and t["outer_only_crossings"]==0, t; assert str(r["reduce_crossing_wall"])=="1"' \
+              "belt-air-gcode/${mat}-crossings.json"
+          done
+          docker logs vs-slice > belt-air-gcode/server.log 2>&1 || true
+          docker rm -f vs-slice >/dev/null
+
+      - name: Upload thin-section G-code
+        uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: belt-air-orthocad-gcode
+          path: belt-air-gcode/
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Golden chain gate
         run: |
           set +e
