@@ -1,0 +1,137 @@
+{
+ "result": "PASS",
+ "failures": [],
+ "bands": [
+  {
+   "band": "0-10%",
+   "live": {
+    "cols": 534,
+    "air_noinfill_cols": 534,
+    "air_noinfill_mm3": 86.66
+   },
+   "cand": {
+    "cols": 534,
+    "air_noinfill_cols": 534,
+    "air_noinfill_mm3": 86.66
+   }
+  },
+  {
+   "band": "10-20%",
+   "live": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   },
+   "cand": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   }
+  },
+  {
+   "band": "20-30%",
+   "live": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   },
+   "cand": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   }
+  },
+  {
+   "band": "30-40%",
+   "live": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   },
+   "cand": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   }
+  },
+  {
+   "band": "40-50%",
+   "live": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   },
+   "cand": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   }
+  },
+  {
+   "band": "50-60%",
+   "live": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   },
+   "cand": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   }
+  },
+  {
+   "band": "60-70%",
+   "live": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   },
+   "cand": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   }
+  },
+  {
+   "band": "70-80%",
+   "live": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   },
+   "cand": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   }
+  },
+  {
+   "band": "80-90%",
+   "live": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   },
+   "cand": {
+    "cols": 0,
+    "air_noinfill_cols": 0,
+    "air_noinfill_mm3": 0.0
+   }
+  },
+  {
+   "band": "90-100%",
+   "live": {
+    "cols": 534,
+    "air_noinfill_cols": 534,
+    "air_noinfill_mm3": 35.0
+   },
+   "cand": {
+    "cols": 534,
+    "air_noinfill_cols": 534,
+    "air_noinfill_mm3": 35.0
+   }
+  }
+ ],
+ "air_bands_sha256": "c82e6ff2a8303c459a422e4141d914a045b2c4bb42180cdf235cc1e977db2bff"
+}

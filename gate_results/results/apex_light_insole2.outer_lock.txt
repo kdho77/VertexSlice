@@ -1,0 +1,35 @@
+{
+ "result": "PASS",
+ "mode": "strict",
+ "failures": [],
+ "layers": [
+  96,
+  96
+ ],
+ "outer_width_steps": {
+  "live": 4,
+  "cand": 4
+ },
+ "worst_unmatched": {
+  "xy_mm": 0.0,
+  "e_rel": 0.0,
+  "f_mm_s": 0.0
+ },
+ "run_order_changes_layers": 0,
+ "rotated_closed_loops": 0,
+ "retracts_near_outer": [
+  189,
+  189
+ ],
+ "wipes": [
+  92,
+  92
+ ],
+ "z_moves": [
+  94,
+  94
+ ]
+}
+crossings live: {'perimeter_crossings': 1, 'outer_only_crossings': 1, 'seam_approaches': 272, 'surface_crossings': 0, 'skin_interior_travels': 16, 'gap_crossings': 0, 'chain_hop_crossings': 0, 'gap_exit_crossings': 0, 'seam_block_crossings': 1}
+crossings cand: {'perimeter_crossings': 1, 'outer_only_crossings': 1, 'seam_approaches': 272, 'surface_crossings': 0, 'skin_interior_travels': 16, 'gap_crossings': 0, 'chain_hop_crossings': 0, 'gap_exit_crossings': 0, 'seam_block_crossings': 1}
+locked Outer wall     {'live_runs': 94, 'cand_runs': 94, 'unmatched_live': 0, 'unmatched_cand': 0, 'layers_bad': 0}

@@ -1,0 +1,268 @@
+/usr/lib/python3/dist-packages/shapely/set_operations.py:419: RuntimeWarning: invalid value encountered in unary_union
+  return lib.unary_union(collections, **kwargs)
+{
+ "seam_bottom_sha256": "dbc84839afd8dc62506be281b9791567f35f807ec672568a12ecfd2c1c30a075",
+ "mode": "absolute (ApexCore, bar = ApexLight live)",
+ "params": {
+  "FACE_HALF_ANGLE": 45.0,
+  "NORMAL_SPAN": 0.5,
+  "VIS_TOL": 0.05,
+  "ROT_CLOSE": 0.011,
+  "LC_FLOOR": 0.98
+ },
+ "bars_from_apexlight_live": {
+  "LC": 0.9885,
+  "CS": 1.0
+ },
+ "cand_fraction": {
+  "LC": 0.9977,
+  "CS": 1.0
+ },
+ "live_apexcore": {
+  "mid": {
+   "LC": {
+    "bottom": 3,
+    "top": 322,
+    "side": 110
+   },
+   "CS": {
+    "bottom": 0,
+    "top": 322,
+    "side": 110
+   },
+   "OE": {
+    "bottom": 10,
+    "top": 0,
+    "side": 16
+   },
+   "VS": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   }
+  },
+  "ends": {
+   "LC": {
+    "bottom": 1,
+    "top": 1,
+    "side": 0
+   },
+   "CS": {
+    "bottom": 1,
+    "top": 1,
+    "side": 0
+   },
+   "OE": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   },
+   "VS": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   }
+  }
+ },
+ "cand": {
+  "mid": {
+   "LC": {
+    "bottom": 434,
+    "top": 1,
+    "side": 0
+   },
+   "CS": {
+    "bottom": 432,
+    "top": 0,
+    "side": 0
+   },
+   "OE": {
+    "bottom": 10,
+    "top": 0,
+    "side": 16
+   },
+   "VS": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   }
+  },
+  "ends": {
+   "LC": {
+    "bottom": 1,
+    "top": 1,
+    "side": 0
+   },
+   "CS": {
+    "bottom": 2,
+    "top": 0,
+    "side": 0
+   },
+   "OE": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   },
+   "VS": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   }
+  }
+ },
+ "apexlight_live": {
+  "mid": {
+   "LC": {
+    "bottom": 431,
+    "top": 4,
+    "side": 1
+   },
+   "CS": {
+    "bottom": 435,
+    "top": 0,
+    "side": 0
+   },
+   "OE": {
+    "bottom": 1,
+    "top": 1,
+    "side": 4
+   },
+   "VS": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   }
+  },
+  "ends": {
+   "LC": {
+    "bottom": 1,
+    "top": 1,
+    "side": 0
+   },
+   "CS": {
+    "bottom": 1,
+    "top": 0,
+    "side": 0
+   },
+   "OE": {
+    "bottom": 0,
+    "top": 0,
+    "side": 2
+   },
+   "VS": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   }
+  }
+ },
+ "cand_off_bottom_examples": {
+  "LC": [
+   {
+    "layer": 437,
+    "x": 139.175,
+    "y": 18.134,
+    "face": "top",
+    "normal": [
+     -0.02,
+     1.0
+    ],
+    "dist_to_face": 0.739
+   }
+  ],
+  "CS": [],
+  "OE": [
+   {
+    "layer": 7,
+    "x": 144.469,
+    "y": 0.034,
+    "face": "side",
+    "normal": [
+     0.759,
+     -0.651
+    ],
+    "dist_to_face": 0.0
+   },
+   {
+    "layer": 7,
+    "x": 144.09,
+    "y": 0.575,
+    "face": "side",
+    "normal": [
+     0.909,
+     -0.416
+    ],
+    "dist_to_face": 0.495
+   },
+   {
+    "layer": 7,
+    "x": 144.09,
+    "y": 0.575,
+    "face": "side",
+    "normal": [
+     0.909,
+     -0.416
+    ],
+    "dist_to_face": 0.495
+   },
+   {
+    "layer": 7,
+    "x": 144.357,
+    "y": 1.157,
+    "face": "side",
+    "normal": [
+     0.964,
+     0.267
+    ],
+    "dist_to_face": 0.111
+   },
+   {
+    "layer": 7,
+    "x": 144.357,
+    "y": 1.157,
+    "face": "side",
+    "normal": [
+     0.964,
+     0.267
+    ],
+    "dist_to_face": 0.111
+   },
+   {
+    "layer": 7,
+    "x": 144.35,
+    "y": 1.254,
+    "face": "side",
+    "normal": [
+     0.947,
+     0.321
+    ],
+    "dist_to_face": 0.083
+   },
+   {
+    "layer": 7,
+    "x": 144.35,
+    "y": 1.254,
+    "face": "side",
+    "normal": [
+     0.947,
+     0.321
+    ],
+    "dist_to_face": 0.083
+   },
+   {
+    "layer": 8,
+    "x": 145.73,
+    "y": 0.142,
+    "face": "side",
+    "normal": [
+     0.808,
+     -0.59
+    ],
+    "dist_to_face": 0.0
+   }
+  ],
+  "VS": []
+ },
+ "result": "PASS",
+ "failures": []
+}

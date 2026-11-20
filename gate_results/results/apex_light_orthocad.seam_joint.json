@@ -1,0 +1,256 @@
+{
+ "seam_joint_sha256": "30566f98921b995b1d6f3d300736729f75f6560fe9cd891ea6ac105d85ab654f",
+ "params": {
+  "E_TOL": 0.0001,
+  "SHORT_LOOP": 3.0,
+  "OVERLAP": 0.4,
+  "TAIL_TOL": 0.011,
+  "COLUMN_MM": 1.0,
+  "END_MM": 0.3,
+  "SKIN_CLEAR": 0.55
+ },
+ "mode": "no-worse-than-live, no new offender",
+ "live": {
+  "J1_short_primes": 0,
+  "J1_over_primes": 0,
+  "J2_closed_loops_gt3mm": 436,
+  "J2_missing_cover": 436,
+  "J2_long_overlap": 0,
+  "J3_stacked_deficit": 410,
+  "J3_column_starts": 410,
+  "J3_layers_with_closed_start": 436,
+  "J4_wall_cuts": 0,
+  "J4_surface_cuts": 0,
+  "J4_skin_travels": 415,
+  "examples": {
+   "J1_short": [],
+   "J2_missing": [
+    [
+     2,
+     131.241,
+     0.086
+    ],
+    [
+     3,
+     131.563,
+     0.091
+    ],
+    [
+     4,
+     131.34,
+     0.091
+    ],
+    [
+     5,
+     131.118,
+     0.093
+    ],
+    [
+     6,
+     131.099,
+     0.092
+    ]
+   ],
+   "J4_wall": [],
+   "J4_surface": [],
+   "J4_skin": [
+    [
+     3,
+     131.941,
+     0.467,
+     131.95,
+     1.14
+    ],
+    [
+     3,
+     135.56,
+     0.922,
+     136.367,
+     0.4
+    ],
+    [
+     3,
+     136.367,
+     0.4,
+     134.919,
+     0.994
+    ]
+   ]
+  }
+ },
+ "cand": {
+  "J1_short_primes": 0,
+  "J1_over_primes": 0,
+  "J2_closed_loops_gt3mm": 436,
+  "J2_missing_cover": 436,
+  "J2_long_overlap": 0,
+  "J3_stacked_deficit": 410,
+  "J3_column_starts": 410,
+  "J3_layers_with_closed_start": 436,
+  "J4_wall_cuts": 23,
+  "J4_surface_cuts": 0,
+  "J4_skin_travels": 341,
+  "examples": {
+   "J1_short": [],
+   "J2_missing": [
+    [
+     2,
+     131.241,
+     0.086
+    ],
+    [
+     3,
+     131.563,
+     0.091
+    ],
+    [
+     4,
+     131.34,
+     0.091
+    ],
+    [
+     5,
+     131.118,
+     0.093
+    ],
+    [
+     6,
+     131.099,
+     0.092
+    ]
+   ],
+   "J4_wall": [
+    [
+     314,
+     106.773,
+     30.062,
+     116.998,
+     0.016
+    ],
+    [
+     316,
+     105.886,
+     31.128,
+     116.461,
+     0.016
+    ],
+    [
+     317,
+     106.507,
+     30.212,
+     116.192,
+     0.016
+    ],
+    [
+     318,
+     105.833,
+     31.086,
+     115.943,
+     0.016
+    ],
+    [
+     319,
+     106.071,
+     30.667,
+     115.696,
+     0.016
+    ]
+   ],
+   "J4_surface": [],
+   "J4_skin": [
+    [
+     3,
+     131.941,
+     0.467,
+     131.95,
+     1.14
+    ],
+    [
+     3,
+     135.56,
+     0.922,
+     136.367,
+     0.4
+    ],
+    [
+     3,
+     136.367,
+     0.4,
+     134.919,
+     0.994
+    ]
+   ]
+  }
+ },
+ "new_offenders": {
+  "J4_wall_cuts": {
+   "new": 23,
+   "examples": [
+    [
+     314,
+     106.773,
+     30.062,
+     116.998,
+     0.016
+    ],
+    [
+     316,
+     105.886,
+     31.128,
+     116.461,
+     0.016
+    ],
+    [
+     317,
+     106.507,
+     30.212,
+     116.192,
+     0.016
+    ],
+    [
+     318,
+     105.833,
+     31.086,
+     115.943,
+     0.016
+    ],
+    [
+     319,
+     106.071,
+     30.667,
+     115.696,
+     0.016
+    ]
+   ]
+  },
+  "J4_surface_cuts": {
+   "new": 0,
+   "examples": []
+  },
+  "J4_skin_travels": {
+   "new": 2,
+   "examples": [
+    [
+     434,
+     153.192,
+     18.836,
+     136.651,
+     16.312
+    ],
+    [
+     434,
+     136.651,
+     16.312,
+     136.604,
+     15.728
+    ]
+   ]
+  }
+ },
+ "result": "FAIL",
+ "failures": [
+  "J4_wall_cuts 23 > live 0 (0 required)",
+  "J4_wall_cuts: 23 NEW offending travel(s) not in live (no new offender allowed)",
+  "J4_skin_travels: 2 NEW offending travel(s) not in live (no new offender allowed)"
+ ]
+}

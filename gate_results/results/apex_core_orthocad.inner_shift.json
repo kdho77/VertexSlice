@@ -1,0 +1,86 @@
+{
+ "inner_shift_sha256": "00db83c491a643bf42ea430b4ff5e0fa4f44806f70139a53f8be9423045ab59d",
+ "params": {
+  "SHIFT_MAX": 0.454,
+  "INF_SHIFT_MAX": 0.734,
+  "INF_BAND": 3.2,
+  "CROWD_MAX_MM": 0.1237,
+  "SEG_MIN_RATIO": 0.95,
+  "TURN_TOL": 0.2,
+  "TOWARD_K": 0.7
+ },
+ "counts": {
+  "S1": 146,
+  "S2": 0,
+  "S3_far": 43,
+  "S3_out": 0,
+  "S3_side": 121,
+  "S4": 88,
+  "S6_off": 226,
+  "S6_band": 0
+ },
+ "crowd_samples_over_cap": {
+  "live": 0,
+  "cand": 25265
+ },
+ "worst": {
+  "shift": 64.6223,
+  "outward": 0.0063,
+  "crowd_cand": 0.2068,
+  "crowd_live": 0.0869,
+  "inf_shift": Infinity,
+  "inf_inner_ov_live": 0.3206,
+  "inf_inner_ov_cand": 0.4242
+ },
+ "rotated_inner_loops": 71,
+ "infill": {
+  "Sparse infill": {
+   "F_live": [
+    26.0
+   ],
+   "F_cand": [
+    26.0
+   ],
+   "median_e_live": 0.1799889199894017,
+   "median_e_cand": 0.1799888695938854,
+   "segs_e_out_of_range": 0,
+   "vol_ratio": 1.2107
+  },
+  "Internal solid infill": {
+   "F_live": [
+    26.0
+   ],
+   "F_cand": [
+    26.0
+   ],
+   "median_e_live": 0.13727366884447748,
+   "median_e_cand": 0.13728390009043193,
+   "segs_e_out_of_range": 0,
+   "vol_ratio": 1.3398
+  }
+ },
+ "samples": [
+  "layer 142: Inner wall run segments 10 vs live 9, width steps 0 vs 0",
+  "layer 143: Inner wall run segments 11 vs live 10, width steps 0 vs 0",
+  "layer 153: Inner wall run segments 14 vs live 13, width steps 0 vs 0",
+  "layer 153: 2 inner/infill samples overlap the outer bead by more than 0.124 mm (max 0.146)",
+  "layer 154: 2 inner/infill samples overlap the outer bead by more than 0.124 mm (max 0.155)",
+  "layer 155: 4 inner/infill samples overlap the outer bead by more than 0.124 mm (max 0.158)",
+  "layer 156: Inner wall run segments 18 vs live 17, width steps 0 vs 0",
+  "layer 156: 4 inner/infill samples overlap the outer bead by more than 0.124 mm (max 0.151)",
+  "layer 157: 4 inner/infill samples overlap the outer bead by more than 0.124 mm (max 0.155)",
+  "layer 158: Inner wall run segments 18 vs live 17, width steps 0 vs 0",
+  "layer 158: 5 inner/infill samples overlap the outer bead by more than 0.124 mm (max 0.147)",
+  "layer 159: Inner wall run segments 17 vs live 19, width steps 0 vs 0"
+ ],
+ "result": "FAIL",
+ "failures": [
+  "S1 Inner wall run structure changed (runs/segments/width steps) on 146 runs/layers",
+  "S3 Inner wall moved more than SHIFT_MAX on 43 runs",
+  "S3 Inner wall moved sideways (not a pure offset toward the outer wall) on 121 runs",
+  "S4 Inner wall zig-zag / extra turning on 88 runs",
+  "S6 infill lies more than INF_EXT_MAX from any live infill line on 226 layer-types",
+  "S5 inner/infill beads crowd the outer bead: 25265 samples overlap it by more than 0.124 mm (live 0; max 0.207 mm)",
+  "S7 infill overlaps the inner wall by 0.424 mm (live worst 0.321 + 0.05)"
+ ]
+}

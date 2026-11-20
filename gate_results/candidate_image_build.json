@@ -1,0 +1,27 @@
+{
+  "base_image": "ghcr.io/kdho77/vertexslice-server@sha256:dd5127f59f5acc9674ae0bc5e48705432481db5d61f23cb8c90b4e0c0cbf1fa4",
+  "build_method": "FROM live digest; replace orca-slicer artifact from GH Actions run 44813646632 and non-binary files that differ vs f0f65c2",
+  "ci_run_id": 44813646632,
+  "artifact": "orca-slicer-2c49cb9f34c31b99be45498a26eb73f9338863a6",
+  "tag": "vertexslice-server:proof",
+  "replaced_files": [
+    {
+      "path": "/app/bin/orca-slicer",
+      "sha256": "78d938dcaf7a2a6f3221cc4ea48a0638ffdc48f10297240cae1e4d9ae7902907"
+    },
+    {
+      "path": "/app/scripts/g2b_heelmod/postprocess_g2b.py",
+      "sha256": "f743a13b0a71fa75b92f5b6208a407feae948077cc232dc0cf917e04e4d7972b"
+    },
+    {
+      "path": "/app/scripts/g2b_heelmod/test_seam_off_plantar.py",
+      "sha256": "4fea2b8d8eade8fba7a83bede42839ebafeb83f741aa231dbc68c9d16d7a84bf"
+    }
+  ],
+  "live_orca_slicer_sha256_before_replace": "1bc7e1ba0504dab6d61b7623b741a04c4d6158be1cb8e36857a757af478abe95",
+  "slice_timeout_local_deviation": {
+    "reason": "CI HTTP 504 on live apex_core/orthocad at SLICE_GATEWAY_TIMEOUT_S=260",
+    "change": "bind-mount /tmp/timeout_overlay/app.py with SLICE_GATEWAY_TIMEOUT_S=880 (curl -m 900 unchanged)",
+    "not_committed": true
+  }
+}

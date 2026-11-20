@@ -1,0 +1,86 @@
+{
+ "live": "gate_results/live_apex_light_orthocad.gcode",
+ "candidate": "gate_results/cand_apex_light_orthocad.gcode",
+ "outer_lock_sha256": "1964f64a55b977675e6b143fc0b4db2eb055488154508bbcacbad0267a3533b5",
+ "mode": "strict",
+ "layers": [
+  440,
+  440
+ ],
+ "locked": {
+  "Outer wall": {
+   "live_runs": 446,
+   "cand_runs": 446,
+   "unmatched_live": 3,
+   "unmatched_cand": 3,
+   "layers_bad": 3
+  },
+  "Overhang wall": {
+   "live_runs": 8,
+   "cand_runs": 8,
+   "unmatched_live": 0,
+   "unmatched_cand": 0,
+   "layers_bad": 0
+  }
+ },
+ "outer_width_steps": {
+  "live": 10028,
+  "cand": 10028
+ },
+ "worst_unmatched": {
+  "xy_mm": 0.0,
+  "e_rel": 0.0,
+  "f_mm_s": 2.466666666666665
+ },
+ "run_order_changes_layers": 0,
+ "rotated_closed_loops": 0,
+ "bad_layers_first20": [
+  431,
+  432,
+  433
+ ],
+ "reduce_crossing_wall": [
+  "; reduce_crossing_wall = 1"
+ ],
+ "crossings": {
+  "live": {
+   "perimeter_crossings": 0,
+   "outer_only_crossings": 0,
+   "seam_approaches": 453,
+   "surface_crossings": 0,
+   "skin_interior_travels": 541,
+   "gap_crossings": 0,
+   "chain_hop_crossings": 0,
+   "gap_exit_crossings": 0,
+   "seam_block_crossings": 0
+  },
+  "cand": {
+   "perimeter_crossings": 0,
+   "outer_only_crossings": 0,
+   "seam_approaches": 4008,
+   "surface_crossings": 0,
+   "skin_interior_travels": 481,
+   "gap_crossings": 0,
+   "chain_hop_crossings": 0,
+   "gap_exit_crossings": 0,
+   "seam_block_crossings": 0
+  }
+ },
+ "retracts_near_outer": [
+  751,
+  890
+ ],
+ "wipes": [
+  436,
+  436
+ ],
+ "z_moves": [
+  438,
+  438
+ ],
+ "result": "FAIL",
+ "failures": [
+  "B Outer wall changed: 3 live runs / 3 candidate runs unmatched on 3 layers",
+  "F retracts near outer wall 890 > live 751"
+ ]
+}

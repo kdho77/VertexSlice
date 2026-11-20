@@ -1,0 +1,14 @@
+HTTP/1.1 200 OK
+date: Fri, 20 Nov 2026 23:20:10 GMT
+server: uvicorn
+x-slice-seconds: 0.742
+x-peak-rss-kb: 
+x-profile-id: apex-v2-insole-95a
+x-material: apex_core
+x-chain: apex_core-g2b-v1
+x-wall-loops: 1
+x-infill-density: 26%
+x-print-direction: toe_first
+content-length: 721398
+content-type: text/plain; charset=utf-8
+

@@ -1,0 +1,22 @@
+{
+ "result": "FAIL",
+ "failures": [
+  "time 1h 38m 47s > live 1h 34m 51s +2.0%"
+ ],
+ "live": {
+  "time_s": 5691,
+  "time": "1h 34m 51s",
+  "filament_g": 84.05,
+  "infill": "26%"
+ },
+ "cand": {
+  "time_s": 5927,
+  "time": "1h 38m 47s",
+  "filament_g": 87.38,
+  "infill": "26%"
+ },
+ "time_pct": 4.146898611843253,
+ "filament_pct": 3.9619274241522895,
+ "time_budget_pct": 2.0,
+ "print_budget_sha256": "c576d0fbcd8cfc940d8f1495a274dcff3316d3baafeff8cea53b3c4251af82e2"
+}

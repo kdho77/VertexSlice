@@ -1,0 +1,195 @@
+{
+ "seam_joint_sha256": "30566f98921b995b1d6f3d300736729f75f6560fe9cd891ea6ac105d85ab654f",
+ "params": {
+  "E_TOL": 0.0001,
+  "SHORT_LOOP": 3.0,
+  "OVERLAP": 0.4,
+  "TAIL_TOL": 0.011,
+  "COLUMN_MM": 1.0,
+  "END_MM": 0.3,
+  "SKIN_CLEAR": 0.55
+ },
+ "mode": "no-worse-than-live, no new offender",
+ "live": {
+  "J1_short_primes": 0,
+  "J1_over_primes": 0,
+  "J2_closed_loops_gt3mm": 92,
+  "J2_missing_cover": 92,
+  "J2_long_overlap": 0,
+  "J3_stacked_deficit": 91,
+  "J3_column_starts": 91,
+  "J3_layers_with_closed_start": 92,
+  "J4_wall_cuts": 2,
+  "J4_surface_cuts": 0,
+  "J4_skin_travels": 24,
+  "examples": {
+   "J1_short": [],
+   "J2_missing": [
+    [
+     3,
+     140.0,
+     0.0
+    ],
+    [
+     4,
+     140.0,
+     0.114
+    ],
+    [
+     5,
+     140.0,
+     0.016
+    ],
+    [
+     6,
+     140.0,
+     0.016
+    ],
+    [
+     7,
+     140.0,
+     0.016
+    ]
+   ],
+   "J4_wall": [
+    [
+     94,
+     140.7,
+     15.034,
+     95.456,
+     15.034
+    ],
+    [
+     95,
+     140.7,
+     15.434,
+     95.262,
+     16.309
+    ]
+   ],
+   "J4_surface": [],
+   "J4_skin": [
+    [
+     4,
+     140.7,
+     0.4,
+     140.7,
+     1.222
+    ],
+    [
+     4,
+     96.471,
+     1.222,
+     95.569,
+     0.514
+    ],
+    [
+     4,
+     95.569,
+     0.514,
+     96.471,
+     1.222
+    ]
+   ]
+  }
+ },
+ "cand": {
+  "J1_short_primes": 0,
+  "J1_over_primes": 0,
+  "J2_closed_loops_gt3mm": 92,
+  "J2_missing_cover": 92,
+  "J2_long_overlap": 0,
+  "J3_stacked_deficit": 91,
+  "J3_column_starts": 91,
+  "J3_layers_with_closed_start": 92,
+  "J4_wall_cuts": 2,
+  "J4_surface_cuts": 0,
+  "J4_skin_travels": 24,
+  "examples": {
+   "J1_short": [],
+   "J2_missing": [
+    [
+     3,
+     140.0,
+     0.0
+    ],
+    [
+     4,
+     140.0,
+     0.114
+    ],
+    [
+     5,
+     140.0,
+     0.016
+    ],
+    [
+     6,
+     140.0,
+     0.016
+    ],
+    [
+     7,
+     140.0,
+     0.016
+    ]
+   ],
+   "J4_wall": [
+    [
+     94,
+     140.7,
+     15.034,
+     95.456,
+     15.034
+    ],
+    [
+     95,
+     140.7,
+     15.434,
+     95.262,
+     16.309
+    ]
+   ],
+   "J4_surface": [],
+   "J4_skin": [
+    [
+     4,
+     140.7,
+     0.4,
+     140.7,
+     1.222
+    ],
+    [
+     4,
+     96.471,
+     1.222,
+     95.569,
+     0.514
+    ],
+    [
+     4,
+     95.569,
+     0.514,
+     96.471,
+     1.222
+    ]
+   ]
+  }
+ },
+ "new_offenders": {
+  "J4_wall_cuts": {
+   "new": 0,
+   "examples": []
+  },
+  "J4_surface_cuts": {
+   "new": 0,
+   "examples": []
+  },
+  "J4_skin_travels": {
+   "new": 0,
+   "examples": []
+  }
+ },
+ "result": "PASS",
+ "failures": []
+}

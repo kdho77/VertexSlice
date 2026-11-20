@@ -1,0 +1,37 @@
+{
+ "first_last_layer_exclusion": {
+  "excluded_layers": [
+   1,
+   438
+  ],
+  "toe_air_cols_with_them": 6877,
+  "b15_30_air_cols_with_them": 10675
+ },
+ "result": "FAIL",
+ "failures": [
+  "toe_0_15 air_noinfill_cols 6856 > Cura 359",
+  "toe_0_15 air_noinfill_mm3 536.71 > Cura 53.09",
+  "b15_30 air_noinfill_cols 10675 > Cura 1554",
+  "b15_30 air_noinfill_mm3 870.95 > Cura 256.23"
+ ],
+ "bands": {
+  "toe_0_15": {
+   "cand_cols": 6856,
+   "cura_cols": 359,
+   "cand_mm3": 536.71,
+   "cura_mm3": 53.09,
+   "cand_worst": 0.67,
+   "cura_worst": 1.59
+  },
+  "b15_30": {
+   "cand_cols": 10675,
+   "cura_cols": 1554,
+   "cand_mm3": 870.95,
+   "cura_mm3": 256.23,
+   "cand_worst": 1.79,
+   "cura_worst": 1.78
+  }
+ },
+ "air_sha256": "08a65cb5b5dce5f26f9bead182679cdd50b9a3dc61202fc74090c6d8898e116f",
+ "air_vs_cura_sha256": "49fdbc5163084437501b81db01caedd303f084c96fe8b0c51008a83854b5d72e"
+}

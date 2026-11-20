@@ -1,0 +1,67 @@
+{
+ "interior_lock_sha256": "fcafd884d4c9f51cb35f7189403a37c4af3ea31643e06a2ba7ec662cec24256c",
+ "mode": "d3+rotate",
+ "params": {
+  "ALLOW_NEW_GAP_BEADS": true,
+  "SLOT_MAX_THICK": 4.0,
+  "BEAD_MAX_W": 1.5,
+  "INNER_POKE_TOL": 0.13,
+  "OUTER_FACE_TOL": 0.005,
+  "MIN_CONST_RUN_MM": 2.0,
+  "WIDTH_STEP_MM": 0.1,
+  "BEAD_W_TOL": 0.05,
+  "OVERLAP_MAX_FRAC": 0.1
+ },
+ "gap_segments_faster_than_gap_speed": [
+  0,
+  0
+ ],
+ "nongap_layers_changed": 0,
+ "nongap_changed_types": {},
+ "new_or_changed_gap_runs": 5,
+ "new_gap_len_mm": 350.0,
+ "new_gap_vol_mm3": 106.7,
+ "removed_or_changed_live_gap_runs": 4,
+ "flow_cap_mm3s": 13.061148241448718,
+ "fast_flow_cap_mm3s": 35.0,
+ "live_gap_max_mm3s": 13.061148241448718,
+ "live_slow_gap_max_mm3s": 13.061148241448718,
+ "live_fast_gap_max_mm3s": 0.0,
+ "straddling_live_runs_on_changed_layers": 0,
+ "runs_too_wide": 0,
+ "runs_double_deposit": 0,
+ "config_cap_mm3s": 35.0,
+ "worst": {
+  "flow": 15.501330331003132,
+  "fast_flow": 0.0,
+  "width": 1.3948146985999774,
+  "overlap_other_frac": 0.0,
+  "overlap_self_frac": 8.03722807158974e-07,
+  "outside_O_area": 0.0,
+  "outside_I_area": 0.0,
+  "min_group_mm": null
+ },
+ "runs_outside_thin_zone": 9,
+ "runs_past_outer_face": 0,
+ "runs_not_between_inner_faces": 0,
+ "runs_flow_over_cap": 1,
+ "runs_width_step_violation": 0,
+ "layers_wall_after_gap": 0,
+ "layers_new_gap_growth_forbidden": 0,
+ "samples": [
+  "layer 5: gap run at (96.95,1.84) outside thin zone",
+  "layer 6: gap run at (96.95,2.31) outside thin zone",
+  "layer 6: changed live gap run at (96.95,2.30) was outside thin zone",
+  "layer 7: gap run at (133.31,2.85) outside thin zone",
+  "layer 7: changed live gap run at (96.95,2.76) was outside thin zone",
+  "layer 87: changed live gap run at (96.95,12.69) was outside thin zone",
+  "layer 88: gap run at (96.95,13.15) outside thin zone",
+  "layer 88: changed live gap run at (96.95,13.15) was outside thin zone",
+  "layer 89: gap run at (96.95,13.62) outside thin zone"
+ ],
+ "result": "FAIL",
+ "failures": [
+  "I2 9 gap runs outside the measured thin zone",
+  "I4 1 gap beads above flow cap (slow 13.06 mm3/s, max 15.50; fast 35.00, max 0.00)"
+ ]
+}

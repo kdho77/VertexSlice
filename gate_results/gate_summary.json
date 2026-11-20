@@ -1,0 +1,4031 @@
+wrote 36 json gates
+65c2afb6dbf5d0b4a7dd04f032c9e0105c804",
+  "runner_sha256": "1bfbf6c612863d3514c9c80932a947a4e895a9cd4bd52138b379cded5f9bed4d",
+  "live_image": "ghcr.io/kdho77/vertexslice-server@sha256:dd5127f59f5acc9674ae0bc5e48705432481db5d61f23cb8c90b4e0c0cbf1fa4",
+  "overall": "FAIL",
+  "pair_results": {
+    "apex_core_insole2.air_bands": {
+      "result": "PASS",
+      "failures": [],
+      "bands": [
+        {
+          "band": "0-10%",
+          "live": {
+            "cols": 534,
+            "air_noinfill_cols": 356,
+            "air_noinfill_mm3": 47.13
+          },
+          "cand": {
+            "cols": 534,
+            "air_noinfill_cols": 356,
+            "air_noinfill_mm3": 47.13
+          }
+        },
+        {
+          "band": "10-20%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "20-30%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "30-40%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "40-50%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "50-60%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "60-70%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "70-80%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "80-90%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "90-100%",
+          "live": {
+            "cols": 534,
+            "air_noinfill_cols": 356,
+            "air_noinfill_mm3": 26.18
+          },
+          "cand": {
+            "cols": 534,
+            "air_noinfill_cols": 356,
+            "air_noinfill_mm3": 26.18
+          }
+        }
+      ],
+      "air_bands_sha256": "c82e6ff2a8303c459a422e4141d914a045b2c4bb42180cdf235cc1e977db2bff"
+    },
+    "apex_core_insole2.inner_shift": {
+      "inner_shift_sha256": "00db83c491a643bf42ea430b4ff5e0fa4f44806f70139a53f8be9423045ab59d",
+      "params": {
+        "SHIFT_MAX": 0.454,
+        "INF_SHIFT_MAX": 0.734,
+        "INF_BAND": 3.2,
+        "CROWD_MAX_MM": 0.1237,
+        "SEG_MIN_RATIO": 0.95,
+        "TURN_TOL": 0.2,
+        "TOWARD_K": 0.7
+      },
+      "counts": {
+        "S1": 0,
+        "S2": 0,
+        "S3_far": 0,
+        "S3_out": 0,
+        "S3_side": 85,
+        "S4": 0,
+        "S6_off": 29,
+        "S6_band": 0
+      },
+      "crowd_samples_over_cap": {
+        "live": 0,
+        "cand": 0
+      },
+      "worst": {
+        "shift": 0.415,
+        "outward": 0.0,
+        "crowd_cand": 0.0805,
+        "crowd_live": 0.0805,
+        "inf_shift": Infinity,
+        "inf_inner_ov_live": 0.3143,
+        "inf_inner_ov_cand": 0.3143
+      },
+      "rotated_inner_loops": 0,
+      "infill": {
+        "Sparse infill": {
+          "F_live": [
+            26.0
+          ],
+          "F_cand": [
+            26.0
+          ],
+          "median_e_live": 0.17998817966903075,
+          "median_e_cand": 0.17998685939553216,
+          "segs_e_out_of_range": 0,
+          "vol_ratio": 1.06
+        }
+      },
+      "samples": [
+        "layer 5: Inner wall moved sideways (not toward the outer wall) at 4 points",
+        "layer 6: Inner wall moved sideways (not toward the outer wall) at 4 points",
+        "layer 7: Inner wall moved sideways (not toward the outer wall) at 4 points",
+        "layer 7: Sparse infill lies inf mm from any live Sparse infill line (> 2.50)",
+        "layer 8: Inner wall moved sideways (not toward the outer wall) at 4 points",
+        "layer 9: Inner wall moved sideways (not toward the outer wall) at 4 points",
+        "layer 10: Inner wall moved sideways (not toward the outer wall) at 4 points",
+        "layer 11: Inner wall moved sideways (not toward the outer wall) at 4 points",
+        "layer 11: Sparse infill lies 2.730 mm from any live Sparse infill line (> 2.50)",
+        "layer 12: Inner wall moved sideways (not toward the outer wall) at 4 points",
+        "layer 12: Sparse infill lies 3.908 mm from any live Sparse infill line (> 2.50)",
+        "layer 13: Inner wall moved sideways (not toward the outer wall) at 4 points"
+      ],
+      "result": "FAIL",
+      "failures": [
+        "S3 Inner wall moved sideways (not a pure offset toward the outer wall) on 85 runs",
+        "S6 infill lies more than INF_EXT_MAX from any live infill line on 29 layer-types"
+      ]
+    },
+    "apex_core_insole2.interior_lock": {
+      "interior_lock_sha256": "fcafd884d4c9f51cb35f7189403a37c4af3ea31643e06a2ba7ec662cec24256c",
+      "mode": "d3+rotate",
+      "params": {
+        "ALLOW_NEW_GAP_BEADS": true,
+        "SLOT_MAX_THICK": 4.0,
+        "BEAD_MAX_W": 1.5,
+        "INNER_POKE_TOL": 0.13,
+        "OUTER_FACE_TOL": 0.005,
+        "MIN_CONST_RUN_MM": 2.0,
+        "WIDTH_STEP_MM": 0.1,
+        "BEAD_W_TOL": 0.05,
+        "OVERLAP_MAX_FRAC": 0.1
+      },
+      "gap_segments_faster_than_gap_speed": [
+        0,
+        0
+      ],
+      "nongap_layers_changed": 0,
+      "nongap_changed_types": {},
+      "new_or_changed_gap_runs": 5,
+      "new_gap_len_mm": 350.0,
+      "new_gap_vol_mm3": 106.7,
+      "removed_or_changed_live_gap_runs": 4,
+      "flow_cap_mm3s": 13.061148241448718,
+      "fast_flow_cap_mm3s": 35.0,
+      "live_gap_max_mm3s": 13.061148241448718,
+      "live_slow_gap_max_mm3s": 13.061148241448718,
+      "live_fast_gap_max_mm3s": 0.0,
+      "straddling_live_runs_on_changed_layers": 0,
+      "runs_too_wide": 0,
+      "runs_double_deposit": 0,
+      "config_cap_mm3s": 35.0,
+      "worst": {
+        "flow": 15.501330331003132,
+        "fast_flow": 0.0,
+        "width": 1.3948146985999774,
+        "overlap_other_frac": 0.0,
+        "overlap_self_frac": 8.03722807158974e-07,
+        "outside_O_area": 0.0,
+        "outside_I_area": 0.0,
+        "min_group_mm": null
+      },
+      "runs_outside_thin_zone": 9,
+      "runs_past_outer_face": 0,
+      "runs_not_between_inner_faces": 0,
+      "runs_flow_over_cap": 1,
+      "runs_width_step_violation": 0,
+      "layers_wall_after_gap": 0,
+      "layers_new_gap_growth_forbidden": 0,
+      "samples": [
+        "layer 5: gap run at (96.95,1.84) outside thin zone",
+        "layer 6: gap run at (96.95,2.31) outside thin zone",
+        "layer 6: changed live gap run at (96.95,2.30) was outside thin zone",
+        "layer 7: gap run at (133.31,2.85) outside thin zone",
+        "layer 7: changed live gap run at (96.95,2.76) was outside thin zone",
+        "layer 87: changed live gap run at (96.95,12.69) was outside thin zone",
+        "layer 88: gap run at (96.95,13.15) outside thin zone",
+        "layer 88: changed live gap run at (96.95,13.15) was outside thin zone",
+        "layer 89: gap run at (96.95,13.62) outside thin zone"
+      ],
+      "result": "FAIL",
+      "failures": [
+        "I2 9 gap runs outside the measured thin zone",
+        "I4 1 gap beads above flow cap (slow 13.06 mm3/s, max 15.50; fast 35.00, max 0.00)"
+      ]
+    },
+    "apex_core_insole2.outer_lock": {
+      "live": "gate_results/live_apex_core_insole2.gcode",
+      "candidate": "gate_results/cand_apex_core_insole2.gcode",
+      "outer_lock_sha256": "1964f64a55b977675e6b143fc0b4db2eb055488154508bbcacbad0267a3533b5",
+      "mode": "d3+rotate",
+      "layers": [
+        94,
+        94
+      ],
+      "locked": {
+        "Outer+Overhang (rotation rule)": {
+          "live_runs": 92,
+          "cand_runs": 92,
+          "unmatched_live": 0,
+          "unmatched_cand": 0,
+          "layers_bad": 0
+        }
+      },
+      "outer_width_steps": {
+        "live": 0,
+        "cand": 0
+      },
+      "worst_unmatched": {
+        "xy_mm": 0.0,
+        "e_rel": 0.0,
+        "f_mm_s": 0.0
+      },
+      "run_order_changes_layers": 0,
+      "rotated_closed_loops": 90,
+      "bad_layers_first20": [],
+      "reduce_crossing_wall": [
+        "; reduce_crossing_wall = 1"
+      ],
+      "crossings": {
+        "live": {
+          "perimeter_crossings": 0,
+          "outer_only_crossings": 0,
+          "seam_approaches": 94,
+          "surface_crossings": 0,
+          "skin_interior_travels": 0,
+          "gap_crossings": 0,
+          "chain_hop_crossings": 0,
+          "gap_exit_crossings": 0,
+          "seam_block_crossings": 0
+        },
+        "cand": {
+          "perimeter_crossings": 0,
+          "outer_only_crossings": 0,
+          "seam_approaches": 93,
+          "surface_crossings": 0,
+          "skin_interior_travels": 1,
+          "gap_crossings": 0,
+          "chain_hop_crossings": 0,
+          "gap_exit_crossings": 0,
+          "seam_block_crossings": 0
+        }
+      },
+      "retracts_near_outer": [
+        92,
+        18
+      ],
+      "wipes": [
+        91,
+        91
+      ],
+      "z_moves": [
+        92,
+        92
+      ],
+      "result": "FAIL",
+      "failures": [
+        "E skin_interior_travels 1 > live 0"
+      ]
+    },
+    "apex_core_insole2.print_budget": {
+      "result": "FAIL",
+      "failures": [
+        "time 0h 34m 24s > live 0h 33m 33s +2.0%"
+      ],
+      "live": {
+        "time_s": 2013,
+        "time": "0h 33m 33s",
+        "filament_g": 33.38,
+        "infill": "26%"
+      },
+      "cand": {
+        "time_s": 2064,
+        "time": "0h 34m 24s",
+        "filament_g": 34.33,
+        "infill": "26%"
+      },
+      "time_pct": 2.53353204172877,
+      "filament_pct": 2.8460155781905305,
+      "time_budget_pct": 2.0,
+      "print_budget_sha256": "c576d0fbcd8cfc940d8f1495a274dcff3316d3baafeff8cea53b3c4251af82e2"
+    },
+    "apex_core_insole2.seam_bottom": {
+      "seam_bottom_sha256": "dbc84839afd8dc62506be281b9791567f35f807ec672568a12ecfd2c1c30a075",
+      "mode": "absolute (ApexCore, bar = ApexLight live)",
+      "params": {
+        "FACE_HALF_ANGLE": 45.0,
+        "NORMAL_SPAN": 0.5,
+        "VIS_TOL": 0.05,
+        "ROT_CLOSE": 0.011,
+        "LC_FLOOR": 0.98
+      },
+      "bars_from_apexlight_live": {
+        "LC": 0.98,
+        "CS": 1.0
+      },
+      "cand_fraction": {
+        "LC": 1.0,
+        "CS": 1.0
+      },
+      "live_apexcore": {
+        "mid": {
+          "LC": {
+            "bottom": 0,
+            "top": 90,
+            "side": 0
+          },
+          "CS": {
+            "bottom": 0,
+            "top": 90,
+            "side": 0
+          },
+          "OE": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          },
+          "VS": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          }
+        },
+        "ends": {
+          "LC": {
+            "bottom": 0,
+            "top": 1,
+            "side": 1
+          },
+          "CS": {
+            "bottom": 1,
+            "top": 0,
+            "side": 1
+          },
+          "OE": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          },
+          "VS": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          }
+        }
+      },
+      "cand": {
+        "mid": {
+          "LC": {
+            "bottom": 90,
+            "top": 0,
+            "side": 0
+          },
+          "CS": {
+            "bottom": 90,
+            "top": 0,
+            "side": 0
+          },
+          "OE": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          },
+          "VS": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          }
+        },
+        "ends": {
+          "LC": {
+            "bottom": 0,
+            "top": 1,
+            "side": 1
+          },
+          "CS": {
+            "bottom": 1,
+            "top": 0,
+            "side": 1
+          },
+          "OE": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          },
+          "VS": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          }
+        }
+      },
+      "apexlight_live": {
+        "mid": {
+          "LC": {
+            "bottom": 87,
+            "top": 2,
+            "side": 3
+          },
+          "CS": {
+            "bottom": 92,
+            "top": 0,
+            "side": 0
+          },
+          "OE": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          },
+          "VS": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          }
+        },
+        "ends": {
+          "LC": {
+            "bottom": 0,
+            "top": 1,
+            "side": 1
+          },
+          "CS": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          },
+          "OE": {
+            "bottom": 0,
+            "top": 0,
+            "side": 4
+          },
+          "VS": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          }
+        }
+      },
+      "cand_off_bottom_examples": {
+        "LC": [],
+        "CS": [],
+        "OE": [],
+        "VS": []
+      },
+      "result": "PASS",
+      "failures": []
+    },
+    "apex_core_insole2.seam_joint": {
+      "seam_joint_sha256": "30566f98921b995b1d6f3d300736729f75f6560fe9cd891ea6ac105d85ab654f",
+      "params": {
+        "E_TOL": 0.0001,
+        "SHORT_LOOP": 3.0,
+        "OVERLAP": 0.4,
+        "TAIL_TOL": 0.011,
+        "COLUMN_MM": 1.0,
+        "END_MM": 0.3,
+        "SKIN_CLEAR": 0.55
+      },
+      "mode": "zero-travel-cuts (ApexCore)",
+      "live": {
+        "J1_short_primes": 0,
+        "J1_over_primes": 0,
+        "J2_closed_loops_gt3mm": 92,
+        "J2_missing_cover": 1,
+        "J2_long_overlap": 0,
+        "J3_stacked_deficit": 0,
+        "J3_column_starts": 90,
+        "J3_layers_with_closed_start": 92,
+        "J4_wall_cuts": 2,
+        "J4_surface_cuts": 0,
+        "J4_skin_travels": 2,
+        "examples": {
+          "J1_short": [],
+          "J2_missing": [
+            [
+              2,
+              95.5,
+              0.021
+            ]
+          ],
+          "J4_wall": [
+            [
+              3,
+              95.7,
+              0.422,
+              140.0,
+              2.227
+            ],
+            [
+              93,
+              95.7,
+              14.811,
+              140.0,
+              15.73
+            ]
+          ],
+          "J4_surface": [],
+          "J4_skin": [
+            [
+              92,
+              184.0,
+              14.534,
+              140.0,
+              15.577
+            ],
+            [
+              92,
+              138.9,
+              15.577,
+              95.7,
+              14.411
+            ]
+          ]
+        }
+      },
+      "cand": {
+        "J1_short_primes": 0,
+        "J1_over_primes": 0,
+        "J2_closed_loops_gt3mm": 92,
+        "J2_missing_cover": 1,
+        "J2_long_overlap": 0,
+        "J3_stacked_deficit": 0,
+        "J3_column_starts": 90,
+        "J3_layers_with_closed_start": 92,
+        "J4_wall_cuts": 1,
+        "J4_surface_cuts": 0,
+        "J4_skin_travels": 0,
+        "examples": {
+          "J1_short": [],
+          "J2_missing": [
+            [
+              2,
+              95.5,
+              0.021
+            ]
+          ],
+          "J4_wall": [
+            [
+              93,
+              95.7,
+              14.811,
+              140.0,
+              15.73
+            ]
+          ],
+          "J4_surface": [],
+          "J4_skin": []
+        }
+      },
+      "new_offenders": {
+        "J4_wall_cuts": {
+          "new": 0,
+          "examples": []
+        },
+        "J4_surface_cuts": {
+          "new": 0,
+          "examples": []
+        },
+        "J4_skin_travels": {
+          "new": 0,
+          "examples": []
+        }
+      },
+      "result": "FAIL",
+      "failures": [
+        "J4_wall_cuts 1 (ApexCore: 0 required; live 2)"
+      ]
+    },
+    "apex_core_insole2.sequence_lock": {
+      "result": "PASS",
+      "failures": [],
+      "commands_live": 16,
+      "commands_cand": 16,
+      "layers_differing": 0,
+      "layers_m204_set_differing": 0,
+      "first_layers": [],
+      "sequence_lock_sha256": "e519b67797034da8c194ddde90f65f1e00cb50ca4ce64874b65c9a0a4f99e123"
+    },
+    "apex_core_insole2.skin_bond": {
+      "skin_bond_sha256": "0fe3627f5e1165c2dd3468b79cdb0fb98c9d5d0f1fe9dd4716daae2a84fca013",
+      "params": {
+        "BAND": [
+          0.3,
+          1.0
+        ],
+        "COL_STEP": 0.5,
+        "THICK_MIN": 4.0,
+        "CONTACT_TOL": 0.05,
+        "CONTACT_MIN": 0.3,
+        "CHAIN_MIN": 0.25,
+        "RUN_P90_MAX_MM": 12.0
+      },
+      "cand": {
+        "file": "cand_apex_core_insole2.gcode",
+        "layers": 93,
+        "band": [
+          0.3,
+          1.0
+        ],
+        "excluded_layers": [
+          2,
+          93
+        ],
+        "top": {
+          "cols": 11214,
+          "contact_frac": 0.962,
+          "chain_frac": 0.377,
+          "gap_under_skin_mm_p10_p50_p90": [
+            -0.08,
+            -0.08,
+            -0.08
+          ],
+          "unbonded_run_p90_mm": 1.0,
+          "unbonded_run_max_mm": 89.0
+        },
+        "bottom": {
+          "cols": 11214,
+          "contact_frac": 0.307,
+          "chain_frac": 0.095,
+          "gap_under_skin_mm_p10_p50_p90": [
+            -0.039,
+            0.135,
+            0.306
+          ],
+          "unbonded_run_p90_mm": 60.5,
+          "unbonded_run_max_mm": 89.0
+        }
+      },
+      "live": {
+        "file": "live_apex_core_insole2.gcode",
+        "layers": 93,
+        "band": [
+          0.3,
+          1.0
+        ],
+        "excluded_layers": [
+          2,
+          93
+        ],
+        "top": {
+          "cols": 11214,
+          "contact_frac": 0.0,
+          "chain_frac": 0.0,
+          "gap_under_skin_mm_p10_p50_p90": [
+            0.334,
+            0.334,
+            0.334
+          ],
+          "unbonded_run_p90_mm": 89.0,
+          "unbonded_run_max_mm": 89.0
+        },
+        "bottom": {
+          "cols": 11214,
+          "contact_frac": 0.001,
+          "chain_frac": 0.001,
+          "gap_under_skin_mm_p10_p50_p90": [
+            0.334,
+            0.334,
+            0.335
+          ],
+          "unbonded_run_p90_mm": 89.0,
+          "unbonded_run_max_mm": 89.0
+        }
+      },
+      "failures": [],
+      "result": "PASS"
+    },
+    "apex_core_orthocad.air_bands": {
+      "result": "FAIL",
+      "failures": [
+        "band 90-100% air_noinfill_mm3 80.84 > live 80.80"
+      ],
+      "bands": [
+        {
+          "band": "0-10%",
+          "live": {
+            "cols": 4049,
+            "air_noinfill_cols": 3850,
+            "air_noinfill_mm3": 330.95
+          },
+          "cand": {
+            "cols": 4049,
+            "air_noinfill_cols": 3850,
+            "air_noinfill_mm3": 330.9
+          }
+        },
+        {
+          "band": "10-20%",
+          "live": {
+            "cols": 6590,
+            "air_noinfill_cols": 6459,
+            "air_noinfill_mm3": 577.17
+          },
+          "cand": {
+            "cols": 6590,
+            "air_noinfill_cols": 6459,
+            "air_noinfill_mm3": 577.08
+          }
+        },
+        {
+          "band": "20-30%",
+          "live": {
+            "cols": 7380,
+            "air_noinfill_cols": 7219,
+            "air_noinfill_mm3": 815.92
+          },
+          "cand": {
+            "cols": 7380,
+            "air_noinfill_cols": 7219,
+            "air_noinfill_mm3": 815.85
+          }
+        },
+        {
+          "band": "30-40%",
+          "live": {
+            "cols": 2672,
+            "air_noinfill_cols": 2457,
+            "air_noinfill_mm3": 322.66
+          },
+          "cand": {
+            "cols": 2672,
+            "air_noinfill_cols": 2457,
+            "air_noinfill_mm3": 322.64
+          }
+        },
+        {
+          "band": "40-50%",
+          "live": {
+            "cols": 774,
+            "air_noinfill_cols": 438,
+            "air_noinfill_mm3": 77.96
+          },
+          "cand": {
+            "cols": 774,
+            "air_noinfill_cols": 438,
+            "air_noinfill_mm3": 77.96
+          }
+        },
+        {
+          "band": "50-60%",
+          "live": {
+            "cols": 894,
+            "air_noinfill_cols": 408,
+            "air_noinfill_mm3": 65.88
+          },
+          "cand": {
+            "cols": 894,
+            "air_noinfill_cols": 408,
+            "air_noinfill_mm3": 65.88
+          }
+        },
+        {
+          "band": "60-70%",
+          "live": {
+            "cols": 748,
+            "air_noinfill_cols": 265,
+            "air_noinfill_mm3": 31.47
+          },
+          "cand": {
+            "cols": 748,
+            "air_noinfill_cols": 227,
+            "air_noinfill_mm3": 27.24
+          }
+        },
+        {
+          "band": "70-80%",
+          "live": {
+            "cols": 721,
+            "air_noinfill_cols": 366,
+            "air_noinfill_mm3": 55.88
+          },
+          "cand": {
+            "cols": 721,
+            "air_noinfill_cols": 352,
+            "air_noinfill_mm3": 55.03
+          }
+        },
+        {
+          "band": "80-90%",
+          "live": {
+            "cols": 1573,
+            "air_noinfill_cols": 1532,
+            "air_noinfill_mm3": 189.64
+          },
+          "cand": {
+            "cols": 1573,
+            "air_noinfill_cols": 1532,
+            "air_noinfill_mm3": 189.64
+          }
+        },
+        {
+          "band": "90-100%",
+          "live": {
+            "cols": 1376,
+            "air_noinfill_cols": 831,
+            "air_noinfill_mm3": 80.8
+          },
+          "cand": {
+            "cols": 1376,
+            "air_noinfill_cols": 827,
+            "air_noinfill_mm3": 80.84
+          }
+        }
+      ],
+      "air_bands_sha256": "c82e6ff2a8303c459a422e4141d914a045b2c4bb42180cdf235cc1e977db2bff"
+    },
+    "apex_core_orthocad.air_vs_cura": {
+      "first_last_layer_exclusion": {
+        "excluded_layers": [
+          1,
+          437
+        ],
+        "toe_air_cols_with_them": 6902,
+        "b15_30_air_cols_with_them": 10626
+      },
+      "result": "FAIL",
+      "failures": [
+        "toe_0_15 air_noinfill_cols 6893 > Cura 359",
+        "toe_0_15 air_noinfill_mm3 598.75 > Cura 53.09",
+        "b15_30 air_noinfill_cols 10626 > Cura 1554",
+        "b15_30 air_noinfill_mm3 1124.59 > Cura 256.23"
+      ],
+      "bands": {
+        "toe_0_15": {
+          "cand_cols": 6893,
+          "cura_cols": 359,
+          "cand_mm3": 598.75,
+          "cura_mm3": 53.09,
+          "cand_worst": 0.67,
+          "cura_worst": 1.59
+        },
+        "b15_30": {
+          "cand_cols": 10626,
+          "cura_cols": 1554,
+          "cand_mm3": 1124.59,
+          "cura_mm3": 256.23,
+          "cand_worst": 0.96,
+          "cura_worst": 1.78
+        }
+      },
+      "air_sha256": "08a65cb5b5dce5f26f9bead182679cdd50b9a3dc61202fc74090c6d8898e116f",
+      "air_vs_cura_sha256": "49fdbc5163084437501b81db01caedd303f084c96fe8b0c51008a83854b5d72e"
+    },
+    "apex_core_orthocad.inner_shift": {
+      "inner_shift_sha256": "00db83c491a643bf42ea430b4ff5e0fa4f44806f70139a53f8be9423045ab59d",
+      "params": {
+        "SHIFT_MAX": 0.454,
+        "INF_SHIFT_MAX": 0.734,
+        "INF_BAND": 3.2,
+        "CROWD_MAX_MM": 0.1237,
+        "SEG_MIN_RATIO": 0.95,
+        "TURN_TOL": 0.2,
+        "TOWARD_K": 0.7
+      },
+      "counts": {
+        "S1": 146,
+        "S2": 0,
+        "S3_far": 43,
+        "S3_out": 0,
+        "S3_side": 121,
+        "S4": 88,
+        "S6_off": 226,
+        "S6_band": 0
+      },
+      "crowd_samples_over_cap": {
+        "live": 0,
+        "cand": 25265
+      },
+      "worst": {
+        "shift": 64.6223,
+        "outward": 0.0063,
+        "crowd_cand": 0.2068,
+        "crowd_live": 0.0869,
+        "inf_shift": Infinity,
+        "inf_inner_ov_live": 0.3206,
+        "inf_inner_ov_cand": 0.4242
+      },
+      "rotated_inner_loops": 71,
+      "infill": {
+        "Sparse infill": {
+          "F_live": [
+            26.0
+          ],
+          "F_cand": [
+            26.0
+          ],
+          "median_e_live": 0.1799889199894017,
+          "median_e_cand": 0.1799888695938854,
+          "segs_e_out_of_range": 0,
+          "vol_ratio": 1.2107
+        },
+        "Internal solid infill": {
+          "F_live": [
+            26.0
+          ],
+          "F_cand": [
+            26.0
+          ],
+          "median_e_live": 0.13727366884447748,
+          "median_e_cand": 0.13728390009043193,
+          "segs_e_out_of_range": 0,
+          "vol_ratio": 1.3398
+        }
+      },
+      "samples": [
+        "layer 142: Inner wall run segments 10 vs live 9, width steps 0 vs 0",
+        "layer 143: Inner wall run segments 11 vs live 10, width steps 0 vs 0",
+        "layer 153: Inner wall run segments 14 vs live 13, width steps 0 vs 0",
+        "layer 153: 2 inner/infill samples overlap the outer bead by more than 0.124 mm (max 0.146)",
+        "layer 154: 2 inner/infill samples overlap the outer bead by more than 0.124 mm (max 0.155)",
+        "layer 155: 4 inner/infill samples overlap the outer bead by more than 0.124 mm (max 0.158)",
+        "layer 156: Inner wall run segments 18 vs live 17, width steps 0 vs 0",
+        "layer 156: 4 inner/infill samples overlap the outer bead by more than 0.124 mm (max 0.151)",
+        "layer 157: 4 inner/infill samples overlap the outer bead by more than 0.124 mm (max 0.155)",
+        "layer 158: Inner wall run segments 18 vs live 17, width steps 0 vs 0",
+        "layer 158: 5 inner/infill samples overlap the outer bead by more than 0.124 mm (max 0.147)",
+        "layer 159: Inner wall run segments 17 vs live 19, width steps 0 vs 0"
+      ],
+      "result": "FAIL",
+      "failures": [
+        "S1 Inner wall run structure changed (runs/segments/width steps) on 146 runs/layers",
+        "S3 Inner wall moved more than SHIFT_MAX on 43 runs",
+        "S3 Inner wall moved sideways (not a pure offset toward the outer wall) on 121 runs",
+        "S4 Inner wall zig-zag / extra turning on 88 runs",
+        "S6 infill lies more than INF_EXT_MAX from any live infill line on 226 layer-types",
+        "S5 inner/infill beads crowd the outer bead: 25265 samples overlap it by more than 0.124 mm (live 0; max 0.207 mm)",
+        "S7 infill overlaps the inner wall by 0.424 mm (live worst 0.321 + 0.05)"
+      ]
+    },
+    "apex_core_orthocad.interior_lock": {
+      "interior_lock_sha256": "fcafd884d4c9f51cb35f7189403a37c4af3ea31643e06a2ba7ec662cec24256c",
+      "mode": "d3+rotate",
+      "params": {
+        "ALLOW_NEW_GAP_BEADS": true,
+        "SLOT_MAX_THICK": 4.0,
+        "BEAD_MAX_W": 1.5,
+        "INNER_POKE_TOL": 0.13,
+        "OUTER_FACE_TOL": 0.005,
+        "MIN_CONST_RUN_MM": 2.0,
+        "WIDTH_STEP_MM": 0.1,
+        "BEAD_W_TOL": 0.05,
+        "OVERLAP_MAX_FRAC": 0.1
+      },
+      "gap_segments_faster_than_gap_speed": [
+        29,
+        18
+      ],
+      "nongap_layers_changed": 0,
+      "nongap_changed_types": {},
+      "new_or_changed_gap_runs": 249,
+      "new_gap_len_mm": 2727.0,
+      "new_gap_vol_mm3": 902.1,
+      "removed_or_changed_live_gap_runs": 228,
+      "flow_cap_mm3s": 16.84136488591253,
+      "fast_flow_cap_mm3s": 44.31997912833099,
+      "live_gap_max_mm3s": 44.31997912833099,
+      "live_slow_gap_max_mm3s": 16.84136488591253,
+      "live_fast_gap_max_mm3s": 44.31997912833099,
+      "straddling_live_runs_on_changed_layers": 78,
+      "runs_too_wide": 0,
+      "runs_double_deposit": 4,
+      "config_cap_mm3s": 35.0,
+      "worst": {
+        "flow": 15.78063263597226,
+        "fast_flow": 21.97979417379433,
+        "width": 1.4181677341325134,
+        "overlap_other_frac": 0.13773598969252424,
+        "overlap_self_frac": 0.3597291397818848,
+        "outside_O_area": 0.0,
+        "outside_I_area": 0.38525316002301113,
+        "min_group_mm": 0.1059546667486495
+      },
+      "runs_outside_thin_zone": 450,
+      "runs_past_outer_face": 0,
+      "runs_not_between_inner_faces": 64,
+      "runs_flow_over_cap": 0,
+      "runs_width_step_violation": 101,
+      "layers_wall_after_gap": 0,
+      "layers_new_gap_growth_forbidden": 0,
+      "samples": [
+        "layer 135: gap run at (126.81,1.82) outside thin zone",
+        "layer 136: gap run at (125.25,1.82) outside thin zone",
+        "layer 137: gap run at (124.20,1.82) outside thin zone",
+        "layer 138: gap run at (123.01,1.82) outside thin zone",
+        "layer 139: gap run at (121.92,1.82) outside thin zone",
+        "layer 140: gap run at (120.91,1.82) outside thin zone",
+        "layer 141: gap run at (120.08,1.82) outside thin zone",
+        "layer 142: gap run at (118.92,1.82) outside thin zone",
+        "layer 143: gap run at (117.84,1.82) outside thin zone",
+        "layer 144: gap run at (116.61,1.82) outside thin zone"
+      ],
+      "result": "FAIL",
+      "failures": [
+        "I2 450 gap runs outside the measured thin zone",
+        "I2 64 gap runs not between two wall inner faces",
+        "I9 4 gap beads double-deposit (overlap > 10%)",
+        "I5 101 gap beads with a width step not held for 2.0 mm"
+      ]
+    },
+    "apex_core_orthocad.outer_lock": {
+      "live": "gate_results/live_apex_core_orthocad.gcode",
+      "candidate": "gate_results/cand_apex_core_orthocad.gcode",
+      "outer_lock_sha256": "1964f64a55b977675e6b143fc0b4db2eb055488154508bbcacbad0267a3533b5",
+      "mode": "d3+rotate",
+      "layers": [
+        439,
+        439
+      ],
+      "locked": {
+        "Outer+Overhang (rotation rule)": {
+          "live_runs": 440,
+          "cand_runs": 440,
+          "unmatched_live": 0,
+          "unmatched_cand": 0,
+          "layers_bad": 0
+        }
+      },
+      "outer_width_steps": {
+        "live": 0,
+        "cand": 0
+      },
+      "worst_unmatched": {
+        "xy_mm": 0.0,
+        "e_rel": 0.0,
+        "f_mm_s": 0.0
+      },
+      "run_order_changes_layers": 0,
+      "rotated_closed_loops": 433,
+      "bad_layers_first20": [],
+      "reduce_crossing_wall": [
+        "; reduce_crossing_wall = 1"
+      ],
+      "crossings": {
+        "live": {
+          "perimeter_crossings": 0,
+          "outer_only_crossings": 0,
+          "seam_approaches": 621,
+          "surface_crossings": 0,
+          "skin_interior_travels": 0,
+          "gap_crossings": 0,
+          "chain_hop_crossings": 0,
+          "gap_exit_crossings": 0,
+          "seam_block_crossings": 0
+        },
+        "cand": {
+          "perimeter_crossings": 8,
+          "outer_only_crossings": 8,
+          "seam_approaches": 472,
+          "surface_crossings": 0,
+          "skin_interior_travels": 1,
+          "gap_crossings": 0,
+          "chain_hop_crossings": 0,
+          "gap_exit_crossings": 0,
+          "seam_block_crossings": 0
+        }
+      },
+      "retracts_near_outer": [
+        224,
+        122
+      ],
+      "wipes": [
+        436,
+        436
+      ],
+      "z_moves": [
+        437,
+        437
+      ],
+      "result": "FAIL",
+      "failures": [
+        "E perimeter_crossings = 8 (live 0; candidate may never exceed live, and must be 0 where live is 0)",
+        "E outer_only_crossings = 8 (live 0; candidate may never exceed live, and must be 0 where live is 0)",
+        "E skin_interior_travels 1 > live 0"
+      ]
+    },
+    "apex_core_orthocad.print_budget": {
+      "result": "FAIL",
+      "failures": [
+        "time 1h 38m 47s > live 1h 34m 51s +2.0%"
+      ],
+      "live": {
+        "time_s": 5691,
+        "time": "1h 34m 51s",
+        "filament_g": 84.05,
+        "infill": "26%"
+      },
+      "cand": {
+        "time_s": 5927,
+        "time": "1h 38m 47s",
+        "filament_g": 87.38,
+        "infill": "26%"
+      },
+      "time_pct": 4.146898611843253,
+      "filament_pct": 3.9619274241522895,
+      "time_budget_pct": 2.0,
+      "print_budget_sha256": "c576d0fbcd8cfc940d8f1495a274dcff3316d3baafeff8cea53b3c4251af82e2"
+    },
+    "apex_core_orthocad.seam_bottom": {
+      "seam_bottom_sha256": "dbc84839afd8dc62506be281b9791567f35f807ec672568a12ecfd2c1c30a075",
+      "mode": "absolute (ApexCore, bar = ApexLight live)",
+      "params": {
+        "FACE_HALF_ANGLE": 45.0,
+        "NORMAL_SPAN": 0.5,
+        "VIS_TOL": 0.05,
+        "ROT_CLOSE": 0.011,
+        "LC_FLOOR": 0.98
+      },
+      "bars_from_apexlight_live": {
+        "LC": 0.9885,
+        "CS": 1.0
+      },
+      "cand_fraction": {
+        "LC": 0.9977,
+        "CS": 1.0
+      },
+      "live_apexcore": {
+        "mid": {
+          "LC": {
+            "bottom": 3,
+            "top": 322,
+            "side": 110
+          },
+          "CS": {
+            "bottom": 0,
+            "top": 322,
+            "side": 110
+          },
+          "OE": {
+            "bottom": 10,
+            "top": 0,
+            "side": 16
+          },
+          "VS": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          }
+        },
+        "ends": {
+          "LC": {
+            "bottom": 1,
+            "top": 1,
+            "side": 0
+          },
+          "CS": {
+            "bottom": 1,
+            "top": 1,
+            "side": 0
+          },
+          "OE": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          },
+          "VS": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          }
+        }
+      },
+      "cand": {
+        "mid": {
+          "LC": {
+            "bottom": 434,
+            "top": 1,
+            "side": 0
+          },
+          "CS": {
+            "bottom": 432,
+            "top": 0,
+            "side": 0
+          },
+          "OE": {
+            "bottom": 10,
+            "top": 0,
+            "side": 16
+          },
+          "VS": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          }
+        },
+        "ends": {
+          "LC": {
+            "bottom": 1,
+            "top": 1,
+            "side": 0
+          },
+          "CS": {
+            "bottom": 2,
+            "top": 0,
+            "side": 0
+          },
+          "OE": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          },
+          "VS": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          }
+        }
+      },
+      "apexlight_live": {
+        "mid": {
+          "LC": {
+            "bottom": 431,
+            "top": 4,
+            "side": 1
+          },
+          "CS": {
+            "bottom": 435,
+            "top": 0,
+            "side": 0
+          },
+          "OE": {
+            "bottom": 1,
+            "top": 1,
+            "side": 4
+          },
+          "VS": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          }
+        },
+        "ends": {
+          "LC": {
+            "bottom": 1,
+            "top": 1,
+            "side": 0
+          },
+          "CS": {
+            "bottom": 1,
+            "top": 0,
+            "side": 0
+          },
+          "OE": {
+            "bottom": 0,
+            "top": 0,
+            "side": 2
+          },
+          "VS": {
+            "bottom": 0,
+            "top": 0,
+            "side": 0
+          }
+        }
+      },
+      "cand_off_bottom_examples": {
+        "LC": [
+          {
+            "layer": 437,
+            "x": 139.175,
+            "y": 18.134,
+            "face": "top",
+            "normal": [
+              -0.02,
+              1.0
+            ],
+            "dist_to_face": 0.739
+          }
+        ],
+        "CS": [],
+        "OE": [
+          {
+            "layer": 7,
+            "x": 144.469,
+            "y": 0.034,
+            "face": "side",
+            "normal": [
+              0.759,
+              -0.651
+            ],
+            "dist_to_face": 0.0
+          },
+          {
+            "layer": 7,
+            "x": 144.09,
+            "y": 0.575,
+            "face": "side",
+            "normal": [
+              0.909,
+              -0.416
+            ],
+            "dist_to_face": 0.495
+          },
+          {
+            "layer": 7,
+            "x": 144.09,
+            "y": 0.575,
+            "face": "side",
+            "normal": [
+              0.909,
+              -0.416
+            ],
+            "dist_to_face": 0.495
+          },
+          {
+            "layer": 7,
+            "x": 144.357,
+            "y": 1.157,
+            "face": "side",
+            "normal": [
+              0.964,
+              0.267
+            ],
+            "dist_to_face": 0.111
+          },
+          {
+            "layer": 7,
+            "x": 144.357,
+            "y": 1.157,
+            "face": "side",
+            "normal": [
+              0.964,
+              0.267
+            ],
+            "dist_to_face": 0.111
+          },
+          {
+            "layer": 7,
+            "x": 144.35,
+            "y": 1.254,
+            "face": "side",
+            "normal": [
+              0.947,
+              0.321
+            ],
+            "dist_to_face": 0.083
+          },
+          {
+            "layer": 7,
+            "x": 144.35,
+            "y": 1.254,
+            "face": "side",
+            "normal": [
+              0.947,
+              0.321
+            ],
+            "dist_to_face": 0.083
+          },
+          {
+            "layer": 8,
+            "x": 145.73,
+            "y": 0.142,
+            "face": "side",
+            "normal": [
+              0.808,
+              -0.59
+            ],
+            "dist_to_face": 0.0
+          }
+        ],
+        "VS": []
+      },
+      "result": "PASS",
+      "failures": []
+    },
+    "apex_core_orthocad.seam_joint": {
+      "seam_joint_sha256": "30566f98921b995b1d6f3d300736729f75f6560fe9cd891ea6ac105d85ab654f",
+      "params": {
+        "E_TOL": 0.0001,
+        "SHORT_LOOP": 3.0,
+        "OVERLAP": 0.4,
+        "TAIL_TOL": 0.011,
+        "COLUMN_MM": 1.0,
+        "END_MM": 0.3,
+        "SKIN_CLEAR": 0.55
+      },
+      "mode": "zero-travel-cuts (ApexCore)",
+      "live": {
+        "J1_short_primes": 0,
+        "J1_over_primes": 0,
+        "J2_closed_loops_gt3mm": 434,
+        "J2_missing_cover": 1,
+        "J2_long_overlap": 0,
+        "J3_stacked_deficit": 0,
+        "J3_column_starts": 391,
+        "J3_layers_with_closed_start": 434,
+        "J4_wall_cuts": 37,
+        "J4_surface_cuts": 0,
+        "J4_skin_travels": 4,
+        "examples": {
+          "J1_short": [],
+          "J2_missing": [
+            [
+              2,
+              132.08,
+              0.12
+            ]
+          ],
+          "J4_wall": [
+            [
+              222,
+              101.338,
+              19.047,
+              127.006,
+              1.835
+            ],
+            [
+              251,
+              152.952,
+              8.439,
+              149.927,
+              9.116
+            ],
+            [
+              402,
+              103.964,
+              25.519,
+              126.445,
+              1.835
+            ],
+            [
+              403,
+              104.176,
+              25.346,
+              127.779,
+              1.835
+            ],
+            [
+              404,
+              104.414,
+              25.207,
+              129.411,
+              1.835
+            ]
+          ],
+          "J4_surface": [],
+          "J4_skin": [
+            [
+              432,
+              120.076,
+              19.394,
+              136.771,
+              14.763
+            ],
+            [
+              433,
+              136.771,
+              15.163,
+              120.794,
+              20.003
+            ],
+            [
+              433,
+              121.765,
+              19.086,
+              136.76,
+              15.394
+            ]
+          ]
+        }
+      },
+      "cand": {
+        "J1_short_primes": 0,
+        "J1_over_primes": 0,
+        "J2_closed_loops_gt3mm": 434,
+        "J2_missing_cover": 1,
+        "J2_long_overlap": 0,
+        "J3_stacked_deficit": 0,
+        "J3_column_starts": 422,
+        "J3_layers_with_closed_start": 434,
+        "J4_wall_cuts": 37,
+        "J4_surface_cuts": 1,
+        "J4_skin_travels": 2,
+        "examples": {
+          "J1_short": [],
+          "J2_missing": [
+            [
+              2,
+              132.08,
+              0.12
+            ]
+          ],
+          "J4_wall": [
+            [
+              286,
+              119.617,
+              19.377,
+              108.272,
+              26.176
+            ],
+            [
+              287,
+              120.89,
+              18.582,
+              107.569,
+              26.299
+            ],
+            [
+              287,
+              107.793,
+              26.044,
+              108.429,
+              27.166
+            ],
+            [
+              289,
+              118.368,
+              20.079,
+              108.869,
+              28.793
+            ],
+            [
+              289,
+              108.337,
+              29.2,
+              107.855,
+              27.94
+            ]
+          ],
+          "J4_surface": [
+            [
+              205,
+              178.088,
+              2.998,
+              115.631,
+              5.248
+            ]
+          ],
+          "J4_skin": [
+            [
+              432,
+              129.407,
+              15.74,
+              129.407,
+              16.14
+            ],
+            [
+              432,
+              129.407,
+              16.14,
+              136.668,
+              14.925
+            ]
+          ]
+        }
+      },
+      "new_offenders": {
+        "J4_wall_cuts": {
+          "new": 37,
+          "examples": [
+            [
+              286,
+              119.617,
+              19.377,
+              108.272,
+              26.176
+            ],
+            [
+              287,
+              120.89,
+              18.582,
+              107.569,
+              26.299
+            ],
+            [
+              287,
+              107.793,
+              26.044,
+              108.429,
+              27.166
+            ],
+            [
+              289,
+              118.368,
+              20.079,
+              108.869,
+              28.793
+            ],
+            [
+              289,
+              108.337,
+              29.2,
+              107.855,
+              27.94
+            ]
+          ]
+        },
+        "J4_surface_cuts": {
+          "new": 1,
+          "examples": [
+            [
+              205,
+              178.088,
+              2.998,
+              115.631,
+              5.248
+            ]
+          ]
+        },
+        "J4_skin_travels": {
+          "new": 2,
+          "examples": [
+            [
+              432,
+              129.407,
+              15.74,
+              129.407,
+              16.14
+            ],
+            [
+              432,
+              129.407,
+              16.14,
+              136.668,
+              14.925
+            ]
+          ]
+        }
+      },
+      "result": "FAIL",
+      "failures": [
+        "J4_wall_cuts 37 (ApexCore: 0 required; live 37)",
+        "J4_surface_cuts 1 (ApexCore: 0 required; live 0)",
+        "J4_skin_travels 2 (ApexCore: 0 required; live 4)"
+      ]
+    },
+    "apex_core_orthocad.sequence_lock": {
+      "result": "PASS",
+      "failures": [],
+      "commands_live": 16,
+      "commands_cand": 16,
+      "layers_differing": 0,
+      "layers_m204_set_differing": 0,
+      "first_layers": [],
+      "sequence_lock_sha256": "e519b67797034da8c194ddde90f65f1e00cb50ca4ce64874b65c9a0a4f99e123"
+    },
+    "apex_core_orthocad.skin_bond": {
+      "skin_bond_sha256": "0fe3627f5e1165c2dd3468b79cdb0fb98c9d5d0f1fe9dd4716daae2a84fca013",
+      "params": {
+        "BAND": [
+          0.3,
+          1.0
+        ],
+        "COL_STEP": 0.5,
+        "THICK_MIN": 4.0,
+        "CONTACT_TOL": 0.05,
+        "CONTACT_MIN": 0.3,
+        "CHAIN_MIN": 0.25,
+        "RUN_P90_MAX_MM": 12.0
+      },
+      "cand": {
+        "file": "cand_apex_core_orthocad.gcode",
+        "layers": 438,
+        "band": [
+          0.3,
+          1.0
+        ],
+        "excluded_layers": [
+          2,
+          438
+        ],
+        "top": {
+          "cols": 38107,
+          "contact_frac": 0.865,
+          "chain_frac": 0.306,
+          "gap_under_skin_mm_p10_p50_p90": [
+            -0.171,
+            -0.086,
+            0.449
+          ],
+          "unbonded_run_p90_mm": 6.0,
+          "unbonded_run_max_mm": 31.5
+        },
+        "bottom": {
+          "cols": 38106,
+          "contact_frac": 0.862,
+          "chain_frac": 0.255,
+          "gap_under_skin_mm_p10_p50_p90": [
+            -0.204,
+            -0.08,
+            0.456
+          ],
+          "unbonded_run_p90_mm": 5.5,
+          "unbonded_run_max_mm": 31.5
+        }
+      },
+      "live": {
+        "file": "live_apex_core_orthocad.gcode",
+        "layers": 438,
+        "band": [
+          0.3,
+          1.0
+        ],
+        "excluded_layers": [
+          2,
+          438
+        ],
+        "top": {
+          "cols": 38107,
+          "contact_frac": 0.012,
+          "chain_frac": 0.001,
+          "gap_under_skin_mm_p10_p50_p90": [
+            0.221,
+            0.327,
+            0.451
+          ],
+          "unbonded_run_p90_mm": 69.0,
+          "unbonded_run_max_mm": 81.0
+        },
+        "bottom": {
+          "cols": 38106,
+          "contact_frac": 0.049,
+          "chain_frac": 0.013,
+          "gap_under_skin_mm_p10_p50_p90": [
+            0.181,
+            0.334,
+            0.464
+          ],
+          "unbonded_run_p90_mm": 64.5,
+          "unbonded_run_max_mm": 81.5
+        }
+      },
+      "failures": [],
+      "result": "PASS"
+    },
+    "apex_light_insole2.air_bands": {
+      "result": "PASS",
+      "failures": [],
+      "bands": [
+        {
+          "band": "0-10%",
+          "live": {
+            "cols": 534,
+            "air_noinfill_cols": 534,
+            "air_noinfill_mm3": 86.66
+          },
+          "cand": {
+            "cols": 534,
+            "air_noinfill_cols": 534,
+            "air_noinfill_mm3": 86.66
+          }
+        },
+        {
+          "band": "10-20%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "20-30%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "30-40%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "40-50%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "50-60%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "60-70%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "70-80%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "80-90%",
+          "live": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          },
+          "cand": {
+            "cols": 0,
+            "air_noinfill_cols": 0,
+            "air_noinfill_mm3": 0.0
+          }
+        },
+        {
+          "band": "90-100%",
+          "live": {
+            "cols": 534,
+            "air_noinfill_cols": 534,
+            "air_noinfill_mm3": 35.0
+          },
+          "cand": {
+            "cols": 534,
+            "air_noinfill_cols": 534,
+            "air_noinfill_mm3": 35.0
+          }
+        }
+      ],
+      "air_bands_sha256": "c82e6ff2a8303c459a422e4141d914a045b2c4bb42180cdf235cc1e977db2bff"
+    },
+    "apex_light_insole2.interior_lock": {
+      "interior_lock_sha256": "fcafd884d4c9f51cb35f7189403a37c4af3ea31643e06a2ba7ec662cec24256c",
+      "mode": "strict",
+      "params": {
+        "ALLOW_NEW_GAP_BEADS": true,
+        "SLOT_MAX_THICK": 4.0,
+        "BEAD_MAX_W": 1.5,
+        "INNER_POKE_TOL": 0.13,
+        "OUTER_FACE_TOL": 0.005,
+        "MIN_CONST_RUN_MM": 2.0,
+        "WIDTH_STEP_MM": 0.1,
+        "BEAD_W_TOL": 0.05,
+        "OVERLAP_MAX_FRAC": 0.1
+      },
+      "gap_segments_faster_than_gap_speed": [
+        0,
+        0
+      ],
+      "nongap_layers_changed": 0,
+      "nongap_changed_types": {},
+      "new_or_changed_gap_runs": 0,
+      "new_gap_len_mm": 0.0,
+      "new_gap_vol_mm3": 0.0,
+      "removed_or_changed_live_gap_runs": 0,
+      "flow_cap_mm3s": 35.0,
+      "fast_flow_cap_mm3s": 35.0,
+      "live_gap_max_mm3s": 0.0,
+      "live_slow_gap_max_mm3s": 0.0,
+      "live_fast_gap_max_mm3s": 0.0,
+      "straddling_live_runs_on_changed_layers": 0,
+      "runs_too_wide": 0,
+      "runs_double_deposit": 0,
+      "config_cap_mm3s": 35.0,
+      "worst": {
+        "flow": 0.0,
+        "fast_flow": 0.0,
+        "width": 0.0,
+        "overlap_other_frac": 0.0,
+        "overlap_self_frac": 0.0,
+        "outside_O_area": 0.0,
+        "outside_I_area": 0.0,
+        "min_group_mm": null
+      },
+      "runs_outside_thin_zone": 0,
+      "runs_past_outer_face": 0,
+      "runs_not_between_inner_faces": 0,
+      "runs_flow_over_cap": 0,
+      "runs_width_step_violation": 0,
+      "layers_wall_after_gap": 0,
+      "layers_new_gap_growth_forbidden": 0,
+      "samples": [],
+      "result": "PASS",
+      "failures": []
+    },
+    "apex_light_insole2.outer_lock": {
+      "live": "gate_results/live_apex_light_insole2.gcode",
+      "candidate": "gate_results/cand_apex_light_insole2.gcode",
+      "outer_lock_sha256": "1964f64a55b977675e6b143fc0b4db2eb055488154508bbcacbad0267a3533b5",
+      "mode": "strict",
+      "layers": [
+        96,
+        96
+      ],
+      "locked": {
+        "Outer wall": {
+          "live_runs": 94,
+          "cand_runs": 94,
+          "unmatched_live": 0,
+          "unmatched_cand": 0,
+          "layers_bad": 0
+        }
+      },
+      "outer_width_steps": {
+        "live": 4,
+        "cand": 4
+      },
+      "worst_unmatched": {
+        "xy_mm": 0.0,
+        "e_rel": 0.0,
+        "f_mm_s": 0.0
+      },
+      "run_order_changes_layers": 0,
+      "rotated_closed_loops": 0,
+      "bad_layers_first20": [],
+      "reduce_crossing_wall": [
+        "; reduce_crossing_wall = 1"
+      ],
+      "crossings": {
+        "live": {
+          "perimeter_crossings": 1,
+          "outer_only_crossings": 1,
+          "seam_approaches": 272,
+          "surface_crossings": 0,
+          "skin_interior_travels": 16,
+          "gap_crossings": 0,
+          "chain_hop_crossings": 0,
+          "gap_exit_crossings": 0,
+          "seam_block_crossings": 1
+        },
+        "cand": {
+          "perimeter_crossings": 1,
+          "outer_only_crossings": 1,
+          "seam_approaches": 272,
+          "surface_crossings": 0,
+          "skin_interior_travels": 16,
+          "gap_crossings": 0,
+          "chain_hop_crossings": 0,
+          "gap_exit_crossings": 0,
+          "seam_block_crossings": 1
+        }
+      },
+      "retracts_near_outer": [
+        189,
+        189
+      ],
+      "wipes": [
+        92,
+        92
+      ],
+      "z_moves": [
+        94,
+        94
+      ],
+      "result": "PASS",
+      "failures": []
+    },
+    "apex_light_insole2.print_budget": {
+      "result": "PASS",
+      "failures": [],
+      "live": {
+        "time_s": 1797,
+        "time": "29m 57s",
+        "filament_g": 29.39,
+        "infill": "26%"
+      },
+      "cand": {
+        "time_s": 1797,
+        "time": "29m 57s",
+        "filament_g": 29.39,
+        "infill": "26%"
+      },
+      "time_pct": 0.0,
+      "filament_pct": 0.0,
+      "time_budget_pct": 10.0,
+      "print_budget_sha256": "c576d0fbcd8cfc940d8f1495a274dcff3316d3baafeff8cea53b3c4251af82e2"
+    },
+    "apex_light_insole2.seam_bottom": {
+      "seam_bottom_sha256": "dbc84839afd8dc62506be281b9791567f35f807ec672568a12ecfd2c1c30a075",
+      "params": {
+        "FACE_HALF_ANGLE": 45.0,
+        "NORMAL_SPAN": 0.5,
+        "VIS_TOL": 0.05
+      },
+      "categories": {
+        "LC": "layer changes",
+        "OS": "outer/overhang wall seams (run start+stop)",
+        "VS": "visible inner/gap/infill starts+stops"
+      },
+      "live": {
+        "LC": {
+          "bottom": 87,
+          "top": 3,
+          "side": 4
+        },
+        "OS": {
+          "bottom": 184,
+          "top": 0,
+          "side": 4
+        },
+        "VS": {
+          "bottom": 0,
+          "top": 0,
+          "side": 0
+        }
+      },
+      "cand": {
+        "LC": {
+          "bottom": 87,
+          "top": 3,
+          "side": 4
+        },
+        "OS": {
+          "bottom": 184,
+          "top": 0,
+          "side": 4
+        },
+        "VS": {
+          "bottom": 0,
+          "top": 0,
+          "side": 0
+        }
+      },
+      "live_visible_types": {},
+      "cand_visible_types": {},
+      "live_off_bottom_examples": {
+        "LC": [
+          {
+            "layer": 2,
+            "x": 95.488,
+            "y": 0.0,
+            "face": "side",
+            "normal": [
+              -1.0,
+              -0.0
+            ],
+            "dist_to_face": 0.0,
+            "type": "layer change"
+          },
+          {
+            "layer": 17,
+            "x": 180.733,
+            "y": 13.377,
+            "face": "top",
+            "normal": [
+              0.0,
+              1.0
+            ],
+            "dist_to_face": 0.956,
+            "type": "layer change"
+          },
+          {
+            "layer": 18,
+            "x": 181.283,
+            "y": 14.297,
+            "face": "top",
+            "normal": [
+              0.0,
+              1.0
+            ],
+            "dist_to_face": 0.956,
+            "type": "layer change"
+          },
+          {
+            "layer": 87,
+            "x": 182.826,
+            "y": 10.89,
+            "face": "side",
+            "normal": [
+              1.0,
+              -0.0
+            ],
+            "dist_to_face": 2.225,
+            "type": "layer change"
+          },
+          {
+            "layer": 88,
+            "x": 182.587,
+            "y": 11.81,
+            "face": "side",
+            "normal": [
+              1.0,
+              -0.0
+            ],
+            "dist_to_face": 2.464,
+            "type": "layer change"
+          },
+          {
+            "layer": 92,
+            "x": 96.352,
+            "y": 14.451,
+            "face": "side",
+            "normal": [
+              -0.707,
+              -0.707
+            ],
+            "dist_to_face": 1.124,
+            "type": "layer change"
+          },
+          {
+            "layer": 95,
+            "x": 95.262,
+            "y": 16.309,
+            "face": "top",
+            "normal": [
+              -0.704,
+              0.71
+            ],
+            "dist_to_face": 0.072,
+            "type": "layer change"
+          }
+        ],
+        "OS": [
+          {
+            "layer": 2,
+            "x": 95.488,
+            "y": 0.0,
+            "face": "side",
+            "normal": [
+              -1.0,
+              -0.0
+            ],
+            "dist_to_face": 0.0,
+            "type": "Outer wall"
+          },
+          {
+            "layer": 2,
+            "x": 184.512,
+            "y": 0.0,
+            "face": "side",
+            "normal": [
+              1.0,
+              -0.0
+            ],
+            "dist_to_face": 0.0,
+            "type": "Outer wall"
+          },
+          {
+            "layer": 95,
+            "x": 95.262,
+            "y": 15.909,
+            "face": "side",
+            "normal": [
+              -1.0,
+              0.0
+            ],
+            "dist_to_face": 0.0,
+            "type": "Outer wall"
+          },
+          {
+            "layer": 95,
+            "x": 184.738,
+            "y": 15.909,
+            "face": "side",
+            "normal": [
+              1.0,
+              -0.0
+            ],
+            "dist_to_face": 0.0,
+            "type": "Outer wall"
+          }
+        ],
+        "VS": []
+      },
+      "cand_off_bottom_examples": {
+        "LC": [
+          {
+            "layer": 2,
+            "x": 95.488,
+            "y": 0.0,
+            "face": "side",
+            "normal": [
+              -1.0,
+              -0.0
+            ],
+            "dist_to_face": 0.0,
+            "type": "layer change"
+          },
+          {
+            "layer": 17,
+            "x": 180.733,
+            "y": 13.377,
+            "face": "top",
+            "normal": [
+              0.0,
+              1.0
+            ],
+            "dist_to_face": 0.956,
+            "type": "layer change"
+          },
+          {
+            "layer": 18,
+            "x": 181.283,
+            "y": 14.297,
+            "face": "top",
+            "normal": [
+              0.0,
+              1.0
+            ],
+            "dist_to_face": 0.956,
+            "type": "layer change"
+          },
+          {
+            "layer": 87,
+            "x": 182.826,
+            "y": 10.89,
+            "face": "side",
+            "normal": [
+              1.0,
+              -0.0
+            ],
+            "dist_to_face": 2.225,
+            "type": "layer change"
+          },
+          {
+            "layer": 88,
+            "x": 182.587,
+            "y": 11.81,
+            "face": "side",
+            "normal": [
+              1.0,
+              -0.0
+            ],
+            "dist_to_face": 2.464,
+            "type": "layer change"
+          },
+          {
+            "layer": 92,
+            "x": 96.352,
+            "y": 14.451,
+            "face": "side",
+            "normal": [
+              -0.707,
+              -0.707
+            ],
+            "dist_to_face": 1.124,
+            "type": "layer change"
+          },
+          {
+            "layer": 95,
+            "x": 95.262,
+            "y": 16.309,
+            "face": "top",
+            "normal": [
+              -0.704,
+              0.71
+            ],
+            "dist_to_face": 0.072,
+            "type": "layer change"
+          }
+        ],
+        "OS": [
+          {
+            "layer": 2,
+            "x": 95.488,
+            "y": 0.0,
+            "face": "side",
+            "normal": [
+              -1.0,
+              -0.0
+            ],
+            "dist_to_face": 0.0,
+            "type": "Outer wall"
+          },
+          {
+            "layer": 2,
+            "x": 184.512,
+            "y": 0.0,
+            "face": "side",
+            "normal": [
+              1.0,
+              -0.0
+            ],
+            "dist_to_face": 0.0,
+            "type": "Outer wall"
+          },
+          {
+            "layer": 95,
+            "x": 95.262,
+            "y": 15.909,
+            "face": "side",
+            "normal": [
+              -1.0,
+              0.0
+            ],
+            "dist_to_face": 0.0,
+            "type": "Outer wall"
+          },
+          {
+            "layer": 95,
+            "x": 184.738,
+            "y": 15.909,
+            "face": "side",
+            "normal": [
+              1.0,
+              -0.0
+            ],
+            "dist_to_face": 0.0,
+            "type": "Outer wall"
+          }
+        ],
+        "VS": []
+      },
+      "live_off_bottom_flag": [
+        "LC: live already has 7 off-bottom points (top 3, side 4)",
+        "OS: live already has 4 off-bottom points (top 0, side 4)"
+      ],
+      "result": "PASS",
+      "failures": []
+    },
+    "apex_light_insole2.seam_joint": {
+      "seam_joint_sha256": "30566f98921b995b1d6f3d300736729f75f6560fe9cd891ea6ac105d85ab654f",
+      "params": {
+        "E_TOL": 0.0001,
+        "SHORT_LOOP": 3.0,
+        "OVERLAP": 0.4,
+        "TAIL_TOL": 0.011,
+        "COLUMN_MM": 1.0,
+        "END_MM": 0.3,
+        "SKIN_CLEAR": 0.55
+      },
+      "mode": "no-worse-than-live, no new offender",
+      "live": {
+        "J1_short_primes": 0,
+        "J1_over_primes": 0,
+        "J2_closed_loops_gt3mm": 92,
+        "J2_missing_cover": 92,
+        "J2_long_overlap": 0,
+        "J3_stacked_deficit": 91,
+        "J3_column_starts": 91,
+        "J3_layers_with_closed_start": 92,
+        "J4_wall_cuts": 2,
+        "J4_surface_cuts": 0,
+        "J4_skin_travels": 24,
+        "examples": {
+          "J1_short": [],
+          "J2_missing": [
+            [
+              3,
+              140.0,
+              0.0
+            ],
+            [
+              4,
+              140.0,
+              0.114
+            ],
+            [
+              5,
+              140.0,
+              0.016
+            ],
+            [
+              6,
+              140.0,
+              0.016
+            ],
+            [
+              7,
+              140.0,
+              0.016
+            ]
+          ],
+          "J4_wall": [
+            [
+              94,
+              140.7,
+              15.034,
+              95.456,
+              15.034
+            ],
+            [
+              95,
+              140.7,
+              15.434,
+              95.262,
+              16.309
+            ]
+          ],
+          "J4_surface": [],
+          "J4_skin": [
+            [
+              4,
+              140.7,
+              0.4,
+              140.7,
+              1.222
+            ],
+            [
+              4,
+              96.471,
+              1.222,
+              95.569,
+              0.514
+            ],
+            [
+              4,
+              95.569,
+              0.514,
+              96.471,
+              1.222
+            ]
+          ]
+        }
+      },
+      "cand": {
+        "J1_short_primes": 0,
+        "J1_over_primes": 0,
+        "J2_closed_loops_gt3mm": 92,
+        "J2_missing_cover": 92,
+        "J2_long_overlap": 0,
+        "J3_stacked_deficit": 91,
+        "J3_column_starts": 91,
+        "J3_layers_with_closed_start": 92,
+        "J4_wall_cuts": 2,
+        "J4_surface_cuts": 0,
+        "J4_skin_travels": 24,
+        "examples": {
+          "J1_short": [],
+          "J2_missing": [
+            [
+              3,
+              140.0,
+              0.0
+            ],
+            [
+              4,
+              140.0,
+              0.114
+            ],
+            [
+              5,
+              140.0,
+              0.016
+            ],
+            [
+              6,
+              140.0,
+              0.016
+            ],
+            [
+              7,
+              140.0,
+              0.016
+            ]
+          ],
+          "J4_wall": [
+            [
+              94,
+              140.7,
+              15.034,
+              95.456,
+              15.034
+            ],
+            [
+              95,
+              140.7,
+              15.434,
+              95.262,
+              16.309
+            ]
+          ],
+          "J4_surface": [],
+          "J4_skin": [
+            [
+              4,
+              140.7,
+              0.4,
+              140.7,
+              1.222
+            ],
+            [
+              4,
+              96.471,
+              1.222,
+              95.569,
+              0.514
+            ],
+            [
+              4,
+              95.569,
+              0.514,
+              96.471,
+              1.222
+            ]
+          ]
+        }
+      },
+      "new_offenders": {
+        "J4_wall_cuts": {
+          "new": 0,
+          "examples": []
+        },
+        "J4_surface_cuts": {
+          "new": 0,
+          "examples": []
+        },
+        "J4_skin_travels": {
+          "new": 0,
+          "examples": []
+        }
+      },
+      "result": "PASS",
+      "failures": []
+    },
+    "apex_light_insole2.sequence_lock": {
+      "result": "PASS",
+      "failures": [],
+      "commands_live": 28,
+      "commands_cand": 28,
+      "layers_differing": 0,
+      "layers_m204_set_differing": 0,
+      "first_layers": [],
+      "sequence_lock_sha256": "e519b67797034da8c194ddde90f65f1e00cb50ca4ce64874b65c9a0a4f99e123"
+    },
+    "apex_light_insole2.skin_bond": {
+      "skin_bond_sha256": "0fe3627f5e1165c2dd3468b79cdb0fb98c9d5d0f1fe9dd4716daae2a84fca013",
+      "params": {
+        "BAND": [
+          0.3,
+          1.0
+        ],
+        "COL_STEP": 0.5,
+        "THICK_MIN": 4.0,
+        "CONTACT_TOL": 0.05,
+        "CONTACT_MIN": 0.3,
+        "CHAIN_MIN": 0.25,
+        "RUN_P90_MAX_MM": 12.0
+      },
+      "cand": {
+        "file": "cand_apex_light_insole2.gcode",
+        "layers": 95,
+        "band": [
+          0.3,
+          1.0
+        ],
+        "excluded_layers": [
+          2,
+          95
+        ],
+        "top": {
+          "cols": 11127,
+          "contact_frac": 0.3,
+          "chain_frac": 0.3,
+          "gap_under_skin_mm_p10_p50_p90": [
+            -0.053,
+            1.581,
+            10.009
+          ],
+          "unbonded_run_p90_mm": 10.0,
+          "unbonded_run_max_mm": 89.0
+        },
+        "bottom": {
+          "cols": 11106,
+          "contact_frac": 0.308,
+          "chain_frac": 0.308,
+          "gap_under_skin_mm_p10_p50_p90": [
+            -0.052,
+            2.036,
+            10.811
+          ],
+          "unbonded_run_p90_mm": 10.0,
+          "unbonded_run_max_mm": 89.0
+        }
+      },
+      "live": {
+        "file": "live_apex_light_insole2.gcode",
+        "layers": 95,
+        "band": [
+          0.3,
+          1.0
+        ],
+        "excluded_layers": [
+          2,
+          95
+        ],
+        "top": {
+          "cols": 11127,
+          "contact_frac": 0.3,
+          "chain_frac": 0.3,
+          "gap_under_skin_mm_p10_p50_p90": [
+            -0.053,
+            1.581,
+            10.009
+          ],
+          "unbonded_run_p90_mm": 10.0,
+          "unbonded_run_max_mm": 89.0
+        },
+        "bottom": {
+          "cols": 11106,
+          "contact_frac": 0.308,
+          "chain_frac": 0.308,
+          "gap_under_skin_mm_p10_p50_p90": [
+            -0.052,
+            2.036,
+            10.811
+          ],
+          "unbonded_run_p90_mm": 10.0,
+          "unbonded_run_max_mm": 89.0
+        }
+      },
+      "failures": [],
+      "result": "PASS"
+    },
+    "apex_light_orthocad.air_bands": {
+      "result": "PASS",
+      "failures": [],
+      "bands": [
+        {
+          "band": "0-10%",
+          "live": {
+            "cols": 4030,
+            "air_noinfill_cols": 3827,
+            "air_noinfill_mm3": 299.27
+          },
+          "cand": {
+            "cols": 4030,
+            "air_noinfill_cols": 3827,
+            "air_noinfill_mm3": 299.27
+          }
+        },
+        {
+          "band": "10-20%",
+          "live": {
+            "cols": 6577,
+            "air_noinfill_cols": 6454,
+            "air_noinfill_mm3": 503.31
+          },
+          "cand": {
+            "cols": 6577,
+            "air_noinfill_cols": 6454,
+            "air_noinfill_mm3": 503.31
+          }
+        },
+        {
+          "band": "20-30%",
+          "live": {
+            "cols": 7427,
+            "air_noinfill_cols": 7271,
+            "air_noinfill_mm3": 606.76
+          },
+          "cand": {
+            "cols": 7427,
+            "air_noinfill_cols": 7271,
+            "air_noinfill_mm3": 606.76
+          }
+        },
+        {
+          "band": "30-40%",
+          "live": {
+            "cols": 2536,
+            "air_noinfill_cols": 2283,
+            "air_noinfill_mm3": 322.64
+          },
+          "cand": {
+            "cols": 2536,
+            "air_noinfill_cols": 2283,
+            "air_noinfill_mm3": 322.64
+          }
+        },
+        {
+          "band": "40-50%",
+          "live": {
+            "cols": 733,
+            "air_noinfill_cols": 340,
+            "air_noinfill_mm3": 63.66
+          },
+          "cand": {
+            "cols": 733,
+            "air_noinfill_cols": 340,
+            "air_noinfill_mm3": 63.66
+          }
+        },
+        {
+          "band": "50-60%",
+          "live": {
+            "cols": 909,
+            "air_noinfill_cols": 599,
+            "air_noinfill_mm3": 57.51
+          },
+          "cand": {
+            "cols": 909,
+            "air_noinfill_cols": 321,
+            "air_noinfill_mm3": 47.26
+          }
+        },
+        {
+          "band": "60-70%",
+          "live": {
+            "cols": 738,
+            "air_noinfill_cols": 553,
+            "air_noinfill_mm3": 30.2
+          },
+          "cand": {
+            "cols": 738,
+            "air_noinfill_cols": 149,
+            "air_noinfill_mm3": 17.55
+          }
+        },
+        {
+          "band": "70-80%",
+          "live": {
+            "cols": 680,
+            "air_noinfill_cols": 361,
+            "air_noinfill_mm3": 61.17
+          },
+          "cand": {
+            "cols": 672,
+            "air_noinfill_cols": 358,
+            "air_noinfill_mm3": 61.12
+          }
+        },
+        {
+          "band": "80-90%",
+          "live": {
+            "cols": 1470,
+            "air_noinfill_cols": 1373,
+            "air_noinfill_mm3": 144.6
+          },
+          "cand": {
+            "cols": 1470,
+            "air_noinfill_cols": 1373,
+            "air_noinfill_mm3": 144.6
+          }
+        },
+        {
+          "band": "90-100%",
+          "live": {
+            "cols": 1388,
+            "air_noinfill_cols": 1149,
+            "air_noinfill_mm3": 73.61
+          },
+          "cand": {
+            "cols": 1388,
+            "air_noinfill_cols": 997,
+            "air_noinfill_mm3": 67.23
+          }
+        }
+      ],
+      "air_bands_sha256": "c82e6ff2a8303c459a422e4141d914a045b2c4bb42180cdf235cc1e977db2bff"
+    },
+    "apex_light_orthocad.air_vs_cura": {
+      "first_last_layer_exclusion": {
+        "excluded_layers": [
+          1,
+          438
+        ],
+        "toe_air_cols_with_them": 6877,
+        "b15_30_air_cols_with_them": 10675
+      },
+      "result": "FAIL",
+      "failures": [
+        "toe_0_15 air_noinfill_cols 6856 > Cura 359",
+        "toe_0_15 air_noinfill_mm3 536.71 > Cura 53.09",
+        "b15_30 air_noinfill_cols 10675 > Cura 1554",
+        "b15_30 air_noinfill_mm3 870.95 > Cura 256.23"
+      ],
+      "bands": {
+        "toe_0_15": {
+          "cand_cols": 6856,
+          "cura_cols": 359,
+          "cand_mm3": 536.71,
+          "cura_mm3": 53.09,
+          "cand_worst": 0.67,
+          "cura_worst": 1.59
+        },
+        "b15_30": {
+          "cand_cols": 10675,
+          "cura_cols": 1554,
+          "cand_mm3": 870.95,
+          "cura_mm3": 256.23,
+          "cand_worst": 1.79,
+          "cura_worst": 1.78
+        }
+      },
+      "air_sha256": "08a65cb5b5dce5f26f9bead182679cdd50b9a3dc61202fc74090c6d8898e116f",
+      "air_vs_cura_sha256": "49fdbc5163084437501b81db01caedd303f084c96fe8b0c51008a83854b5d72e"
+    },
+    "apex_light_orthocad.interior_lock": {
+      "interior_lock_sha256": "fcafd884d4c9f51cb35f7189403a37c4af3ea31643e06a2ba7ec662cec24256c",
+      "mode": "strict",
+      "params": {
+        "ALLOW_NEW_GAP_BEADS": true,
+        "SLOT_MAX_THICK": 4.0,
+        "BEAD_MAX_W": 1.5,
+        "INNER_POKE_TOL": 0.13,
+        "OUTER_FACE_TOL": 0.005,
+        "MIN_CONST_RUN_MM": 2.0,
+        "WIDTH_STEP_MM": 0.1,
+        "BEAD_W_TOL": 0.05,
+        "OVERLAP_MAX_FRAC": 0.1
+      },
+      "gap_segments_faster_than_gap_speed": [
+        0,
+        0
+      ],
+      "nongap_layers_changed": 6,
+      "nongap_changed_types": {
+        "Sparse infill": 3,
+        "Outer wall": 3
+      },
+      "new_or_changed_gap_runs": 165,
+      "new_gap_len_mm": 649.2,
+      "new_gap_vol_mm3": 88.0,
+      "removed_or_changed_live_gap_runs": 0,
+      "flow_cap_mm3s": 35.0,
+      "fast_flow_cap_mm3s": 35.0,
+      "live_gap_max_mm3s": 0.0,
+      "live_slow_gap_max_mm3s": 0.0,
+      "live_fast_gap_max_mm3s": 0.0,
+      "straddling_live_runs_on_changed_layers": 0,
+      "runs_too_wide": 0,
+      "runs_double_deposit": 0,
+      "config_cap_mm3s": 35.0,
+      "worst": {
+        "flow": 12.817341537374753,
+        "fast_flow": 0.0,
+        "width": 1.1704009198685077,
+        "overlap_other_frac": 0.06388090851745862,
+        "overlap_self_frac": 0.017389805702656944,
+        "outside_O_area": 0.22947991134782583,
+        "outside_I_area": 5.829863473007834,
+        "min_group_mm": null
+      },
+      "runs_outside_thin_zone": 25,
+      "runs_past_outer_face": 34,
+      "runs_not_between_inner_faces": 139,
+      "runs_flow_over_cap": 0,
+      "runs_width_step_violation": 0,
+      "layers_wall_after_gap": 0,
+      "layers_new_gap_growth_forbidden": 0,
+      "samples": [
+        "layer 222: gap run at (108.27,14.75) outside thin zone",
+        "layer 222: gap run at (108.11,15.79) outside thin zone",
+        "layer 233: gap run at (104.19,20.61) not between wall inner faces (area 0.006 mm2 beyond 0.13 mm poke)",
+        "layer 234: gap run at (106.32,19.55) not between wall inner faces (area 0.002 mm2 beyond 0.13 mm poke)",
+        "layer 235: gap run at (106.08,20.01) not between wall inner faces (area 0.005 mm2 beyond 0.13 mm poke)",
+        "layer 236: gap run at (104.62,21.19) not between wall inner faces (area 0.008 mm2 beyond 0.13 mm poke)",
+        "layer 237: gap run at (106.64,20.16) not between wall inner faces (area 0.037 mm2 beyond 0.13 mm poke)",
+        "layer 238: gap run at (107.19,20.02) not between wall inner faces (area 0.002 mm2 beyond 0.13 mm poke)",
+        "layer 240: gap run at (105.50,21.75) not between wall inner faces (area 0.014 mm2 beyond 0.13 mm poke)",
+        "layer 241: gap run at (106.92,21.05) not between wall inner faces (area 0.003 mm2 beyond 0.13 mm poke)"
+      ],
+      "result": "FAIL",
+      "failures": [
+        "I1 non-gap-fill extrusion changed on 6 layers {'Sparse infill': 3, 'Outer wall': 3}",
+        "I2 25 gap runs outside the measured thin zone",
+        "I2 34 gap runs poke past an outer face",
+        "I2 139 gap runs not between two wall inner faces"
+      ]
+    },
+    "apex_light_orthocad.outer_lock": {
+      "live": "gate_results/live_apex_light_orthocad.gcode",
+      "candidate": "gate_results/cand_apex_light_orthocad.gcode",
+      "outer_lock_sha256": "1964f64a55b977675e6b143fc0b4db2eb055488154508bbcacbad0267a3533b5",
+      "mode": "strict",
+      "layers": [
+        440,
+        440
+      ],
+      "locked": {
+        "Outer wall": {
+          "live_runs": 446,
+          "cand_runs": 446,
+          "unmatched_live": 3,
+          "unmatched_cand": 3,
+          "layers_bad": 3
+        },
+        "Overhang wall": {
+          "live_runs": 8,
+          "cand_runs": 8,
+          "unmatched_live": 0,
+          "unmatched_cand": 0,
+          "layers_bad": 0
+        }
+      },
+      "outer_width_steps": {
+        "live": 10028,
+        "cand": 10028
+      },
+      "worst_unmatched": {
+        "xy_mm": 0.0,
+        "e_rel": 0.0,
+        "f_mm_s": 2.466666666666665
+      },
+      "run_order_changes_layers": 0,
+      "rotated_closed_loops": 0,
+      "bad_layers_first20": [
+        431,
+        432,
+        433
+      ],
+      "reduce_crossing_wall": [
+        "; reduce_crossing_wall = 1"
+      ],
+      "crossings": {
+        "live": {
+          "perimeter_crossings": 0,
+          "outer_only_crossings": 0,
+          "seam_approaches": 453,
+          "surface_crossings": 0,
+          "skin_interior_travels": 541,
+          "gap_crossings": 0,
+          "chain_hop_crossings": 0,
+          "gap_exit_crossings": 0,
+          "seam_block_crossings": 0
+        },
+        "cand": {
+          "perimeter_crossings": 0,
+          "outer_only_crossings": 0,
+          "seam_approaches": 4008,
+          "surface_crossings": 0,
+          "skin_interior_travels": 481,
+          "gap_crossings": 0,
+          "chain_hop_crossings": 0,
+          "gap_exit_crossings": 0,
+          "seam_block_crossings": 0
+        }
+      },
+      "retracts_near_outer": [
+        751,
+        890
+      ],
+      "wipes": [
+        436,
+        436
+      ],
+      "z_moves": [
+        438,
+        438
+      ],
+      "result": "FAIL",
+      "failures": [
+        "B Outer wall changed: 3 live runs / 3 candidate runs unmatched on 3 layers",
+        "F retracts near outer wall 890 > live 751"
+      ]
+    },
+    "apex_light_orthocad.print_budget": {
+      "result": "PASS",
+      "failures": [],
+      "live": {
+        "time_s": 4730,
+        "time": "1h 18m 50s",
+        "filament_g": 75.7,
+        "infill": "26%"
+      },
+      "cand": {
+        "time_s": 4790,
+        "time": "1h 19m 50s",
+        "filament_g": 75.83,
+        "infill": "26%"
+      },
+      "time_pct": 1.2684989429175397,
+      "filament_pct": 0.17173051519154825,
+      "time_budget_pct": 10.0,
+      "print_budget_sha256": "c576d0fbcd8cfc940d8f1495a274dcff3316d3baafeff8cea53b3c4251af82e2"
+    },
+    "apex_light_orthocad.seam_bottom": {
+      "seam_bottom_sha256": "dbc84839afd8dc62506be281b9791567f35f807ec672568a12ecfd2c1c30a075",
+      "params": {
+        "FACE_HALF_ANGLE": 45.0,
+        "NORMAL_SPAN": 0.5,
+        "VIS_TOL": 0.05
+      },
+      "categories": {
+        "LC": "layer changes",
+        "OS": "outer/overhang wall seams (run start+stop)",
+        "VS": "visible inner/gap/infill starts+stops"
+      },
+      "live": {
+        "LC": {
+          "bottom": 432,
+          "top": 5,
+          "side": 1
+        },
+        "OS": {
+          "bottom": 885,
+          "top": 11,
+          "side": 12
+        },
+        "VS": {
+          "bottom": 0,
+          "top": 0,
+          "side": 0
+        }
+      },
+      "cand": {
+        "LC": {
+          "bottom": 427,
+          "top": 8,
+          "side": 3
+        },
+        "OS": {
+          "bottom": 885,
+          "top": 11,
+          "side": 12
+        },
+        "VS": {
+          "bottom": 0,
+          "top": 0,
+          "side": 67
+        }
+      },
+      "live_visible_types": {},
+      "cand_visible_types": {
+        "Gap infill": 67
+      },
+      "live_off_bottom_examples": {
+        "LC": [
+          {
+            "layer": 164,
+            "x": 168.394,
+            "y": 2.75,
+            "face": "top",
+            "normal": [
+              0.153,
+              0.988
+            ],
+            "dist_to_face": 0.569,
+            "type": "layer change"
+          },
+          {
+            "layer": 165,
+            "x": 168.609,
+            "y": 4.112,
+            "face": "top",
+            "normal": [
+              0.139,
+              0.99
+            ],
+            "dist_to_face": 0.764,
+            "type": "layer change"
+          },
+          {
+            "layer": 186,
+            "x": 180.126,
+            "y": 3.756,
+            "face": "top",
+            "normal": [
+              -0.203,
+              0.979
+            ],
+            "dist_to_face": 0.551,
+            "type": "layer change"
+          },
+          {
+            "layer": 191,
+            "x": 182.824,
+            "y": 3.04,
+            "face": "side",
+            "normal": [
+              0.828,
+              -0.561
+            ],
+            "dist_to_face": 0.552,
+            "type": "layer change"
+          },
+          {
+            "layer": 438,
+            "x": 144.197,
+            "y": 19.217,
+            "face": "top",
+            "normal": [
+              0.664,
+              0.748
+            ],
+            "dist_to_face": 0.058,
+            "type": "layer change"
+          },
+          {
+            "layer": 439,
+            "x": 140.421,
+            "y": 19.226,
+            "face": "top",
+            "normal": [
+              0.682,
+              0.732
+            ],
+            "dist_to_face": 0.074,
+            "type": "layer change"
+          }
+        ],
+        "OS": [
+          {
+            "layer": 2,
+            "x": 130.655,
+            "y": 1.487,
+            "face": "top",
+            "normal": [
+              0.268,
+              0.964
+            ],
+            "dist_to_face": 0.376,
+            "type": "Overhang wall"
+          },
+          {
+            "layer": 2,
+            "x": 130.655,
+            "y": 1.487,
+            "face": "top",
+            "normal": [
+              0.268,
+              0.964
+            ],
+            "dist_to_face": 0.376,
+            "type": "Outer wall"
+          },
+          {
+            "layer": 2,
+            "x": 125.004,
+            "y": 1.724,
+            "face": "top",
+            "normal": [
+              -0.137,
+              0.991
+            ],
+            "dist_to_face": 0.269,
+            "type": "Outer wall"
+          },
+          {
+            "layer": 2,
+            "x": 125.004,
+            "y": 1.724,
+            "face": "top",
+            "normal": [
+              -0.137,
+              0.991
+            ],
+            "dist_to_face": 0.269,
+            "type": "Overhang wall"
+          },
+          {
+            "layer": 3,
+            "x": 135.669,
+            "y": 1.417,
+            "face": "top",
+            "normal": [
+              0.377,
+              0.926
+            ],
+            "dist_to_face": 0.361,
+            "type": "Overhang wall"
+          },
+          {
+            "layer": 3,
+            "x": 135.669,
+            "y": 1.417,
+            "face": "top",
+            "normal": [
+              0.377,
+              0.926
+            ],
+            "dist_to_face": 0.361,
+            "type": "Outer wall"
+          },
+          {
+            "layer": 4,
+            "x": 138.646,
+            "y": 1.379,
+            "face": "top",
+            "normal": [
+              0.451,
+              0.892
+            ],
+            "dist_to_face": 0.368,
+            "type": "Overhang wall"
+          },
+          {
+            "layer": 4,
+            "x": 138.646,
+            "y": 1.379,
+            "face": "top",
+            "normal": [
+              0.451,
+              0.892
+            ],
+            "dist_to_face": 0.368,
+            "type": "Outer wall"
+          }
+        ],
+        "VS": []
+      },
+      "cand_off_bottom_examples": {
+        "LC": [
+          {
+            "layer": 164,
+            "x": 168.394,
+            "y": 2.75,
+            "face": "top",
+            "normal": [
+              0.153,
+              0.988
+            ],
+            "dist_to_face": 0.569,
+            "type": "layer change"
+          },
+          {
+            "layer": 165,
+            "x": 168.609,
+            "y": 4.112,
+            "face": "top",
+            "normal": [
+              0.139,
+              0.99
+            ],
+            "dist_to_face": 0.764,
+            "type": "layer change"
+          },
+          {
+            "layer": 186,
+            "x": 180.126,
+            "y": 3.756,
+            "face": "top",
+            "normal": [
+              -0.203,
+              0.979
+            ],
+            "dist_to_face": 0.551,
+            "type": "layer change"
+          },
+          {
+            "layer": 191,
+            "x": 182.824,
+            "y": 3.04,
+            "face": "side",
+            "normal": [
+              0.828,
+              -0.561
+            ],
+            "dist_to_face": 0.552,
+            "type": "layer change"
+          },
+          {
+            "layer": 246,
+            "x": 102.445,
+            "y": 25.736,
+            "face": "top",
+            "normal": [
+              0.415,
+              0.91
+            ],
+            "dist_to_face": 0.327,
+            "type": "layer change"
+          },
+          {
+            "layer": 337,
+            "x": 103.7,
+            "y": 33.267,
+            "face": "side",
+            "normal": [
+              0.892,
+              0.453
+            ],
+            "dist_to_face": 0.55,
+            "type": "layer change"
+          },
+          {
+            "layer": 345,
+            "x": 103.717,
+            "y": 32.95,
+            "face": "side",
+            "normal": [
+              0.91,
+              0.415
+            ],
+            "dist_to_face": 0.494,
+            "type": "layer change"
+          },
+          {
+            "layer": 430,
+            "x": 116.615,
+            "y": 20.566,
+            "face": "top",
+            "normal": [
+              0.152,
+              0.988
+            ],
+            "dist_to_face": 0.452,
+            "type": "layer change"
+          }
+        ],
+        "OS": [
+          {
+            "layer": 2,
+            "x": 130.655,
+            "y": 1.487,
+            "face": "top",
+            "normal": [
+              0.268,
+              0.964
+            ],
+            "dist_to_face": 0.376,
+            "type": "Overhang wall"
+          },
+          {
+            "layer": 2,
+            "x": 130.655,
+            "y": 1.487,
+            "face": "top",
+            "normal": [
+              0.268,
+              0.964
+            ],
+            "dist_to_face": 0.376,
+            "type": "Outer wall"
+          },
+          {
+            "layer": 2,
+            "x": 125.004,
+            "y": 1.724,
+            "face": "top",
+            "normal": [
+              -0.137,
+              0.991
+            ],
+            "dist_to_face": 0.269,
+            "type": "Outer wall"
+          },
+          {
+            "layer": 2,
+            "x": 125.004,
+            "y": 1.724,
+            "face": "top",
+            "normal": [
+              -0.137,
+              0.991
+            ],
+            "dist_to_face": 0.269,
+            "type": "Overhang wall"
+          },
+          {
+            "layer": 3,
+            "x": 135.669,
+            "y": 1.417,
+            "face": "top",
+            "normal": [
+              0.377,
+              0.926
+            ],
+            "dist_to_face": 0.361,
+            "type": "Overhang wall"
+          },
+          {
+            "layer": 3,
+            "x": 135.669,
+            "y": 1.417,
+            "face": "top",
+            "normal": [
+              0.377,
+              0.926
+            ],
+            "dist_to_face": 0.361,
+            "type": "Outer wall"
+          },
+          {
+            "layer": 4,
+            "x": 138.646,
+            "y": 1.379,
+            "face": "top",
+            "normal": [
+              0.451,
+              0.892
+            ],
+            "dist_to_face": 0.368,
+            "type": "Overhang wall"
+          },
+          {
+            "layer": 4,
+            "x": 138.646,
+            "y": 1.379,
+            "face": "top",
+            "normal": [
+              0.451,
+              0.892
+            ],
+            "dist_to_face": 0.368,
+            "type": "Outer wall"
+          }
+        ],
+        "VS": [
+          {
+            "layer": 308,
+            "x": 106.18,
+            "y": 30.99,
+            "face": "side",
+            "normal": [
+              0.75,
+              0.661
+            ],
+            "dist_to_face": 0.547,
+            "type": [
+              "Gap infill",
+              1.0892746676125256
+            ]
+          },
+          {
+            "layer": 308,
+            "x": 105.73,
+            "y": 31.59,
+            "face": "side",
+            "normal": [
+              0.757,
+              0.654
+            ],
+            "dist_to_face": 0.495,
+            "type": [
+              "Gap infill",
+              1.0892746676125256
+            ]
+          },
+          {
+            "layer": 313,
+            "x": 107.164,
+            "y": 29.53,
+            "face": "side",
+            "normal": [
+              0.792,
+              0.611
+            ],
+            "dist_to_face": 0.546,
+            "type": [
+              "Gap infill",
+              1.1704009198685077
+            ]
+          },
+          {
+            "layer": 313,
+            "x": 106.773,
+            "y": 30.062,
+            "face": "side",
+            "normal": [
+              0.788,
+              0.616
+            ],
+            "dist_to_face": 0.546,
+            "type": [
+              "Gap infill",
+              1.1704009198685077
+            ]
+          },
+          {
+            "layer": 315,
+            "x": 106.266,
+            "y": 30.611,
+            "face": "side",
+            "normal": [
+              0.81,
+              0.587
+            ],
+            "dist_to_face": 0.508,
+            "type": [
+              "Gap infill",
+              1.097991396077982
+            ]
+          },
+          {
+            "layer": 315,
+            "x": 105.886,
+            "y": 31.128,
+            "face": "side",
+            "normal": [
+              0.794,
+              0.608
+            ],
+            "dist_to_face": 0.511,
+            "type": [
+              "Gap infill",
+              1.097991396077982
+            ]
+          },
+          {
+            "layer": 316,
+            "x": 106.778,
+            "y": 29.792,
+            "face": "side",
+            "normal": [
+              0.806,
+              0.593
+            ],
+            "dist_to_face": 0.545,
+            "type": [
+              "Gap infill",
+              1.110407353459535
+            ]
+          },
+          {
+            "layer": 316,
+            "x": 106.507,
+            "y": 30.212,
+            "face": "side",
+            "normal": [
+              0.805,
+              0.593
+            ],
+            "dist_to_face": 0.505,
+            "type": [
+              "Gap infill",
+              1.110407353459535
+            ]
+          }
+        ]
+      },
+      "live_off_bottom_flag": [
+        "LC: live already has 6 off-bottom points (top 5, side 1)",
+        "OS: live already has 23 off-bottom points (top 11, side 12)"
+      ],
+      "result": "FAIL",
+      "failures": [
+        "LC: 11 off-bottom points (top 8, side 3) > live 6",
+        "VS: 67 off-bottom points (top 0, side 67) > 0 required"
+      ]
+    },
+    "apex_light_orthocad.seam_joint": {
+      "seam_joint_sha256": "30566f98921b995b1d6f3d300736729f75f6560fe9cd891ea6ac105d85ab654f",
+      "params": {
+        "E_TOL": 0.0001,
+        "SHORT_LOOP": 3.0,
+        "OVERLAP": 0.4,
+        "TAIL_TOL": 0.011,
+        "COLUMN_MM": 1.0,
+        "END_MM": 0.3,
+        "SKIN_CLEAR": 0.55
+      },
+      "mode": "no-worse-than-live, no new offender",
+      "live": {
+        "J1_short_primes": 0,
+        "J1_over_primes": 0,
+        "J2_closed_loops_gt3mm": 436,
+        "J2_missing_cover": 436,
+        "J2_long_overlap": 0,
+        "J3_stacked_deficit": 410,
+        "J3_column_starts": 410,
+        "J3_layers_with_closed_start": 436,
+        "J4_wall_cuts": 0,
+        "J4_surface_cuts": 0,
+        "J4_skin_travels": 415,
+        "examples": {
+          "J1_short": [],
+          "J2_missing": [
+            [
+              2,
+              131.241,
+              0.086
+            ],
+            [
+              3,
+              131.563,
+              0.091
+            ],
+            [
+              4,
+              131.34,
+              0.091
+            ],
+            [
+              5,
+              131.118,
+              0.093
+            ],
+            [
+              6,
+              131.099,
+              0.092
+            ]
+          ],
+          "J4_wall": [],
+          "J4_surface": [],
+          "J4_skin": [
+            [
+              3,
+              131.941,
+              0.467,
+              131.95,
+              1.14
+            ],
+            [
+              3,
+              135.56,
+              0.922,
+              136.367,
+              0.4
+            ],
+            [
+              3,
+              136.367,
+              0.4,
+              134.919,
+              0.994
+            ]
+          ]
+        }
+      },
+      "cand": {
+        "J1_short_primes": 0,
+        "J1_over_primes": 0,
+        "J2_closed_loops_gt3mm": 436,
+        "J2_missing_cover": 436,
+        "J2_long_overlap": 0,
+        "J3_stacked_deficit": 410,
+        "J3_column_starts": 410,
+        "J3_layers_with_closed_start": 436,
+        "J4_wall_cuts": 23,
+        "J4_surface_cuts": 0,
+        "J4_skin_travels": 341,
+        "examples": {
+          "J1_short": [],
+          "J2_missing": [
+            [
+              2,
+              131.241,
+              0.086
+            ],
+            [
+              3,
+              131.563,
+              0.091
+            ],
+            [
+              4,
+              131.34,
+              0.091
+            ],
+            [
+              5,
+              131.118,
+              0.093
+            ],
+            [
+              6,
+              131.099,
+              0.092
+            ]
+          ],
+          "J4_wall": [
+            [
+              314,
+              106.773,
+              30.062,
+              116.998,
+              0.016
+            ],
+            [
+              316,
+              105.886,
+              31.128,
+              116.461,
+              0.016
+            ],
+            [
+              317,
+              106.507,
+              30.212,
+              116.192,
+              0.016
+            ],
+            [
+              318,
+              105.833,
+              31.086,
+              115.943,
+              0.016
+            ],
+            [
+              319,
+              106.071,
+              30.667,
+              115.696,
+              0.016
+            ]
+          ],
+          "J4_surface": [],
+          "J4_skin": [
+            [
+              3,
+              131.941,
+              0.467,
+              131.95,
+              1.14
+            ],
+            [
+              3,
+              135.56,
+              0.922,
+              136.367,
+              0.4
+            ],
+            [
+              3,
+              136.367,
+              0.4,
+              134.919,
+              0.994
+            ]
+          ]
+        }
+      },
+      "new_offenders": {
+        "J4_wall_cuts": {
+          "new": 23,
+          "examples": [
+            [
+              314,
+              106.773,
+              30.062,
+              116.998,
+              0.016
+            ],
+            [
+              316,
+              105.886,
+              31.128,
+              116.461,
+              0.016
+            ],
+            [
+              317,
+              106.507,
+              30.212,
+              116.192,
+              0.016
+            ],
+            [
+              318,
+              105.833,
+              31.086,
+              115.943,
+              0.016
+            ],
+            [
+              319,
+              106.071,
+              30.667,
+              115.696,
+              0.016
+            ]
+          ]
+        },
+        "J4_surface_cuts": {
+          "new": 0,
+          "examples": []
+        },
+        "J4_skin_travels": {
+          "new": 2,
+          "examples": [
+            [
+              434,
+              153.192,
+              18.836,
+              136.651,
+              16.312
+            ],
+            [
+              434,
+              136.651,
+              16.312,
+              136.604,
+              15.728
+            ]
+          ]
+        }
+      },
+      "result": "FAIL",
+      "failures": [
+        "J4_wall_cuts 23 > live 0 (0 required)",
+        "J4_wall_cuts: 23 NEW offending travel(s) not in live (no new offender allowed)",
+        "J4_skin_travels: 2 NEW offending travel(s) not in live (no new offender allowed)"
+      ]
+    },
+    "apex_light_orthocad.sequence_lock": {
+      "result": "FAIL",
+      "failures": [
+        "1 layers break the M204 set rule (new value or a live value dropped); first layer 438: live ['M204 S10000', 'M204 S8000'] vs cand [] (file-wide live values ['M204 P10000 R1000 T10000', 'M204 S10000', 'M204 S4000', 'M204 S8000'])"
+      ],
+      "commands_live": 28,
+      "commands_cand": 28,
+      "layers_differing": 0,
+      "layers_m204_set_differing": 1,
+      "first_layers": [],
+      "sequence_lock_sha256": "e519b67797034da8c194ddde90f65f1e00cb50ca4ce64874b65c9a0a4f99e123"
+    },
+    "apex_light_orthocad.skin_bond": {
+      "skin_bond_sha256": "0fe3627f5e1165c2dd3468b79cdb0fb98c9d5d0f1fe9dd4716daae2a84fca013",
+      "params": {
+        "BAND": [
+          0.3,
+          1.0
+        ],
+        "COL_STEP": 0.5,
+        "THICK_MIN": 4.0,
+        "CONTACT_TOL": 0.05,
+        "CONTACT_MIN": 0.3,
+        "CHAIN_MIN": 0.25,
+        "RUN_P90_MAX_MM": 12.0
+      },
+      "cand": {
+        "file": "cand_apex_light_orthocad.gcode",
+        "layers": 439,
+        "band": [
+          0.3,
+          1.0
+        ],
+        "excluded_layers": [
+          2,
+          439
+        ],
+        "top": {
+          "cols": 38222,
+          "contact_frac": 0.473,
+          "chain_frac": 0.463,
+          "gap_under_skin_mm_p10_p50_p90": [
+            -0.189,
+            0.295,
+            4.521
+          ],
+          "unbonded_run_p90_mm": 8.0,
+          "unbonded_run_max_mm": 21.5
+        },
+        "bottom": {
+          "cols": 38172,
+          "contact_frac": 0.34,
+          "chain_frac": 0.33,
+          "gap_under_skin_mm_p10_p50_p90": [
+            -0.199,
+            1.613,
+            4.732
+          ],
+          "unbonded_run_p90_mm": 9.5,
+          "unbonded_run_max_mm": 21.5
+        }
+      },
+      "live": {
+        "file": "live_apex_light_orthocad.gcode",
+        "layers": 439,
+        "band": [
+          0.3,
+          1.0
+        ],
+        "excluded_layers": [
+          2,
+          439
+        ],
+        "top": {
+          "cols": 38231,
+          "contact_frac": 0.473,
+          "chain_frac": 0.463,
+          "gap_under_skin_mm_p10_p50_p90": [
+            -0.188,
+            0.294,
+            4.52
+          ],
+          "unbonded_run_p90_mm": 8.0,
+          "unbonded_run_max_mm": 21.5
+        },
+        "bottom": {
+          "cols": 38164,
+          "contact_frac": 0.339,
+          "chain_frac": 0.33,
+          "gap_under_skin_mm_p10_p50_p90": [
+            -0.199,
+            1.614,
+            4.732
+          ],
+          "unbonded_run_p90_mm": 9.5,
+          "unbonded_run_max_mm": 21.5
+        }
+      },
+      "failures": [],
+      "result": "PASS"
+    }
+  },
+  "summary_txt": [
+    "PASS apex_core_orthocad.sequence_lock",
+    "PASS apex_core_orthocad.seam_bottom",
+    "FAIL apex_core_orthocad.seam_joint",
+    "FAIL apex_core_orthocad.outer_lock",
+    "FAIL apex_core_orthocad.interior_lock",
+    "FAIL apex_core_orthocad.inner_shift",
+    "FAIL apex_core_orthocad.print_budget",
+    "FAIL apex_core_orthocad.air_bands",
+    "PASS apex_core_orthocad.skin_bond",
+    "FAIL apex_core_orthocad.air_vs_cura",
+    "PASS apex_core_insole2.sequence_lock",
+    "PASS apex_core_insole2.seam_bottom",
+    "FAIL apex_core_insole2.seam_joint",
+    "FAIL apex_core_insole2.outer_lock",
+    "FAIL apex_core_insole2.interior_lock",
+    "FAIL apex_core_insole2.inner_shift",
+    "FAIL apex_core_insole2.print_budget",
+    "PASS apex_core_insole2.air_bands",
+    "PASS apex_core_insole2.skin_bond",
+    "FAIL apex_light_orthocad.sequence_lock",
+    "FAIL apex_light_orthocad.seam_bottom",
+    "FAIL apex_light_orthocad.seam_joint",
+    "FAIL apex_light_orthocad.outer_lock",
+    "FAIL apex_light_orthocad.interior_lock",
+    "PASS apex_light_orthocad.print_budget",
+    "PASS apex_light_orthocad.air_bands",
+    "PASS apex_light_orthocad.skin_bond",
+    "FAIL apex_light_orthocad.air_vs_cura",
+    "PASS apex_light_insole2.sequence_lock",
+    "PASS apex_light_insole2.seam_bottom",
+    "PASS apex_light_insole2.seam_joint",
+    "PASS apex_light_insole2.outer_lock",
+    "PASS apex_light_insole2.interior_lock",
+    "PASS apex_light_insole2.print_budget",
+    "PASS apex_light_insole2.air_bands",
+    "PASS apex_light_insole2.skin_bond"
+  ]
+}

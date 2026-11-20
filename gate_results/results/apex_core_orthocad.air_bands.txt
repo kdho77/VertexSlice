@@ -1,0 +1,16 @@
+{
+ "result": "FAIL",
+ "failures": [
+  "band 90-100% air_noinfill_mm3 80.84 > live 80.80"
+ ]
+}
+0-10%    live cols/mm3  3850/  330.95  cand  3850/  330.90
+10-20%   live cols/mm3  6459/  577.17  cand  6459/  577.08
+20-30%   live cols/mm3  7219/  815.92  cand  7219/  815.85
+30-40%   live cols/mm3  2457/  322.66  cand  2457/  322.64
+40-50%   live cols/mm3   438/   77.96  cand   438/   77.96
+50-60%   live cols/mm3   408/   65.88  cand   408/   65.88
+60-70%   live cols/mm3   265/   31.47  cand   227/   27.24
+70-80%   live cols/mm3   366/   55.88  cand   352/   55.03
+80-90%   live cols/mm3  1532/  189.64  cand  1532/  189.64
+90-100%  live cols/mm3   831/   80.80  cand   827/   80.84

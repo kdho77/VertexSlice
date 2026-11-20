@@ -1,0 +1,14 @@
+{
+ "result": "PASS",
+ "failures": []
+}
+0-10%    live cols/mm3  3827/  299.27  cand  3827/  299.27
+10-20%   live cols/mm3  6454/  503.31  cand  6454/  503.31
+20-30%   live cols/mm3  7271/  606.76  cand  7271/  606.76
+30-40%   live cols/mm3  2283/  322.64  cand  2283/  322.64
+40-50%   live cols/mm3   340/   63.66  cand   340/   63.66
+50-60%   live cols/mm3   599/   57.51  cand   321/   47.26
+60-70%   live cols/mm3   553/   30.20  cand   149/   17.55
+70-80%   live cols/mm3   361/   61.17  cand   358/   61.12
+80-90%   live cols/mm3  1373/  144.60  cand  1373/  144.60
+90-100%  live cols/mm3  1149/   73.61  cand   997/   67.23

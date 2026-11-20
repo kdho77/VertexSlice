@@ -1,0 +1,89 @@
+{
+ "skin_bond_sha256": "0fe3627f5e1165c2dd3468b79cdb0fb98c9d5d0f1fe9dd4716daae2a84fca013",
+ "params": {
+  "BAND": [
+   0.3,
+   1.0
+  ],
+  "COL_STEP": 0.5,
+  "THICK_MIN": 4.0,
+  "CONTACT_TOL": 0.05,
+  "CONTACT_MIN": 0.3,
+  "CHAIN_MIN": 0.25,
+  "RUN_P90_MAX_MM": 12.0
+ },
+ "cand": {
+  "file": "cand_apex_core_insole2.gcode",
+  "layers": 93,
+  "band": [
+   0.3,
+   1.0
+  ],
+  "excluded_layers": [
+   2,
+   93
+  ],
+  "top": {
+   "cols": 11214,
+   "contact_frac": 0.962,
+   "chain_frac": 0.377,
+   "gap_under_skin_mm_p10_p50_p90": [
+    -0.08,
+    -0.08,
+    -0.08
+   ],
+   "unbonded_run_p90_mm": 1.0,
+   "unbonded_run_max_mm": 89.0
+  },
+  "bottom": {
+   "cols": 11214,
+   "contact_frac": 0.307,
+   "chain_frac": 0.095,
+   "gap_under_skin_mm_p10_p50_p90": [
+    -0.039,
+    0.135,
+    0.306
+   ],
+   "unbonded_run_p90_mm": 60.5,
+   "unbonded_run_max_mm": 89.0
+  }
+ },
+ "live": {
+  "file": "live_apex_core_insole2.gcode",
+  "layers": 93,
+  "band": [
+   0.3,
+   1.0
+  ],
+  "excluded_layers": [
+   2,
+   93
+  ],
+  "top": {
+   "cols": 11214,
+   "contact_frac": 0.0,
+   "chain_frac": 0.0,
+   "gap_under_skin_mm_p10_p50_p90": [
+    0.334,
+    0.334,
+    0.334
+   ],
+   "unbonded_run_p90_mm": 89.0,
+   "unbonded_run_max_mm": 89.0
+  },
+  "bottom": {
+   "cols": 11214,
+   "contact_frac": 0.001,
+   "chain_frac": 0.001,
+   "gap_under_skin_mm_p10_p50_p90": [
+    0.334,
+    0.334,
+    0.335
+   ],
+   "unbonded_run_p90_mm": 89.0,
+   "unbonded_run_max_mm": 89.0
+  }
+ },
+ "failures": [],
+ "result": "PASS"
+}

@@ -1,0 +1,555 @@
+{
+ "seam_bottom_sha256": "dbc84839afd8dc62506be281b9791567f35f807ec672568a12ecfd2c1c30a075",
+ "params": {
+  "FACE_HALF_ANGLE": 45.0,
+  "NORMAL_SPAN": 0.5,
+  "VIS_TOL": 0.05
+ },
+ "categories": {
+  "LC": "layer changes",
+  "OS": "outer/overhang wall seams (run start+stop)",
+  "VS": "visible inner/gap/infill starts+stops"
+ },
+ "live": {
+  "LC": {
+   "bottom": 432,
+   "top": 5,
+   "side": 1
+  },
+  "OS": {
+   "bottom": 885,
+   "top": 11,
+   "side": 12
+  },
+  "VS": {
+   "bottom": 0,
+   "top": 0,
+   "side": 0
+  }
+ },
+ "cand": {
+  "LC": {
+   "bottom": 427,
+   "top": 8,
+   "side": 3
+  },
+  "OS": {
+   "bottom": 885,
+   "top": 11,
+   "side": 12
+  },
+  "VS": {
+   "bottom": 0,
+   "top": 0,
+   "side": 67
+  }
+ },
+ "live_visible_types": {},
+ "cand_visible_types": {
+  "Gap infill": 67
+ },
+ "live_off_bottom_examples": {
+  "LC": [
+   {
+    "layer": 164,
+    "x": 168.394,
+    "y": 2.75,
+    "face": "top",
+    "normal": [
+     0.153,
+     0.988
+    ],
+    "dist_to_face": 0.569,
+    "type": "layer change"
+   },
+   {
+    "layer": 165,
+    "x": 168.609,
+    "y": 4.112,
+    "face": "top",
+    "normal": [
+     0.139,
+     0.99
+    ],
+    "dist_to_face": 0.764,
+    "type": "layer change"
+   },
+   {
+    "layer": 186,
+    "x": 180.126,
+    "y": 3.756,
+    "face": "top",
+    "normal": [
+     -0.203,
+     0.979
+    ],
+    "dist_to_face": 0.551,
+    "type": "layer change"
+   },
+   {
+    "layer": 191,
+    "x": 182.824,
+    "y": 3.04,
+    "face": "side",
+    "normal": [
+     0.828,
+     -0.561
+    ],
+    "dist_to_face": 0.552,
+    "type": "layer change"
+   },
+   {
+    "layer": 438,
+    "x": 144.197,
+    "y": 19.217,
+    "face": "top",
+    "normal": [
+     0.664,
+     0.748
+    ],
+    "dist_to_face": 0.058,
+    "type": "layer change"
+   },
+   {
+    "layer": 439,
+    "x": 140.421,
+    "y": 19.226,
+    "face": "top",
+    "normal": [
+     0.682,
+     0.732
+    ],
+    "dist_to_face": 0.074,
+    "type": "layer change"
+   }
+  ],
+  "OS": [
+   {
+    "layer": 2,
+    "x": 130.655,
+    "y": 1.487,
+    "face": "top",
+    "normal": [
+     0.268,
+     0.964
+    ],
+    "dist_to_face": 0.376,
+    "type": "Overhang wall"
+   },
+   {
+    "layer": 2,
+    "x": 130.655,
+    "y": 1.487,
+    "face": "top",
+    "normal": [
+     0.268,
+     0.964
+    ],
+    "dist_to_face": 0.376,
+    "type": "Outer wall"
+   },
+   {
+    "layer": 2,
+    "x": 125.004,
+    "y": 1.724,
+    "face": "top",
+    "normal": [
+     -0.137,
+     0.991
+    ],
+    "dist_to_face": 0.269,
+    "type": "Outer wall"
+   },
+   {
+    "layer": 2,
+    "x": 125.004,
+    "y": 1.724,
+    "face": "top",
+    "normal": [
+     -0.137,
+     0.991
+    ],
+    "dist_to_face": 0.269,
+    "type": "Overhang wall"
+   },
+   {
+    "layer": 3,
+    "x": 135.669,
+    "y": 1.417,
+    "face": "top",
+    "normal": [
+     0.377,
+     0.926
+    ],
+    "dist_to_face": 0.361,
+    "type": "Overhang wall"
+   },
+   {
+    "layer": 3,
+    "x": 135.669,
+    "y": 1.417,
+    "face": "top",
+    "normal": [
+     0.377,
+     0.926
+    ],
+    "dist_to_face": 0.361,
+    "type": "Outer wall"
+   },
+   {
+    "layer": 4,
+    "x": 138.646,
+    "y": 1.379,
+    "face": "top",
+    "normal": [
+     0.451,
+     0.892
+    ],
+    "dist_to_face": 0.368,
+    "type": "Overhang wall"
+   },
+   {
+    "layer": 4,
+    "x": 138.646,
+    "y": 1.379,
+    "face": "top",
+    "normal": [
+     0.451,
+     0.892
+    ],
+    "dist_to_face": 0.368,
+    "type": "Outer wall"
+   }
+  ],
+  "VS": []
+ },
+ "cand_off_bottom_examples": {
+  "LC": [
+   {
+    "layer": 164,
+    "x": 168.394,
+    "y": 2.75,
+    "face": "top",
+    "normal": [
+     0.153,
+     0.988
+    ],
+    "dist_to_face": 0.569,
+    "type": "layer change"
+   },
+   {
+    "layer": 165,
+    "x": 168.609,
+    "y": 4.112,
+    "face": "top",
+    "normal": [
+     0.139,
+     0.99
+    ],
+    "dist_to_face": 0.764,
+    "type": "layer change"
+   },
+   {
+    "layer": 186,
+    "x": 180.126,
+    "y": 3.756,
+    "face": "top",
+    "normal": [
+     -0.203,
+     0.979
+    ],
+    "dist_to_face": 0.551,
+    "type": "layer change"
+   },
+   {
+    "layer": 191,
+    "x": 182.824,
+    "y": 3.04,
+    "face": "side",
+    "normal": [
+     0.828,
+     -0.561
+    ],
+    "dist_to_face": 0.552,
+    "type": "layer change"
+   },
+   {
+    "layer": 246,
+    "x": 102.445,
+    "y": 25.736,
+    "face": "top",
+    "normal": [
+     0.415,
+     0.91
+    ],
+    "dist_to_face": 0.327,
+    "type": "layer change"
+   },
+   {
+    "layer": 337,
+    "x": 103.7,
+    "y": 33.267,
+    "face": "side",
+    "normal": [
+     0.892,
+     0.453
+    ],
+    "dist_to_face": 0.55,
+    "type": "layer change"
+   },
+   {
+    "layer": 345,
+    "x": 103.717,
+    "y": 32.95,
+    "face": "side",
+    "normal": [
+     0.91,
+     0.415
+    ],
+    "dist_to_face": 0.494,
+    "type": "layer change"
+   },
+   {
+    "layer": 430,
+    "x": 116.615,
+    "y": 20.566,
+    "face": "top",
+    "normal": [
+     0.152,
+     0.988
+    ],
+    "dist_to_face": 0.452,
+    "type": "layer change"
+   }
+  ],
+  "OS": [
+   {
+    "layer": 2,
+    "x": 130.655,
+    "y": 1.487,
+    "face": "top",
+    "normal": [
+     0.268,
+     0.964
+    ],
+    "dist_to_face": 0.376,
+    "type": "Overhang wall"
+   },
+   {
+    "layer": 2,
+    "x": 130.655,
+    "y": 1.487,
+    "face": "top",
+    "normal": [
+     0.268,
+     0.964
+    ],
+    "dist_to_face": 0.376,
+    "type": "Outer wall"
+   },
+   {
+    "layer": 2,
+    "x": 125.004,
+    "y": 1.724,
+    "face": "top",
+    "normal": [
+     -0.137,
+     0.991
+    ],
+    "dist_to_face": 0.269,
+    "type": "Outer wall"
+   },
+   {
+    "layer": 2,
+    "x": 125.004,
+    "y": 1.724,
+    "face": "top",
+    "normal": [
+     -0.137,
+     0.991
+    ],
+    "dist_to_face": 0.269,
+    "type": "Overhang wall"
+   },
+   {
+    "layer": 3,
+    "x": 135.669,
+    "y": 1.417,
+    "face": "top",
+    "normal": [
+     0.377,
+     0.926
+    ],
+    "dist_to_face": 0.361,
+    "type": "Overhang wall"
+   },
+   {
+    "layer": 3,
+    "x": 135.669,
+    "y": 1.417,
+    "face": "top",
+    "normal": [
+     0.377,
+     0.926
+    ],
+    "dist_to_face": 0.361,
+    "type": "Outer wall"
+   },
+   {
+    "layer": 4,
+    "x": 138.646,
+    "y": 1.379,
+    "face": "top",
+    "normal": [
+     0.451,
+     0.892
+    ],
+    "dist_to_face": 0.368,
+    "type": "Overhang wall"
+   },
+   {
+    "layer": 4,
+    "x": 138.646,
+    "y": 1.379,
+    "face": "top",
+    "normal": [
+     0.451,
+     0.892
+    ],
+    "dist_to_face": 0.368,
+    "type": "Outer wall"
+   }
+  ],
+  "VS": [
+   {
+    "layer": 308,
+    "x": 106.18,
+    "y": 30.99,
+    "face": "side",
+    "normal": [
+     0.75,
+     0.661
+    ],
+    "dist_to_face": 0.547,
+    "type": [
+     "Gap infill",
+     1.0892746676125256
+    ]
+   },
+   {
+    "layer": 308,
+    "x": 105.73,
+    "y": 31.59,
+    "face": "side",
+    "normal": [
+     0.757,
+     0.654
+    ],
+    "dist_to_face": 0.495,
+    "type": [
+     "Gap infill",
+     1.0892746676125256
+    ]
+   },
+   {
+    "layer": 313,
+    "x": 107.164,
+    "y": 29.53,
+    "face": "side",
+    "normal": [
+     0.792,
+     0.611
+    ],
+    "dist_to_face": 0.546,
+    "type": [
+     "Gap infill",
+     1.1704009198685077
+    ]
+   },
+   {
+    "layer": 313,
+    "x": 106.773,
+    "y": 30.062,
+    "face": "side",
+    "normal": [
+     0.788,
+     0.616
+    ],
+    "dist_to_face": 0.546,
+    "type": [
+     "Gap infill",
+     1.1704009198685077
+    ]
+   },
+   {
+    "layer": 315,
+    "x": 106.266,
+    "y": 30.611,
+    "face": "side",
+    "normal": [
+     0.81,
+     0.587
+    ],
+    "dist_to_face": 0.508,
+    "type": [
+     "Gap infill",
+     1.097991396077982
+    ]
+   },
+   {
+    "layer": 315,
+    "x": 105.886,
+    "y": 31.128,
+    "face": "side",
+    "normal": [
+     0.794,
+     0.608
+    ],
+    "dist_to_face": 0.511,
+    "type": [
+     "Gap infill",
+     1.097991396077982
+    ]
+   },
+   {
+    "layer": 316,
+    "x": 106.778,
+    "y": 29.792,
+    "face": "side",
+    "normal": [
+     0.806,
+     0.593
+    ],
+    "dist_to_face": 0.545,
+    "type": [
+     "Gap infill",
+     1.110407353459535
+    ]
+   },
+   {
+    "layer": 316,
+    "x": 106.507,
+    "y": 30.212,
+    "face": "side",
+    "normal": [
+     0.805,
+     0.593
+    ],
+    "dist_to_face": 0.505,
+    "type": [
+     "Gap infill",
+     1.110407353459535
+    ]
+   }
+  ]
+ },
+ "live_off_bottom_flag": [
+  "LC: live already has 6 off-bottom points (top 5, side 1)",
+  "OS: live already has 23 off-bottom points (top 11, side 12)"
+ ],
+ "result": "FAIL",
+ "failures": [
+  "LC: 11 off-bottom points (top 8, side 3) > live 6",
+  "VS: 67 off-bottom points (top 0, side 67) > 0 required"
+ ]
+}

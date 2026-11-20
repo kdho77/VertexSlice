@@ -1,0 +1,70 @@
+{
+ "interior_lock_sha256": "fcafd884d4c9f51cb35f7189403a37c4af3ea31643e06a2ba7ec662cec24256c",
+ "mode": "d3+rotate",
+ "params": {
+  "ALLOW_NEW_GAP_BEADS": true,
+  "SLOT_MAX_THICK": 4.0,
+  "BEAD_MAX_W": 1.5,
+  "INNER_POKE_TOL": 0.13,
+  "OUTER_FACE_TOL": 0.005,
+  "MIN_CONST_RUN_MM": 2.0,
+  "WIDTH_STEP_MM": 0.1,
+  "BEAD_W_TOL": 0.05,
+  "OVERLAP_MAX_FRAC": 0.1
+ },
+ "gap_segments_faster_than_gap_speed": [
+  29,
+  18
+ ],
+ "nongap_layers_changed": 0,
+ "nongap_changed_types": {},
+ "new_or_changed_gap_runs": 249,
+ "new_gap_len_mm": 2727.0,
+ "new_gap_vol_mm3": 902.1,
+ "removed_or_changed_live_gap_runs": 228,
+ "flow_cap_mm3s": 16.84136488591253,
+ "fast_flow_cap_mm3s": 44.31997912833099,
+ "live_gap_max_mm3s": 44.31997912833099,
+ "live_slow_gap_max_mm3s": 16.84136488591253,
+ "live_fast_gap_max_mm3s": 44.31997912833099,
+ "straddling_live_runs_on_changed_layers": 78,
+ "runs_too_wide": 0,
+ "runs_double_deposit": 4,
+ "config_cap_mm3s": 35.0,
+ "worst": {
+  "flow": 15.78063263597226,
+  "fast_flow": 21.97979417379433,
+  "width": 1.4181677341325134,
+  "overlap_other_frac": 0.13773598969252424,
+  "overlap_self_frac": 0.3597291397818848,
+  "outside_O_area": 0.0,
+  "outside_I_area": 0.38525316002301113,
+  "min_group_mm": 0.1059546667486495
+ },
+ "runs_outside_thin_zone": 450,
+ "runs_past_outer_face": 0,
+ "runs_not_between_inner_faces": 64,
+ "runs_flow_over_cap": 0,
+ "runs_width_step_violation": 101,
+ "layers_wall_after_gap": 0,
+ "layers_new_gap_growth_forbidden": 0,
+ "samples": [
+  "layer 135: gap run at (126.81,1.82) outside thin zone",
+  "layer 136: gap run at (125.25,1.82) outside thin zone",
+  "layer 137: gap run at (124.20,1.82) outside thin zone",
+  "layer 138: gap run at (123.01,1.82) outside thin zone",
+  "layer 139: gap run at (121.92,1.82) outside thin zone",
+  "layer 140: gap run at (120.91,1.82) outside thin zone",
+  "layer 141: gap run at (120.08,1.82) outside thin zone",
+  "layer 142: gap run at (118.92,1.82) outside thin zone",
+  "layer 143: gap run at (117.84,1.82) outside thin zone",
+  "layer 144: gap run at (116.61,1.82) outside thin zone"
+ ],
+ "result": "FAIL",
+ "failures": [
+  "I2 450 gap runs outside the measured thin zone",
+  "I2 64 gap runs not between two wall inner faces",
+  "I9 4 gap beads double-deposit (overlap > 10%)",
+  "I5 101 gap beads with a width step not held for 2.0 mm"
+ ]
+}

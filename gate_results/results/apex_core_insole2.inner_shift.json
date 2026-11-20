@@ -1,0 +1,69 @@
+{
+ "inner_shift_sha256": "00db83c491a643bf42ea430b4ff5e0fa4f44806f70139a53f8be9423045ab59d",
+ "params": {
+  "SHIFT_MAX": 0.454,
+  "INF_SHIFT_MAX": 0.734,
+  "INF_BAND": 3.2,
+  "CROWD_MAX_MM": 0.1237,
+  "SEG_MIN_RATIO": 0.95,
+  "TURN_TOL": 0.2,
+  "TOWARD_K": 0.7
+ },
+ "counts": {
+  "S1": 0,
+  "S2": 0,
+  "S3_far": 0,
+  "S3_out": 0,
+  "S3_side": 85,
+  "S4": 0,
+  "S6_off": 29,
+  "S6_band": 0
+ },
+ "crowd_samples_over_cap": {
+  "live": 0,
+  "cand": 0
+ },
+ "worst": {
+  "shift": 0.415,
+  "outward": 0.0,
+  "crowd_cand": 0.0805,
+  "crowd_live": 0.0805,
+  "inf_shift": Infinity,
+  "inf_inner_ov_live": 0.3143,
+  "inf_inner_ov_cand": 0.3143
+ },
+ "rotated_inner_loops": 0,
+ "infill": {
+  "Sparse infill": {
+   "F_live": [
+    26.0
+   ],
+   "F_cand": [
+    26.0
+   ],
+   "median_e_live": 0.17998817966903075,
+   "median_e_cand": 0.17998685939553216,
+   "segs_e_out_of_range": 0,
+   "vol_ratio": 1.06
+  }
+ },
+ "samples": [
+  "layer 5: Inner wall moved sideways (not toward the outer wall) at 4 points",
+  "layer 6: Inner wall moved sideways (not toward the outer wall) at 4 points",
+  "layer 7: Inner wall moved sideways (not toward the outer wall) at 4 points",
+  "layer 7: Sparse infill lies inf mm from any live Sparse infill line (> 2.50)",
+  "layer 8: Inner wall moved sideways (not toward the outer wall) at 4 points",
+  "layer 9: Inner wall moved sideways (not toward the outer wall) at 4 points",
+  "layer 10: Inner wall moved sideways (not toward the outer wall) at 4 points",
+  "layer 11: Inner wall moved sideways (not toward the outer wall) at 4 points",
+  "layer 11: Sparse infill lies 2.730 mm from any live Sparse infill line (> 2.50)",
+  "layer 12: Inner wall moved sideways (not toward the outer wall) at 4 points",
+  "layer 12: Sparse infill lies 3.908 mm from any live Sparse infill line (> 2.50)",
+  "layer 13: Inner wall moved sideways (not toward the outer wall) at 4 points"
+ ],
+ "result": "FAIL",
+ "failures": [
+  "S3 Inner wall moved sideways (not a pure offset toward the outer wall) on 85 runs",
+  "S6 infill lies more than INF_EXT_MAX from any live infill line on 29 layer-types"
+ ]
+}

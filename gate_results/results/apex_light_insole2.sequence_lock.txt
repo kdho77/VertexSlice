@@ -1,0 +1,10 @@
+{
+ "result": "PASS",
+ "failures": [],
+ "commands_live": 28,
+ "commands_cand": 28,
+ "layers_differing": 0,
+ "layers_m204_set_differing": 0,
+ "first_layers": [],
+ "sequence_lock_sha256": "e519b67797034da8c194ddde90f65f1e00cb50ca4ce64874b65c9a0a4f99e123"
+}

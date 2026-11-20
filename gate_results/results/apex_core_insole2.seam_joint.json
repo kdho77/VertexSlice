@@ -1,0 +1,121 @@
+{
+ "seam_joint_sha256": "30566f98921b995b1d6f3d300736729f75f6560fe9cd891ea6ac105d85ab654f",
+ "params": {
+  "E_TOL": 0.0001,
+  "SHORT_LOOP": 3.0,
+  "OVERLAP": 0.4,
+  "TAIL_TOL": 0.011,
+  "COLUMN_MM": 1.0,
+  "END_MM": 0.3,
+  "SKIN_CLEAR": 0.55
+ },
+ "mode": "zero-travel-cuts (ApexCore)",
+ "live": {
+  "J1_short_primes": 0,
+  "J1_over_primes": 0,
+  "J2_closed_loops_gt3mm": 92,
+  "J2_missing_cover": 1,
+  "J2_long_overlap": 0,
+  "J3_stacked_deficit": 0,
+  "J3_column_starts": 90,
+  "J3_layers_with_closed_start": 92,
+  "J4_wall_cuts": 2,
+  "J4_surface_cuts": 0,
+  "J4_skin_travels": 2,
+  "examples": {
+   "J1_short": [],
+   "J2_missing": [
+    [
+     2,
+     95.5,
+     0.021
+    ]
+   ],
+   "J4_wall": [
+    [
+     3,
+     95.7,
+     0.422,
+     140.0,
+     2.227
+    ],
+    [
+     93,
+     95.7,
+     14.811,
+     140.0,
+     15.73
+    ]
+   ],
+   "J4_surface": [],
+   "J4_skin": [
+    [
+     92,
+     184.0,
+     14.534,
+     140.0,
+     15.577
+    ],
+    [
+     92,
+     138.9,
+     15.577,
+     95.7,
+     14.411
+    ]
+   ]
+  }
+ },
+ "cand": {
+  "J1_short_primes": 0,
+  "J1_over_primes": 0,
+  "J2_closed_loops_gt3mm": 92,
+  "J2_missing_cover": 1,
+  "J2_long_overlap": 0,
+  "J3_stacked_deficit": 0,
+  "J3_column_starts": 90,
+  "J3_layers_with_closed_start": 92,
+  "J4_wall_cuts": 1,
+  "J4_surface_cuts": 0,
+  "J4_skin_travels": 0,
+  "examples": {
+   "J1_short": [],
+   "J2_missing": [
+    [
+     2,
+     95.5,
+     0.021
+    ]
+   ],
+   "J4_wall": [
+    [
+     93,
+     95.7,
+     14.811,
+     140.0,
+     15.73
+    ]
+   ],
+   "J4_surface": [],
+   "J4_skin": []
+  }
+ },
+ "new_offenders": {
+  "J4_wall_cuts": {
+   "new": 0,
+   "examples": []
+  },
+  "J4_surface_cuts": {
+   "new": 0,
+   "examples": []
+  },
+  "J4_skin_travels": {
+   "new": 0,
+   "examples": []
+  }
+ },
+ "result": "FAIL",
+ "failures": [
+  "J4_wall_cuts 1 (ApexCore: 0 required; live 2)"
+ ]
+}

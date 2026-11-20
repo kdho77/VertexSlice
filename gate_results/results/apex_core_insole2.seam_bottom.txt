@@ -1,0 +1,165 @@
+{
+ "seam_bottom_sha256": "dbc84839afd8dc62506be281b9791567f35f807ec672568a12ecfd2c1c30a075",
+ "mode": "absolute (ApexCore, bar = ApexLight live)",
+ "params": {
+  "FACE_HALF_ANGLE": 45.0,
+  "NORMAL_SPAN": 0.5,
+  "VIS_TOL": 0.05,
+  "ROT_CLOSE": 0.011,
+  "LC_FLOOR": 0.98
+ },
+ "bars_from_apexlight_live": {
+  "LC": 0.98,
+  "CS": 1.0
+ },
+ "cand_fraction": {
+  "LC": 1.0,
+  "CS": 1.0
+ },
+ "live_apexcore": {
+  "mid": {
+   "LC": {
+    "bottom": 0,
+    "top": 90,
+    "side": 0
+   },
+   "CS": {
+    "bottom": 0,
+    "top": 90,
+    "side": 0
+   },
+   "OE": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   },
+   "VS": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   }
+  },
+  "ends": {
+   "LC": {
+    "bottom": 0,
+    "top": 1,
+    "side": 1
+   },
+   "CS": {
+    "bottom": 1,
+    "top": 0,
+    "side": 1
+   },
+   "OE": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   },
+   "VS": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   }
+  }
+ },
+ "cand": {
+  "mid": {
+   "LC": {
+    "bottom": 90,
+    "top": 0,
+    "side": 0
+   },
+   "CS": {
+    "bottom": 90,
+    "top": 0,
+    "side": 0
+   },
+   "OE": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   },
+   "VS": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   }
+  },
+  "ends": {
+   "LC": {
+    "bottom": 0,
+    "top": 1,
+    "side": 1
+   },
+   "CS": {
+    "bottom": 1,
+    "top": 0,
+    "side": 1
+   },
+   "OE": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   },
+   "VS": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   }
+  }
+ },
+ "apexlight_live": {
+  "mid": {
+   "LC": {
+    "bottom": 87,
+    "top": 2,
+    "side": 3
+   },
+   "CS": {
+    "bottom": 92,
+    "top": 0,
+    "side": 0
+   },
+   "OE": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   },
+   "VS": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   }
+  },
+  "ends": {
+   "LC": {
+    "bottom": 0,
+    "top": 1,
+    "side": 1
+   },
+   "CS": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   },
+   "OE": {
+    "bottom": 0,
+    "top": 0,
+    "side": 4
+   },
+   "VS": {
+    "bottom": 0,
+    "top": 0,
+    "side": 0
+   }
+  }
+ },
+ "cand_off_bottom_examples": {
+  "LC": [],
+  "CS": [],
+  "OE": [],
+  "VS": []
+ },
+ "result": "PASS",
+ "failures": []
+}

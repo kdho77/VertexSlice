@@ -1,0 +1,77 @@
+/usr/lib/python3/dist-packages/shapely/set_operations.py:419: RuntimeWarning: invalid value encountered in unary_union
+  return lib.unary_union(collections, **kwargs)
+/usr/lib/python3/dist-packages/shapely/set_operations.py:76: RuntimeWarning: divide by zero encountered in difference
+  return lib.difference(a, b, **kwargs)
+{
+ "interior_lock_sha256": "fcafd884d4c9f51cb35f7189403a37c4af3ea31643e06a2ba7ec662cec24256c",
+ "mode": "strict",
+ "params": {
+  "ALLOW_NEW_GAP_BEADS": true,
+  "SLOT_MAX_THICK": 4.0,
+  "BEAD_MAX_W": 1.5,
+  "INNER_POKE_TOL": 0.13,
+  "OUTER_FACE_TOL": 0.005,
+  "MIN_CONST_RUN_MM": 2.0,
+  "WIDTH_STEP_MM": 0.1,
+  "BEAD_W_TOL": 0.05,
+  "OVERLAP_MAX_FRAC": 0.1
+ },
+ "gap_segments_faster_than_gap_speed": [
+  0,
+  0
+ ],
+ "nongap_layers_changed": 6,
+ "nongap_changed_types": {
+  "Sparse infill": 3,
+  "Outer wall": 3
+ },
+ "new_or_changed_gap_runs": 165,
+ "new_gap_len_mm": 649.2,
+ "new_gap_vol_mm3": 88.0,
+ "removed_or_changed_live_gap_runs": 0,
+ "flow_cap_mm3s": 35.0,
+ "fast_flow_cap_mm3s": 35.0,
+ "live_gap_max_mm3s": 0.0,
+ "live_slow_gap_max_mm3s": 0.0,
+ "live_fast_gap_max_mm3s": 0.0,
+ "straddling_live_runs_on_changed_layers": 0,
+ "runs_too_wide": 0,
+ "runs_double_deposit": 0,
+ "config_cap_mm3s": 35.0,
+ "worst": {
+  "flow": 12.817341537374753,
+  "fast_flow": 0.0,
+  "width": 1.1704009198685077,
+  "overlap_other_frac": 0.06388090851745862,
+  "overlap_self_frac": 0.017389805702656944,
+  "outside_O_area": 0.22947991134782583,
+  "outside_I_area": 5.829863473007834,
+  "min_group_mm": null
+ },
+ "runs_outside_thin_zone": 25,
+ "runs_past_outer_face": 34,
+ "runs_not_between_inner_faces": 139,
+ "runs_flow_over_cap": 0,
+ "runs_width_step_violation": 0,
+ "layers_wall_after_gap": 0,
+ "layers_new_gap_growth_forbidden": 0,
+ "samples": [
+  "layer 222: gap run at (108.27,14.75) outside thin zone",
+  "layer 222: gap run at (108.11,15.79) outside thin zone",
+  "layer 233: gap run at (104.19,20.61) not between wall inner faces (area 0.006 mm2 beyond 0.13 mm poke)",
+  "layer 234: gap run at (106.32,19.55) not between wall inner faces (area 0.002 mm2 beyond 0.13 mm poke)",
+  "layer 235: gap run at (106.08,20.01) not between wall inner faces (area 0.005 mm2 beyond 0.13 mm poke)",
+  "layer 236: gap run at (104.62,21.19) not between wall inner faces (area 0.008 mm2 beyond 0.13 mm poke)",
+  "layer 237: gap run at (106.64,20.16) not between wall inner faces (area 0.037 mm2 beyond 0.13 mm poke)",
+  "layer 238: gap run at (107.19,20.02) not between wall inner faces (area 0.002 mm2 beyond 0.13 mm poke)",
+  "layer 240: gap run at (105.50,21.75) not between wall inner faces (area 0.014 mm2 beyond 0.13 mm poke)",
+  "layer 241: gap run at (106.92,21.05) not between wall inner faces (area 0.003 mm2 beyond 0.13 mm poke)"
+ ],
+ "result": "FAIL",
+ "failures": [
+  "I1 non-gap-fill extrusion changed on 6 layers {'Sparse infill': 3, 'Outer wall': 3}",
+  "I2 25 gap runs outside the measured thin zone",
+  "I2 34 gap runs poke past an outer face",
+  "I2 139 gap runs not between two wall inner faces"
+ ]
+}

@@ -1,0 +1,72 @@
+{
+ "live": "gate_results/live_apex_light_insole2.gcode",
+ "candidate": "gate_results/cand_apex_light_insole2.gcode",
+ "outer_lock_sha256": "1964f64a55b977675e6b143fc0b4db2eb055488154508bbcacbad0267a3533b5",
+ "mode": "strict",
+ "layers": [
+  96,
+  96
+ ],
+ "locked": {
+  "Outer wall": {
+   "live_runs": 94,
+   "cand_runs": 94,
+   "unmatched_live": 0,
+   "unmatched_cand": 0,
+   "layers_bad": 0
+  }
+ },
+ "outer_width_steps": {
+  "live": 4,
+  "cand": 4
+ },
+ "worst_unmatched": {
+  "xy_mm": 0.0,
+  "e_rel": 0.0,
+  "f_mm_s": 0.0
+ },
+ "run_order_changes_layers": 0,
+ "rotated_closed_loops": 0,
+ "bad_layers_first20": [],
+ "reduce_crossing_wall": [
+  "; reduce_crossing_wall = 1"
+ ],
+ "crossings": {
+  "live": {
+   "perimeter_crossings": 1,
+   "outer_only_crossings": 1,
+   "seam_approaches": 272,
+   "surface_crossings": 0,
+   "skin_interior_travels": 16,
+   "gap_crossings": 0,
+   "chain_hop_crossings": 0,
+   "gap_exit_crossings": 0,
+   "seam_block_crossings": 1
+  },
+  "cand": {
+   "perimeter_crossings": 1,
+   "outer_only_crossings": 1,
+   "seam_approaches": 272,
+   "surface_crossings": 0,
+   "skin_interior_travels": 16,
+   "gap_crossings": 0,
+   "chain_hop_crossings": 0,
+   "gap_exit_crossings": 0,
+   "seam_block_crossings": 1
+  }
+ },
+ "retracts_near_outer": [
+  189,
+  189
+ ],
+ "wipes": [
+  92,
+  92
+ ],
+ "z_moves": [
+  94,
+  94
+ ],
+ "result": "PASS",
+ "failures": []
+}

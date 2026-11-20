@@ -1,0 +1,139 @@
+{
+ "result": "FAIL",
+ "failures": [
+  "band 90-100% air_noinfill_mm3 80.84 > live 80.80"
+ ],
+ "bands": [
+  {
+   "band": "0-10%",
+   "live": {
+    "cols": 4049,
+    "air_noinfill_cols": 3850,
+    "air_noinfill_mm3": 330.95
+   },
+   "cand": {
+    "cols": 4049,
+    "air_noinfill_cols": 3850,
+    "air_noinfill_mm3": 330.9
+   }
+  },
+  {
+   "band": "10-20%",
+   "live": {
+    "cols": 6590,
+    "air_noinfill_cols": 6459,
+    "air_noinfill_mm3": 577.17
+   },
+   "cand": {
+    "cols": 6590,
+    "air_noinfill_cols": 6459,
+    "air_noinfill_mm3": 577.08
+   }
+  },
+  {
+   "band": "20-30%",
+   "live": {
+    "cols": 7380,
+    "air_noinfill_cols": 7219,
+    "air_noinfill_mm3": 815.92
+   },
+   "cand": {
+    "cols": 7380,
+    "air_noinfill_cols": 7219,
+    "air_noinfill_mm3": 815.85
+   }
+  },
+  {
+   "band": "30-40%",
+   "live": {
+    "cols": 2672,
+    "air_noinfill_cols": 2457,
+    "air_noinfill_mm3": 322.66
+   },
+   "cand": {
+    "cols": 2672,
+    "air_noinfill_cols": 2457,
+    "air_noinfill_mm3": 322.64
+   }
+  },
+  {
+   "band": "40-50%",
+   "live": {
+    "cols": 774,
+    "air_noinfill_cols": 438,
+    "air_noinfill_mm3": 77.96
+   },
+   "cand": {
+    "cols": 774,
+    "air_noinfill_cols": 438,
+    "air_noinfill_mm3": 77.96
+   }
+  },
+  {
+   "band": "50-60%",
+   "live": {
+    "cols": 894,
+    "air_noinfill_cols": 408,
+    "air_noinfill_mm3": 65.88
+   },
+   "cand": {
+    "cols": 894,
+    "air_noinfill_cols": 408,
+    "air_noinfill_mm3": 65.88
+   }
+  },
+  {
+   "band": "60-70%",
+   "live": {
+    "cols": 748,
+    "air_noinfill_cols": 265,
+    "air_noinfill_mm3": 31.47
+   },
+   "cand": {
+    "cols": 748,
+    "air_noinfill_cols": 227,
+    "air_noinfill_mm3": 27.24
+   }
+  },
+  {
+   "band": "70-80%",
+   "live": {
+    "cols": 721,
+    "air_noinfill_cols": 366,
+    "air_noinfill_mm3": 55.88
+   },
+   "cand": {
+    "cols": 721,
+    "air_noinfill_cols": 352,
+    "air_noinfill_mm3": 55.03
+   }
+  },
+  {
+   "band": "80-90%",
+   "live": {
+    "cols": 1573,
+    "air_noinfill_cols": 1532,
+    "air_noinfill_mm3": 189.64
+   },
+   "cand": {
+    "cols": 1573,
+    "air_noinfill_cols": 1532,
+    "air_noinfill_mm3": 189.64
+   }
+  },
+  {
+   "band": "90-100%",
+   "live": {
+    "cols": 1376,
+    "air_noinfill_cols": 831,
+    "air_noinfill_mm3": 80.8
+   },
+   "cand": {
+    "cols": 1376,
+    "air_noinfill_cols": 827,
+    "air_noinfill_mm3": 80.84
+   }
+  }
+ ],
+ "air_bands_sha256": "c82e6ff2a8303c459a422e4141d914a045b2c4bb42180cdf235cc1e977db2bff"
+}

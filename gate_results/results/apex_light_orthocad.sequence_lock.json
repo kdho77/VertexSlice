@@ -1,0 +1,12 @@
+{
+ "result": "FAIL",
+ "failures": [
+  "1 layers break the M204 set rule (new value or a live value dropped); first layer 438: live ['M204 S10000', 'M204 S8000'] vs cand [] (file-wide live values ['M204 P10000 R1000 T10000', 'M204 S10000', 'M204 S4000', 'M204 S8000'])"
+ ],
+ "commands_live": 28,
+ "commands_cand": 28,
+ "layers_differing": 0,
+ "layers_m204_set_differing": 1,
+ "first_layers": [],
+ "sequence_lock_sha256": "e519b67797034da8c194ddde90f65f1e00cb50ca4ce64874b65c9a0a4f99e123"
+}

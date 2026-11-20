@@ -1,0 +1,39 @@
+{
+ "result": "FAIL",
+ "mode": "d3+rotate",
+ "failures": [
+  "E perimeter_crossings = 8 (live 0; candidate may never exceed live, and must be 0 where live is 0)",
+  "E outer_only_crossings = 8 (live 0; candidate may never exceed live, and must be 0 where live is 0)",
+  "E skin_interior_travels 1 > live 0"
+ ],
+ "layers": [
+  439,
+  439
+ ],
+ "outer_width_steps": {
+  "live": 0,
+  "cand": 0
+ },
+ "worst_unmatched": {
+  "xy_mm": 0.0,
+  "e_rel": 0.0,
+  "f_mm_s": 0.0
+ },
+ "run_order_changes_layers": 0,
+ "rotated_closed_loops": 433,
+ "retracts_near_outer": [
+  224,
+  122
+ ],
+ "wipes": [
+  436,
+  436
+ ],
+ "z_moves": [
+  437,
+  437
+ ]
+}
+crossings live: {'perimeter_crossings': 0, 'outer_only_crossings': 0, 'seam_approaches': 621, 'surface_crossings': 0, 'skin_interior_travels': 0, 'gap_crossings': 0, 'chain_hop_crossings': 0, 'gap_exit_crossings': 0, 'seam_block_crossings': 0}
+crossings cand: {'perimeter_crossings': 8, 'outer_only_crossings': 8, 'seam_approaches': 472, 'surface_crossings': 0, 'skin_interior_travels': 1, 'gap_crossings': 0, 'chain_hop_crossings': 0, 'gap_exit_crossings': 0, 'seam_block_crossings': 0}
+locked Outer+Overhang (rotation rule) {'live_runs': 440, 'cand_runs': 440, 'unmatched_live': 0, 'unmatched_cand': 0, 'layers_bad': 0}
