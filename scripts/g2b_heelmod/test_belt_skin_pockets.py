@@ -18,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path[:0] = [str(HERE), str(REPO / "validation")]
 
-from belt_skin_gate import CAP, air_between, close_inside  # noqa: E402
+from belt_skin_gate import CAP, air_between, belt_overlap_shortfall, close_inside  # noqa: E402
 from slice_apexcore_g2b import chain_gap_fill_travels  # noqa: E402
 
 # Sample insole, layer ~40, machine Z 26.672, X=133.
@@ -145,12 +145,23 @@ class BeltSkinLeftoverTest(unittest.TestCase):
                 if gap is not None:
                     self.assertAlmostEqual(middles[0][0], gap[0], delta=0.001)
 
+    def test_fifteen_percent_overlap_already_meets_the_belt_stretch(self) -> None:
+        # 15% of a 1 mm wall. Extending it would move infill ends and the
+        # travel between them. Zero overlap still leaves the stretch.
+        self.assertLess(belt_overlap_shortfall(1.0, 0.15), 0.02)
+        self.assertGreater(belt_overlap_shortfall(1.0, 0.0), 0.15)
+        self.assertLess(belt_overlap_shortfall(1.04, 0.15), 0.02)
+
     def test_outer_walls_are_not_rewritten(self) -> None:
         src = (REPO / "src" / "libslic3r" / "PerimeterGenerator.cpp").read_text()
         self.assertIn("close_belt_from_inside", src)
         self.assertIn("close_arachne_belt_beads", src)
         self.assertIn("ThickPolylines skin_clip", src)
         self.assertIn("apply_uniform_inner_width", src)
+        self.assertIn("apply_inner_width_runs", src)
+        # A whole-line veto left ApexLight byte-identical to live.
+        self.assertNotIn("Every horizontal junction has to grow", src)
+        self.assertIn("Per junction", src)
         self.assertNotIn("widen_belt_skin_walls", src)
         self.assertNotIn("fit_belt_gap_beads", src)
         self.assertNotIn("widen_arachne_belt_beads", src)

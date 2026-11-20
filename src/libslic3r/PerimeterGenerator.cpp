@@ -36,11 +36,17 @@ using namespace Slic3r::Feature::FuzzySkin;
 // cross-section coordinate. G-code writes Y_mach = √2 * Y_virt and does not
 // scale bead width, so beads that meet in virtual Y leave air in machine Y.
 // The outer wall is frozen: same points, same width, same path. An existing
-// internal bead (gap fill, inner wall, Arachne inset > 0) grows equally on
-// both sides, one width for the whole bead, so the centreline does not move
-// and variable-width does not emit another path. Nothing is added. A slot
-// with no internal bead is left as it is. The solid-infill clip stays the
-// pre-fit gap.
+// internal bead grows equally on both sides of its centre, so the centre
+// does not move. A horizontal run that faces a hole grows on its own. A long
+// inner wall is not rejected because some other run has no hole: ApexLight's
+// Arachne loop goes around the whole cross-section, and requiring every
+// junction to grow left that G-code identical to live. A run that is one
+// width stays one path. Two widths on one loop are two paths of that loop,
+// extruded in order, so no travel is inserted between them. A slot with no
+// internal bead is left as it is. 15% infill overlap already closes the
+// belt stretch between a wall and an infill line that meet; a lower overlap
+// is extended by the shortfall. Nothing is added. The solid-infill clip
+// stays the pre-fit gap.
 static constexpr double BELT_SKIN_MAX_THICK_MM = 4.0;
 static constexpr double BELT_SKIN_CAP_MM = 1.6;
 
@@ -397,8 +403,34 @@ static void gather_perimeter_paths(ExtrusionEntity *entity, std::vector<Extrusio
     }
 }
 
-// One width, written on the path that already exists. Splitting the path
-// would change the path count live sliced.
+static bool belt_horizontal_pts(const Point &a, const Point &b)
+{
+    return std::abs(b.x() - a.x()) >= std::abs(b.y() - a.y());
+}
+
+// Machine-Y gap left when a wall of `wall_mm` meets infill that already
+// overlaps it by `overlap_mm` in virtual Y. Negative means they already
+// overlap on the belt. 15% of a 1 mm wall is about -0.005 mm.
+static double belt_overlap_shortfall_mm(double wall_mm, double overlap_mm)
+{
+    const double scale = BeltTransform::gantry_y_scale();
+    return (scale - 1.0) * wall_mm * 0.5 - scale * overlap_mm;
+}
+
+// Virtual millimetres to add to an overlap that does not yet meet on the belt.
+// 15% of a 1 mm wall returns 0. A new infill line is not inserted; the existing
+// clip moves by this much.
+static coord_t belt_overlap_boost(double wall_mm, double overlap_mm)
+{
+    const double shortfall = belt_overlap_shortfall_mm(wall_mm, overlap_mm);
+    if (shortfall <= 0.05)
+        return 0;
+    return coord_t(scale_(shortfall / BeltTransform::gantry_y_scale()));
+}
+
+// One width, written on the path that already exists. Used when every
+// horizontal point on the path can grow, which is how 24571bdf closed the
+// beads it did close. The centreline does not move.
 static void apply_uniform_inner_width(ExtrusionPath &path, int group, const std::vector<BeltWallSeg> &skins,
                                      const BeltXIndex &skin_index, const std::vector<BeltWallSeg> &internal,
                                      const BeltXIndex &int_index)
@@ -418,9 +450,9 @@ static void apply_uniform_inner_width(ExtrusionPath &path, int group, const std:
     for (size_t i = 0; i < last; ++i) {
         bool horiz = false;
         if (i + 1 < n)
-            horiz = std::abs(pts[i + 1].x() - pts[i].x()) >= std::abs(pts[i + 1].y() - pts[i].y());
+            horiz = belt_horizontal_pts(pts[i], pts[i + 1]);
         if (!horiz && i > 0)
-            horiz = std::abs(pts[i].x() - pts[i - 1].x()) >= std::abs(pts[i].y() - pts[i - 1].y());
+            horiz = belt_horizontal_pts(pts[i - 1], pts[i]);
         if (!horiz)
             continue;
         ++across;
@@ -440,6 +472,134 @@ static void apply_uniform_inner_width(ExtrusionPath &path, int group, const std:
     path.width = grown;
 }
 
+// A long inner wall has a hole on only part of its length. Grow those
+// horizontal segments and leave the rest at the live width. The pieces stay
+// in the caller's loop and share their endpoints, so the following extrude
+// does not travel between them.
+static void apply_inner_width_runs(ExtrusionPath path, int group, const std::vector<BeltWallSeg> &skins,
+                                  const BeltXIndex &skin_index, const std::vector<BeltWallSeg> &internal,
+                                  const BeltXIndex &int_index, ExtrusionPaths &out)
+{
+    if (!is_internal_perimeter(path.role()) || path.width <= 0.f || path.polyline.size() < 2) {
+        out.push_back(std::move(path));
+        return;
+    }
+    const Points &pts = path.polyline.points;
+    const size_t n = pts.size();
+    const size_t seg_n = n - 1;
+    bool all_across = true;
+    int across = 0;
+    const bool closed = pts.front() == pts.back();
+    const size_t last = closed ? n - 1 : n;
+    for (size_t i = 0; i < last; ++i) {
+        bool horiz = false;
+        if (i + 1 < n)
+            horiz = belt_horizontal_pts(pts[i], pts[i + 1]);
+        if (!horiz && i > 0)
+            horiz = belt_horizontal_pts(pts[i - 1], pts[i]);
+        if (!horiz)
+            continue;
+        ++across;
+        const double g = belt_point_growth(skins, skin_index, internal, int_index, unscale<double>(pts[i].x()),
+                                           unscale<double>(pts[i].y()), double(path.width), group);
+        if (g < 0.01)
+            all_across = false;
+    }
+    if (across == 0) {
+        out.push_back(std::move(path));
+        return;
+    }
+    // Every horizontal point can grow: one width for the whole path, same
+    // as the previous slice. A partial hole used to veto the whole path.
+    if (all_across) {
+        apply_uniform_inner_width(path, group, skins, skin_index, internal, int_index);
+        out.push_back(std::move(path));
+        return;
+    }
+    std::vector<float> seg_w(seg_n, path.width);
+    bool any = false;
+    for (size_t i = 0; i < seg_n; ++i) {
+        if (!belt_horizontal_pts(pts[i], pts[i + 1]))
+            continue;
+        // The midpoint owns the hole. A corner that has left the pocket does
+        // not veto the rest of this segment.
+        const double mx = 0.5 * (unscale<double>(pts[i].x()) + unscale<double>(pts[i + 1].x()));
+        const double my = 0.5 * (unscale<double>(pts[i].y()) + unscale<double>(pts[i + 1].y()));
+        const double g = belt_point_growth(skins, skin_index, internal, int_index, mx, my, double(path.width), group);
+        if (g < 0.01)
+            continue;
+        const float target = float(std::min(BELT_SKIN_CAP_MM, double(path.width) + 2.0 * g));
+        if (target > path.width + 0.01f) {
+            seg_w[i] = target;
+            any = true;
+        }
+    }
+    if (!any) {
+        out.push_back(std::move(path));
+        return;
+    }
+    size_t begin = 0;
+    const size_t before = out.size();
+    for (size_t i = 1; i <= seg_n; ++i) {
+        if (i < seg_n && std::abs(seg_w[i] - seg_w[begin]) <= 0.02f)
+            continue;
+        Polyline pl;
+        for (size_t k = begin; k <= i && k < n; ++k)
+            pl.append(pts[k]);
+        if (pl.size() >= 2) {
+            ExtrusionPath piece(std::move(pl), path);
+            const float grown = seg_w[begin];
+            if (grown > path.width + 0.01f) {
+                piece.mm3_per_mm = belt_scaled_flow(path.mm3_per_mm, path.width, grown, path.height);
+                piece.width = grown;
+            }
+            out.push_back(std::move(piece));
+        }
+        begin = i;
+    }
+    if (out.size() == before)
+        out.push_back(std::move(path));
+}
+
+static void rewrite_belt_paths(ExtrusionPaths &paths, int &group, const std::vector<BeltWallSeg> &skins,
+                              const BeltXIndex &skin_index, const std::vector<BeltWallSeg> &internal,
+                              const BeltXIndex &int_index)
+{
+    ExtrusionPaths next;
+    next.reserve(paths.size());
+    for (ExtrusionPath &path : paths) {
+        const int path_group = group++;
+        apply_inner_width_runs(std::move(path), path_group, skins, skin_index, internal, int_index, next);
+    }
+    paths = std::move(next);
+}
+
+static void rewrite_belt_entity(ExtrusionEntity *entity, int &group, const std::vector<BeltWallSeg> &skins,
+                               const BeltXIndex &skin_index, const std::vector<BeltWallSeg> &internal,
+                               const BeltXIndex &int_index)
+{
+    if (entity == nullptr)
+        return;
+    if (ExtrusionLoop *loop = dynamic_cast<ExtrusionLoop *>(entity)) {
+        rewrite_belt_paths(loop->paths, group, skins, skin_index, internal, int_index);
+        return;
+    }
+    if (ExtrusionMultiPath *multi = dynamic_cast<ExtrusionMultiPath *>(entity)) {
+        rewrite_belt_paths(multi->paths, group, skins, skin_index, internal, int_index);
+        return;
+    }
+    if (ExtrusionPath *path = dynamic_cast<ExtrusionPath *>(entity)) {
+        // A bare path has nowhere to put a second piece without a new entity,
+        // and a new entity is a travel. Uniform growth only.
+        apply_uniform_inner_width(*path, group++, skins, skin_index, internal, int_index);
+        return;
+    }
+    if (ExtrusionEntityCollection *coll = dynamic_cast<ExtrusionEntityCollection *>(entity)) {
+        for (ExtrusionEntity *child : coll->entities)
+            rewrite_belt_entity(child, group, skins, skin_index, internal, int_index);
+    }
+}
+
 static void close_belt_from_inside(ThickPolylines &polylines, ExtrusionEntityCollection *loops, size_t begin, double height)
 {
     if (loops == nullptr)
@@ -449,10 +609,8 @@ static void close_belt_from_inside(ThickPolylines &polylines, ExtrusionEntityCol
         gather_perimeter_paths(loops->entities[i], paths);
     std::vector<BeltWallSeg> skins;
     std::vector<BeltWallSeg> internal;
-    std::vector<int> groups(paths.size(), 0);
     int next_group = 1;
     for (size_t i = 0; i < paths.size(); ++i) {
-        groups[i] = next_group;
         std::vector<BeltWallSeg> segs;
         collect_belt_walls(paths[i], segs, next_group);
         ++next_group;
@@ -470,24 +628,24 @@ static void close_belt_from_inside(ThickPolylines &polylines, ExtrusionEntityCol
     skin_index.build(skins);
     int_index.build(internal);
     grow_belt_gap_beads(polylines, skins, skin_index, internal, int_index, height, gap_group0);
-    for (size_t i = 0; i < paths.size(); ++i)
-        apply_uniform_inner_width(*paths[i], groups[i], skins, skin_index, internal, int_index);
+    // Same walk, same group numbers, as the index above. `groups` is the
+    // flattened assignment; the rewrite walks the entities in that order.
+    int apply_group = 1;
+    for (size_t i = begin; i < loops->entities.size(); ++i)
+        rewrite_belt_entity(loops->entities[i], apply_group, skins, skin_index, internal, int_index);
 }
 
-// Arachne inset 0 is the outer wall and is not written. Inset > 0 takes one
-// new width on the junctions it already has. No line is added.
+// Arachne inset 0 is the outer wall and is not written. Per junction, inset > 0
+// grows where that junction faces a hole. ApexLight's inner wall is one loop
+// around the whole section; requiring every junction to grow made the line a
+// no-op and the G-code matched live. Points stay. The line stays one line.
+// No line is added.
 static void close_arachne_belt_beads(std::vector<Arachne::VariableWidthLines> &perimeters, double height)
 {
     const double adj = height * (1.0 - 0.25 * PI);
     auto emitted = [adj](coord_t stored) { return unscale<double>(stored) + adj; };
     std::vector<BeltWallSeg> skins;
     std::vector<BeltWallSeg> internal;
-    struct JunctionRef {
-        Arachne::ExtrusionJunction *j;
-        int group;
-        bool across;
-    };
-    std::vector<JunctionRef> refs;
     int group = 1;
     for (Arachne::VariableWidthLines &lines : perimeters) {
         for (Arachne::ExtrusionLine &line : lines) {
@@ -500,25 +658,10 @@ static void close_arachne_belt_beads(std::vector<Arachne::VariableWidthLines> &p
                     unscale<double>(a.p.x()), unscale<double>(a.p.y()),
                     unscale<double>(b.p.x()), unscale<double>(b.p.y()),
                     0.5 * (emitted(a.w) + emitted(b.w)), skin, group};
-                if (skin)
-                    skins.push_back(seg);
-                else
-                    internal.push_back(seg);
-            }
-            for (size_t i = 0; i < n; ++i) {
-                bool across = false;
-                if (i + 1 < n) {
-                    const auto &a = line.junctions[i].p;
-                    const auto &b = line.junctions[i + 1].p;
-                    across = std::abs(b.x() - a.x()) >= std::abs(b.y() - a.y());
-                }
-                if (!across && i > 0) {
-                    const auto &a = line.junctions[i - 1].p;
-                    const auto &b = line.junctions[i].p;
-                    across = std::abs(b.x() - a.x()) >= std::abs(b.y() - a.y());
-                }
                 if (!skin)
-                    refs.push_back(JunctionRef{&line.junctions[i], group, across});
+                    internal.push_back(seg);
+                else
+                    skins.push_back(seg);
             }
             ++group;
         }
@@ -533,54 +676,26 @@ static void close_arachne_belt_beads(std::vector<Arachne::VariableWidthLines> &p
             const int line_group = group++;
             if (line.inset_idx == 0 || line.junctions.size() < 2)
                 continue;
-            const double base = emitted(line.junctions.front().w);
-            bool uniform = true;
-            for (const Arachne::ExtrusionJunction &j : line.junctions) {
-                if (std::abs(emitted(j.w) - base) > 0.02)
-                    uniform = false;
-            }
-            // Every horizontal junction has to grow. A constant add keeps the
-            // width steps the line already had, so the path is not split.
-            bool all_across = true;
-            bool any = false;
-            int across = 0;
-            double gmin = 1e9;
-            double gmax = 0.0;
-            for (const JunctionRef &ref : refs) {
-                if (ref.group != line_group || !ref.across || ref.j == nullptr)
+            const size_t n = line.junctions.size();
+            for (size_t i = 0; i < n; ++i) {
+                bool across = false;
+                if (i + 1 < n)
+                    across = belt_horizontal_pts(line.junctions[i].p, line.junctions[i + 1].p);
+                if (!across && i > 0)
+                    across = belt_horizontal_pts(line.junctions[i - 1].p, line.junctions[i].p);
+                if (!across)
                     continue;
-                ++across;
-                const double width = emitted(ref.j->w);
-                if (width >= BELT_SKIN_CAP_MM - 1e-6) {
-                    all_across = false;
+                Arachne::ExtrusionJunction &j = line.junctions[i];
+                const double width = emitted(j.w);
+                if (width >= BELT_SKIN_CAP_MM - 1e-6)
                     continue;
-                }
                 const double g = belt_point_growth(skins, skin_index, internal, int_index,
-                                                   unscale<double>(ref.j->p.x()), unscale<double>(ref.j->p.y()), width, line_group);
-                if (g < 0.01) {
-                    all_across = false;
+                                                   unscale<double>(j.p.x()), unscale<double>(j.p.y()), width, line_group);
+                if (g < 0.01)
                     continue;
-                }
-                any = true;
-                gmin = std::min(gmin, g);
-                gmax = std::max(gmax, g);
-            }
-            if (!(any && all_across && across > 0))
-                continue;
-            if (uniform) {
-                const double hi = std::min(BELT_SKIN_CAP_MM, base + 2.0 * gmax);
-                if (hi < base + 0.01)
-                    continue;
-                const coord_t stored = scale_(std::max(0.05, hi - adj));
-                for (Arachne::ExtrusionJunction &j : line.junctions)
-                    j.w = stored;
-            } else {
-                for (Arachne::ExtrusionJunction &j : line.junctions) {
-                    const double width = emitted(j.w);
-                    const double target = std::min(BELT_SKIN_CAP_MM, width + 2.0 * gmin);
-                    if (target > width + 0.01)
-                        j.w = scale_(std::max(0.05, target - adj));
-                }
+                const double target = std::min(BELT_SKIN_CAP_MM, width + 2.0 * g);
+                if (target > width + 0.01)
+                    j.w = scale_(std::max(0.05, target - adj));
             }
         }
     }
@@ -2191,6 +2306,13 @@ void PerimeterGenerator::process_classic()
                 top_infill_peri_overlap = coord_t(scale_(this->config->top_bottom_infill_wall_overlap.get_abs_value(unscale<double>(inset + solid_infill_spacing / 2))));
             }
             inset -= infill_peri_overlap;
+            // Belt Y is multiplied by √2 and the bead width is not. 15% overlap
+            // already covers that stretch, so this adds nothing on ApexCore or
+            // ApexLight. A lower overlap is extended by the shortfall only.
+            if (this->print_config != nullptr && this->print_config->printer_structure.value == PrinterStructure::psBelt) {
+                const double wall_mm = unscale<double>(loop_number <= 0 ? ext_perimeter_spacing : perimeter_spacing);
+                inset -= belt_overlap_boost(wall_mm, unscale<double>(infill_peri_overlap));
+            }
         }
         // simplify infill contours according to resolution
         Polygons pp;
@@ -3059,7 +3181,15 @@ void PerimeterGenerator::process_arachne()
             inset = coord_t(scale_(this->config->top_bottom_infill_wall_overlap.get_abs_value(unscale<double>(inset))));
         else
             inset = coord_t(scale_(this->config->infill_wall_overlap.get_abs_value(unscale<double>(inset))));
-        
+        // Same belt shortfall as the classic path. 15% overlap already meets,
+        // so ApexLight's infill clip does not move. No perimeters, no boost.
+        if (loop_number >= 0 && this->print_config != nullptr &&
+            this->print_config->printer_structure.value == PrinterStructure::psBelt) {
+            const double wall_mm = unscale<double>(loop_number == 0 ? ext_perimeter_spacing : perimeter_spacing);
+            inset += belt_overlap_boost(wall_mm, unscale<double>(inset));
+            top_inset += belt_overlap_boost(wall_mm, unscale<double>(top_inset));
+        }
+
         // simplify infill contours according to resolution
         Polygons pp;
         for (ExPolygon& ex : infill_contour)

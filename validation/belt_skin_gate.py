@@ -54,6 +54,16 @@ COLUMNS = {
 }
 
 
+def belt_overlap_shortfall(wall_w: float, overlap: float, scale: float = math.sqrt(2.0)) -> float:
+    """Machine-Y millimetres left when a wall meets infill that already overlaps it.
+
+    The infill edge overlaps the wall by ``overlap`` in virtual Y. G-code
+    multiplies Y by ``scale`` and does not multiply the bead width. Negative
+    means the bead already covers the stretch.
+    """
+    return (scale - 1.0) * wall_w * 0.5 - scale * overlap
+
+
 def air_between(lower: tuple[float, float], upper: tuple[float, float]) -> float:
     """Millimetres of air between two machine-Y beads. Negative is overlap."""
     y0, w0 = lower
