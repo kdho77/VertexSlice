@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""g4_outer_match_pre29.py - FROZEN gate G4 (PM, 2026-11-20, rev 2). Do not edit; checked by SHA256SUMS.
+"""g4_outer_match_pre29.py - FROZEN gate G4 (PM, 2026-11-20, rev 3). Do not edit; checked by SHA256SUMS.
 Kendon 2026-11-20 9:48 AM MT: the outside surface must not change; 6:16 PM MT: "roll back to that and fix that split seam
 but without changing the walls and everything like that". The only ApexCore wall-path change allowed vs LIVE is the
 return to PRE-29's Arachne paths, so the candidate is compared with PRE-29.
@@ -11,9 +11,10 @@ usage: g4_outer_match_pre29.py CANDIDATE_APEXCORE.gcode PRE29_APEXCORE.gcode [--
   N  same layer count; per layer, the same number of perimeter chains (Outer+Overhang) and Inner wall chains, and the same
      set of extrusion types (no new type such as Gap infill).
   W  flow/width: median E per mm of each extrusion type within 1 % of PRE-29.
-  S  speeds: the set of F values used by extruding moves of each type equals PRE-29's, leaving out ONLY the first
-     extruding move of each closed perimeter loop (Kendon t2446u: that move is slowed to <= 20 mm/s; G3 J3 checks it and
-     holds every other move of the loop to PRE-29's feedrate).
+  S  speeds: the set of F values used by extruding moves of each type equals PRE-29's, leaving out ONLY moves of closed
+     perimeter loops that lie in the first 10 mm or last 10 mm of the loop (Kendon t2446u / t2451u: those are slowed to
+     <= 20 mm/s; G3 J3 checks them, the collinear 10 mm splits, and holds every other move to PRE-29's feedrate).
+     Collinear splits do not change P (distance-based) or the chain counts in N.
   K  commands: the ordered sequences of fan (M106/M107), temperature (M104/M109/M140/M190), acceleration (M204) and
      flow/speed/PA (M220/M221/M900) commands are identical to PRE-29.
 """
@@ -44,7 +45,15 @@ def load(fn):
     fset = defaultdict(set)
     cmds = []
     prev_kind_ext_type = None
-    first_moves = {c["seg_idx"][0] for c in C.perimeter_chains(ev) if c["closed"]}
+    first_moves = set()
+    for c in C.perimeter_chains(ev):
+        if not c["closed"]:
+            continue
+        L, acc = c["length"], 0.0
+        for k, sg in zip(c["seg_idx"], c["segs"]):
+            a0 = acc; acc += C.seglen(sg)
+            if L < 20.0 or a0 < 10.0 + 0.02 or acc > L - 10.0 - 0.02:
+                first_moves.add(k)
     for i, d in enumerate(ev):
         if d["kind"] == "cmd" and d["m"] in KCMDS:
             cmds.append(d["raw"])
