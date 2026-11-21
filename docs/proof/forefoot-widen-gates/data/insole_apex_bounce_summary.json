@@ -1,0 +1,69 @@
+{
+  "gcode": "/tmp/sfg_slices/live_apex_bounce_insole2.gcode",
+  "sha256": "589f6accae68a624a8b3de6dd137f6d498c54068865048b8ff1c2bf4708ed9ad",
+  "decimals": {
+    "xyz": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "E": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "F": [
+      0,
+      3
+    ]
+  },
+  "n_events_ext": 27834,
+  "extruding_layers": [
+    1,
+    103,
+    103
+  ],
+  "z_first": 0.594,
+  "z_last": 61.179,
+  "layer_pitch_mm": 0.5939705882352941,
+  "L_prog_mm": 60.585,
+  "z_prog_boundary": 24.828000000000003,
+  "layer_prog_boundary": 42,
+  "z_anat_boundary": 20.0,
+  "layer_anat_boundary": 34,
+  "boundary_difference_mm": 4.828000000000003,
+  "first_inner_wall_layer": null,
+  "type_counts": {
+    "Outer wall": 397,
+    "Internal solid infill": 82,
+    "Sparse infill": 27355
+  },
+  "live_Q_layers_21_119_outer": {
+    "n": 323,
+    "max": 19.486122873145646,
+    "p99": 19.484533987128614,
+    "median": 13.776295182402817
+  },
+  "counts": {
+    "zone": 0,
+    "bonded": 430,
+    "unbonded": 5485,
+    "forefoot_columns": 5915
+  },
+  "gap_overall": {
+    "n": 0,
+    "median": null,
+    "p5": null,
+    "p95": null,
+    "max": null,
+    "min": null
+  },
+  "s_bound": 20.0,
+  "axis_length_mm": 50.0,
+  "boundary_s": 20.0,
+  "per_layer_n": 0
+}

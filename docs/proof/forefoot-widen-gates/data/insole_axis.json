@@ -1,0 +1,43 @@
+{
+  "stl": "/agent/repos/VertexSlice/validation/test_models/insole_sample.stl",
+  "placement": {
+    "function": "validation.stl_preprocess.prepare_orthocad_insole_stl",
+    "print_direction": "toe_first",
+    "rotation_z_deg": 270,
+    "x_center_mm": 140.0,
+    "note": "Same placement server/chains/apex_core.py uses before slicing."
+  },
+  "placed_extents_mm": {
+    "x_across": 90.0,
+    "y_along_belt": 50.0,
+    "z_thickness": 12.0
+  },
+  "raw_extents_mm": {
+    "x": 50.0,
+    "y": 90.0,
+    "z": 12.0
+  },
+  "triangle_count": 12,
+  "foot_shaped": false,
+  "method": "Not foot-shaped: 12-triangle rectangular prism 50.0 x 90.0 x 12.0 mm before placement. PCA of the plantar rectangle is the longer side (90.0 mm), which placement maps across the belt, not toe-to-heel. Axis used: placed model +Y (print direction, toe at min Y), length = oriented Y extent. The PCA-vs-+Y angle is reported so the disagreement is visible.",
+  "pca_angle_deg_from_plus_x": -9.992,
+  "pca_angle_deg_from_plus_y": -99.992,
+  "axis_origin_xy": [
+    0.0,
+    0.0
+  ],
+  "axis_dir_xy": [
+    0.0,
+    1.0
+  ],
+  "s_min": 0.0,
+  "s_max": 50.0,
+  "anatomical_length_mm": 50.0,
+  "boundary_s": 20.0,
+  "boundary_fraction": 0.4,
+  "toe_end_width_mm": 90.0,
+  "heel_end_width_mm": 90.0,
+  "plantar_vertex_count": 18,
+  "plantar_z_cut_mm": 0.35,
+  "box_pca_length_mm": 90.0
+}

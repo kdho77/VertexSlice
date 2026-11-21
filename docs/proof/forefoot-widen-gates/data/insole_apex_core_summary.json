@@ -1,0 +1,138 @@
+{
+  "gcode": "/tmp/sfg_slices/live_apex_core_insole2.gcode",
+  "sha256": "a7633fee9d60738247dbe54def45def045d58385658235437fd1785512cd17bd",
+  "decimals": {
+    "xyz": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "E": [
+      0,
+      1,
+      2,
+      5
+    ],
+    "F": [
+      0
+    ]
+  },
+  "n_events_ext": 22206,
+  "extruding_layers": [
+    1,
+    94,
+    94
+  ],
+  "z_first": 0.651,
+  "z_last": 61.151,
+  "layer_pitch_mm": 0.6505376344086021,
+  "L_prog_mm": 60.5,
+  "z_prog_boundary": 24.851000000000003,
+  "layer_prog_boundary": 38,
+  "z_anat_boundary": 20.0,
+  "layer_anat_boundary": 31,
+  "boundary_difference_mm": 4.851000000000003,
+  "first_inner_wall_layer": 4,
+  "type_counts": {
+    "Outer wall": 644,
+    "Inner wall": 423,
+    "Sparse infill": 21139
+  },
+  "live_Q_layers_21_119_outer": {
+    "n": 512,
+    "max": 11.260658916041864,
+    "p99": 11.260658916041864,
+    "median": 11.26038078280976
+  },
+  "counts": {
+    "zone": 383,
+    "bonded": 256,
+    "unbonded": 4750,
+    "forefoot_columns": 5389
+  },
+  "gap_overall": {
+    "n": 383,
+    "median": 0.4251635907830599,
+    "p5": 0.19393657562706468,
+    "p95": 8.03377948127336,
+    "max": 14.515779481273382,
+    "min": 0.19393657562706468
+  },
+  "s_bound": 20.0,
+  "transform": {
+    "out_gcode": "/tmp/forefoot_transform_live_apex_core_insole2.gcode",
+    "n_rewritten_lines": 63,
+    "n_zone_layers": 29,
+    "transitions_geom_n": 124,
+    "max_geom_endpoint_gap_mm": 3.6539448703183464,
+    "max_written_endpoint_gap_mm": 3.654,
+    "written_gap_n": 95,
+    "exterior_max_mm": 1.4879760668051745e-07,
+    "exterior_by_layer_worst": [
+      {
+        "layer": 3,
+        "protrusion": 1.4879760668051745e-07,
+        "recession": 1.4879760645847284e-07
+      },
+      {
+        "layer": 5,
+        "protrusion": 1.3988810110276972e-14,
+        "recession": 1.3988810110276972e-14
+      },
+      {
+        "layer": 15,
+        "protrusion": 1.2656542480726785e-14,
+        "recession": 0.0
+      },
+      {
+        "layer": 11,
+        "protrusion": 1.1324274851176597e-14,
+        "recession": 1.1324274851176597e-14
+      },
+      {
+        "layer": 16,
+        "protrusion": 8.43769498715119e-15,
+        "recession": 0.0
+      },
+      {
+        "layer": 13,
+        "protrusion": 8.215650382226158e-15,
+        "recession": 0.0
+      },
+      {
+        "layer": 17,
+        "protrusion": 8.215650382226158e-15,
+        "recession": 0.0
+      },
+      {
+        "layer": 14,
+        "protrusion": 7.327471962526033e-15,
+        "recession": 0.0
+      }
+    ],
+    "seam_max_disp_mm": 0.13129089769576496,
+    "seam_bottom_max_disp_mm": 0.13129089769576496,
+    "seam_bottom_n": 29,
+    "seam_moved_over_0_001": 2,
+    "Q_all_max": 98.66274839464054,
+    "Q_all_p99": 19.734472151442105,
+    "Q_zone_max": 98.66274839464054,
+    "Q_zone_p99": 98.66274839464054,
+    "added_filament_mm": 43.09985002165435,
+    "added_filament_mm3": 103.66728808974543,
+    "added_volume_mm3": 103.66728808974543,
+    "time_base_s": 2044.3134556417363,
+    "time_new_s": 2050.54866080802,
+    "time_delta_s": 6.235205166283777,
+    "outside_partial_failures": [],
+    "outside_partial_failure_n": 0,
+    "Q_cap": 35.0,
+    "overlap_target": 0.1,
+    "note": "Centre-line shift on a zone run moves its endpoints off the frozen outside path by dw/2. The writer emits G0 across that jump so the following G1 is the shifted segment rather than a diagonal that hides the gap. F5 reports both the geometric gap and the gap re-read from the written coordinates.",
+    "per_layer_added_n": 29
+  },
+  "axis_length_mm": 50.0,
+  "boundary_s": 20.0,
+  "per_layer_n": 29
+}
