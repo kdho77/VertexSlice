@@ -1,12 +1,12 @@
 {
   "profile": "ApexCore 95A G2b",
   "status": "LOCKED",
-  "approval": "Locked to the file Kendon printed, plus the forefoot stitch Kendon approved on 2026-11-13. At 11:27 AM MT he kept wall_loops at 2 so the heel and arch keep two walls. At 4:35 PM MT the extra hour of print time was the travels between gap beads that already meet. gap_infill_speed was already 26 mm/s, the same as the outer wall. filter_out_gap_fill 8 drops gap polylines shorter than 8 mm; the forefoot stitch is longer than that. The belt-edge center seam stays aligned. On 2026-11-18 Kendon turned detect_thin_wall back off (it had been set to 1 by #29, 3717053d3c). Classic walls, gap fill everywhere, the 8 mm filter, 25% min bead width, and wall_loops 2 stay. reduce_crossing_wall stays 1. The same day he asked for no hollow pocket between a top skin and a bottom skin. The thin toe is two 1.0 mm walls and a gap bead that does not reach either wall. Widening the walls to 1.3 mm closed the toe and opened 13 wall-crossing travels, and the 15-30% band stayed open, so the walls stay 1. The postprocessor widens that gap bead until it meets both skins. Line width was already 1 before #27. No other changes without Kendon's approval.",
+  "approval": "Locked to the file Kendon printed. Effective slicing is PRE-29 (3717053d3c^): wall_generator arachne, filter_out_gap_fill 9999, gap_fill_target nowhere, min_bead_width 50%, detect_thin_wall 0, wall_loops 2. The 2026-11-13 forefoot stitch is not applied. At 11:27 AM MT he kept wall_loops at 2 so the heel and arch keep two walls. At 4:35 PM MT the extra hour of print time was the travels between gap beads that already meet. gap_infill_speed was already 26 mm/s, the same as the outer wall. On 2026-11-18 Kendon turned detect_thin_wall back off (it had been set to 1 by #29, 3717053d3c). On 2026-11-20 the remaining stitch keys were restored to PRE-29. reduce_crossing_wall stays 1. Line width stays 1. No other changes without Kendon's approval.",
   "forefoot_stitch": {
     "approved_by": "Kendon",
     "approved_on": "2026-11-13",
     "scope": "apex-v2-insole-95a / ApexCore 95A only",
-    "seam": "stays aligned at the belt-edge center (g2b_anchor unchanged)",
+    "seam": "belt-edge midpoint, PRE-29 placement; the stitch override is not applied",
     "wall_loops": {
       "value": "2",
       "approved_by": "Kendon",
@@ -14,11 +14,11 @@
       "why": "Two loops stay on the whole path. Classic walls omit the inner loop only where the section cannot hold two closed loops, which is the thin forefoot on a youth insole and on an M13. No fixed belt-length cutoff."
     },
     "changes": {
-      "wall_generator": {"old": "arachne", "new": "classic"},
-      "filter_out_gap_fill": {"old": "9999", "new": "8", "why": "A threshold of 0 keeps every gap polyline. After beads that already meet are printed as one path, the polylines shorter than 8 mm are scattered heel and arch islands, and the travel between those islands is the time still above the pre-stitch print. The forefoot stitch polylines are longer than 8 mm."},
-      "gap_fill_target": {"old": "nowhere", "new": "everywhere"},
-      "min_bead_width": {"old": "50%", "new": "25%"},
-      "detect_thin_wall": {"old": "1", "new": "0", "why": "Kendon 2026-11-18. #29 (3717053d3c) turned this on from the pre-stitch 0. Short outer-wall pieces on the midfoot edges and the heel rim were each treated as a seam. Turned back off. The other stitch keys stay."}
+      "wall_generator": {"old": "classic", "new": "arachne", "why": "PRE-29 restoration, 2026-11-20. #29 had set classic."},
+      "filter_out_gap_fill": {"old": "8", "new": "9999", "why": "PRE-29 restoration. The 8 mm filter was the #29 stitch."},
+      "gap_fill_target": {"old": "everywhere", "new": "nowhere", "why": "PRE-29 restoration."},
+      "min_bead_width": {"old": "25%", "new": "50%", "why": "PRE-29 restoration."},
+      "detect_thin_wall": {"old": "1", "new": "0", "why": "Kendon 2026-11-18 turned #29's 1 off. PRE-29 was already 0."}
     }
   },
   "sha256": "1eb294be4315565e868c0960a569f4f4158253f41b69955dc15cd3da77fb826e",
@@ -45,11 +45,11 @@
     "infill_wall_overlap": {"profile": "process", "value": "15%"},
     "minimum_sparse_infill_area": {"profile": "process", "value": "5"},
     "wall_loops": {"profile": "process", "value": "2"},
-    "wall_generator": {"profile": "process", "value": "classic"},
-    "filter_out_gap_fill": {"profile": "process", "value": "8"},
+    "wall_generator": {"profile": "process", "value": "arachne"},
+    "filter_out_gap_fill": {"profile": "process", "value": "9999"},
     "gap_infill_speed": {"profile": "process", "value": "26", "why": "Already equal to outer_wall_speed in the shared G2b block. Not the extra hour. Locked so a slower default cannot replace it."},
-    "gap_fill_target": {"profile": "process", "value": "everywhere"},
-    "min_bead_width": {"profile": "process", "value": "25%"},
+    "gap_fill_target": {"profile": "process", "value": "nowhere"},
+    "min_bead_width": {"profile": "process", "value": "50%"},
     "detect_thin_wall": {"profile": "process", "value": "0"},
     "nozzle_temperature": {"profile": "filament", "value": "225"},
     "nozzle_temperature_initial_layer": {"profile": "filament", "value": "225"},

@@ -189,3 +189,79 @@ jobs:
           python validation/tests/test_first_layer_y.py
           python validation/tests/test_print_direction_tunables.py
           python -m unittest tests.test_server_full_chain tests.test_golden_gate tests.test_threemf_modifiers tests.test_region_infill -v
+
+  # Frozen seam-fuse gates. Additive: the jobs above are unchanged.
+  # LIVE is the published server image (main). PRE-29 replaces that image's
+  # server, tools, g2b scripts, validation and the three proof scripts with
+  # 3717053d3c^ (parent of #29). CANDIDATE is that same LIVE image with this
+  # branch's scripts/g2b_heelmod, which is the only slicer input that differs
+  # from main. src/ is unchanged, so the binary matches LIVE. slice_all.sh
+  # raises the gateway timeout only inside the throwaway containers.
+  seam_fuse_gates:
+    name: Seam-fuse gates G1 G3-G8
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          lfs: 'true'
+          fetch-depth: 0
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker system prune -af
+
+      - name: Gate images and slices
+        run: |
+          set -euo pipefail
+          LIVE="ghcr.io/kdho77/vertexslice-server@sha256:dd5127f59f5acc9674ae0bc5e48705432481db5d61f23cb8c90b4e0c0cbf1fa4"
+          PRE29_SHA="3dfc95abb82d6aefbca9d2d02909b733e061a529"
+          docker pull "$LIVE"
+          root="$RUNNER_TEMP/seam-fuse"
+          rm -rf "$root"
+          mkdir -p "$root/pre29" "$root/cand"
+          git archive "$PRE29_SHA" \
+            server tools scripts/g2b_heelmod validation \
+            scripts/golden_gate.py scripts/golden_chain_proof.py scripts/docker_headless_slice_proof.sh \
+            | tar -x -C "$root/pre29"
+          cp -a scripts/g2b_heelmod "$root/cand/g2b_heelmod"
+          cat > "$root/pre29.Dockerfile" << 'EOF'
+          FROM live-base
+          COPY server /app/server
+          COPY tools /app/tools
+          COPY scripts/g2b_heelmod /app/scripts/g2b_heelmod
+          COPY validation /app/validation
+          COPY scripts/golden_gate.py /app/scripts/golden_gate.py
+          COPY scripts/golden_chain_proof.py /app/scripts/golden_chain_proof.py
+          COPY scripts/docker_headless_slice_proof.sh /app/scripts/docker_headless_slice_proof.sh
+          EOF
+          sed -i 's/^          //' "$root/pre29.Dockerfile"
+          docker tag "$LIVE" live-base
+          docker build -f "$root/pre29.Dockerfile" -t vertexslice-server:pre29 "$root/pre29"
+          cat > "$root/cand.Dockerfile" << 'EOF'
+          FROM live-base
+          COPY g2b_heelmod /app/scripts/g2b_heelmod
+          EOF
+          sed -i 's/^          //' "$root/cand.Dockerfile"
+          docker build -f "$root/cand.Dockerfile" -t vertexslice-server:cand "$root/cand"
+          python3 -m pip install -q numpy
+          mkdir -p "$RUNNER_TEMP/slices"
+          bash validation/seam_fuse_gates/slice_all.sh "$RUNNER_TEMP/slices" \
+            "live=$LIVE" \
+            "pre29=vertexslice-server:pre29" \
+            "cand=vertexslice-server:cand"
+          bash validation/seam_fuse_gates/run_gates.sh "$RUNNER_TEMP/slices" \
+            "ed9de52ca380735f08679d6049d21c72616b8501" \
+            "${{ github.sha }}"
+
+      - name: Upload slice and gate output
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: seam-fuse-gates-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/slices
+          retention-days: 14
+          if-no-files-found: error

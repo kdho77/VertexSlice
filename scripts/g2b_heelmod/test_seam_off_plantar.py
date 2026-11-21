@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Closed outer seams leave the plantar face, and retract/prime does not go short."""
+"""ApexCore closed outers start on the belt edge again. ApexLight's path is unchanged.
+
+Retract and prime are both 0.5 mm. A closed outer butts, then glides. The first
+extruding move of that loop is F1200. Dorsal-split helpers remain for the
+unused reseat path and are still checked on their own.
+"""
 from __future__ import annotations
 
 import math
@@ -502,25 +507,24 @@ def _seg(x0: float, y0: float, x1: float, y1: float, e: float = 0.1) -> dict:
 
 
 class SeamOffPlantar(unittest.TestCase):
-    def test_insole_section_starts_on_the_dorsal_edge(self) -> None:
+    def test_insole_section_starts_on_the_belt_edge(self) -> None:
         out, counts = seam(_insole_section(), retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
         starts = _seam_starts(out)
         self.assertEqual(len(starts), 1)
         x, y = starts[0]
-        # Plantar edge is y=0. The start is the dorsal midpoint (120, 2).
-        self.assertGreater(y, 0.25)
+        # Plantar edge is y=0. The start is that edge's midpoint (120, 0).
         self.assertAlmostEqual(x, 120.0, places=2)
-        self.assertAlmostEqual(y, 2.0, places=2)
+        self.assertAlmostEqual(y, 0.0, places=2)
         self.assertIn(";C seam travel: inside", out)
-        self.assertIn("X120.000 Y2.000", out)
-        self.assertEqual(counts["overlap"], 1)
-        self.assertIn(";seam overlap", out)
+        self.assertIn("X120.000 Y0.000", out)
+        self.assertEqual(counts["overlap"], 0)
+        self.assertNotIn(";seam overlap", out)
         self.assertIn(";glide", out)
         self.assertEqual(PRIME, RETRACT)
-        self.assertEqual(OVERLAP_MM, 0.4)
+        self.assertIn("F1200", out.split(";C_SEAM_START", 1)[1].split(";C_SEAM_END", 1)[0])
 
-    def test_seam_overlap_uses_outer_wall_feed_not_travel(self) -> None:
-        """Seam overlap must print at wall F (e.g. 1560), never travel F12720."""
+    def test_dry_glide_uses_wall_feed_not_travel(self) -> None:
+        """The 0.7 mm glide is 60% of the wall feed, and nothing is extruded past the joint."""
         cases = [
             _insole_section(),
             _flat_leader(),
@@ -548,13 +552,14 @@ class SeamOffPlantar(unittest.TestCase):
         wall_f = 1560.0
         for src in cases:
             out, _counts = seam(src, retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
-            overlap_lines = [ln for ln in out.splitlines() if ";seam overlap" in ln]
-            self.assertTrue(overlap_lines, msg="expected at least one seam overlap")
-            for ln in overlap_lines:
+            self.assertNotIn(";seam overlap", out)
+            glides = [ln for ln in out.splitlines() if ";glide" in ln]
+            self.assertTrue(glides, msg="expected the dry glide")
+            for ln in glides:
                 words = dict(WORD.findall(ln.split(";", 1)[0]))
                 self.assertIn("F", words)
                 feed = float(words["F"])
-                self.assertAlmostEqual(feed, wall_f, places=0)
+                self.assertAlmostEqual(feed, wall_f * 0.6, places=0)
                 self.assertNotAlmostEqual(feed, TRAVEL_F, places=0)
 
     def test_tessellated_dorsal_edge_uses_the_run_midpoint(self) -> None:
@@ -609,8 +614,9 @@ class SeamOffPlantar(unittest.TestCase):
         gap = math.hypot(pts[-1][0] - pts[0][0], pts[-1][1] - pts[0][1])
         self.assertLessEqual(gap, 0.8)
         out, counts = seam(_short_nub_layer(), retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
-        # The two real loops still overlap. The nub does not.
-        self.assertEqual(counts["overlap"], 2)
+        # Butt joint: no loop, including the short nub, extrudes past its start.
+        self.assertEqual(counts["overlap"], 0)
+        self.assertNotIn(";seam overlap", out)
         self.assertNotIn("X20.200 Y4.410", out)
         report = analyze(out)
         self.assertEqual(report["totals"]["perimeter_crossings"], 0)
@@ -624,11 +630,11 @@ class SeamOffPlantar(unittest.TestCase):
         out, counts = seam(_near_closed_tab(), retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
         starts = _seam_starts(out)
         self.assertEqual(len(starts), 1)
-        self.assertAlmostEqual(starts[0][0], 120.0, places=2)
-        self.assertAlmostEqual(starts[0][1], 2.0, places=2)
-        self.assertGreater(starts[0][1], 0.25)
-        self.assertEqual(counts["overlap"], 1)
-        self.assertIn(";seam overlap", out)
+        # Gap 1.2 mm is past PRE-29's 0.8 mm closed test, so the loop is not rotated.
+        self.assertAlmostEqual(starts[0][0], 80.0, places=2)
+        self.assertAlmostEqual(starts[0][1], 0.021, places=2)
+        self.assertEqual(counts["overlap"], 0)
+        self.assertNotIn(";seam overlap", out)
         self.assertIn("G1 E-0.5 F1800", out)
         self.assertIn("G1 E0.50 F1800", out)
         self.assertEqual(analyze(out)["totals"]["perimeter_crossings"], 0)
@@ -656,7 +662,8 @@ class SeamOffPlantar(unittest.TestCase):
         ])
         flat_out, _counts = seam(flat, retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
         flat_start = _seam_starts(flat_out)[0]
-        self.assertAlmostEqual(flat_start[0], 15.0, places=2)
+        # The ends miss by 1.2 mm, so PRE-29 leaves this tab where the slicer started it.
+        self.assertAlmostEqual(flat_start[0], 0.0, places=2)
         self.assertAlmostEqual(flat_start[1], 0.05, places=2)
 
     def test_apex_light_keeps_the_production_heel_route(self) -> None:
@@ -757,10 +764,12 @@ class SeamOffPlantar(unittest.TestCase):
         )
         starts = _seam_starts(out)
         self.assertGreaterEqual(len(starts), 1)
-        self.assertAlmostEqual(starts[0][0], 20.0, places=2)
-        self.assertAlmostEqual(starts[0][1], 10.0, places=2)
-        self.assertEqual(counts["overlap"], 1)
-        self.assertIn("G1 X0.000 Y0.000", out)
+        # Gap is about 1.5 mm, so PRE-29 does not rotate or bridge the opening.
+        self.assertAlmostEqual(starts[0][0], 0.0, places=2)
+        self.assertAlmostEqual(starts[0][1], 0.0, places=2)
+        self.assertEqual(counts["overlap"], 0)
+        self.assertNotIn(";seam overlap", out)
+        self.assertIn("G1 X0 Y10 E0.10 F1560", out)
         self.assertIn("G1 X0.5 Y5 F12720", out)
         self.assertIn("G1 E-0.5 F1800", out)
         self.assertIn("G1 E0.50 F1800", out)
@@ -838,7 +847,7 @@ class SeamOffPlantar(unittest.TestCase):
         starts = _seam_starts(out)
         self.assertEqual(len(starts), 2)
         self.assertAlmostEqual(starts[0][0], 120.0, places=2)
-        self.assertAlmostEqual(starts[0][1], 2.0, places=2)
+        self.assertAlmostEqual(starts[0][1], 0.0, places=2)
         self.assertAlmostEqual(starts[1][0], 120.0, places=2)
         self.assertAlmostEqual(starts[1][1], 0.4, places=2)
         self.assertEqual(analyze(out)["totals"]["perimeter_crossings"], 0)
