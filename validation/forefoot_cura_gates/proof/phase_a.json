@@ -1,0 +1,382 @@
+{
+ "phase": "A",
+ "synthetic": {
+  "rows": [
+   {
+    "label": "G1 base (gap, no-op)",
+    "result": "FAIL",
+    "expected": "FAIL",
+    "ok": true,
+    "failures": [
+     "400 unbonded thin columns (skin overlap < 0.05 mm); 0 required"
+    ],
+    "measured": {
+     "median_gap_mm": 0.04,
+     "unbonded": 400
+    }
+   },
+   {
+    "label": "G1 cand (inside-only widen)",
+    "result": "PASS",
+    "expected": "PASS",
+    "ok": true,
+    "failures": [],
+    "measured": {
+     "median_gap_mm": -0.14,
+     "unbonded": 0
+    }
+   },
+   {
+    "label": "G2 base",
+    "result": "FAIL",
+    "expected": "FAIL",
+    "ok": true,
+    "failures": [
+     "400 of 400 columns 3-6 mm are unbonded (need overlap >= 0.15 mm through the stack)"
+    ],
+    "measured": {
+     "unbonded": 400,
+     "belt_air_pct": 100.0,
+     "dorsal_air_pct": 100.0
+    }
+   },
+   {
+    "label": "G2 cand",
+    "result": "PASS",
+    "expected": "PASS",
+    "ok": true,
+    "failures": [],
+    "measured": {
+     "unbonded": 0,
+     "belt_air_pct": 0.0,
+     "dorsal_air_pct": 0.0
+    }
+   },
+   {
+    "label": "G3 cand",
+    "result": "PASS",
+    "expected": "PASS",
+    "ok": true,
+    "failures": [],
+    "measured": {
+     "p99_mm": 0.0,
+     "max_mm": 6e-06
+    }
+   },
+   {
+    "label": "G4 cand",
+    "result": "PASS",
+    "expected": "PASS",
+    "ok": true,
+    "failures": [],
+    "measured": {
+     "closed_off_bottom": 0,
+     "starts_moved": 0
+    }
+   },
+   {
+    "label": "G6 cand",
+    "result": "PASS",
+    "expected": "PASS",
+    "ok": true,
+    "failures": [],
+    "measured": {
+     "max_mm3_s": 13.699755
+    }
+   },
+   {
+    "label": "G7 cand",
+    "result": "PASS",
+    "expected": "PASS",
+    "ok": true,
+    "failures": [],
+    "measured": {
+     "delta_pct": -0.001974
+    }
+   },
+   {
+    "label": "G8 cand",
+    "result": "PASS",
+    "expected": "PASS",
+    "ok": true,
+    "failures": [],
+    "measured": {}
+   },
+   {
+    "label": "G9 cand",
+    "result": "PASS",
+    "expected": "PASS",
+    "ok": true,
+    "failures": [],
+    "measured": {
+     "increase_mm": 92.91442
+    }
+   },
+   {
+    "label": "G3 inward 0.1",
+    "result": "FAIL",
+    "expected": "FAIL",
+    "ok": true,
+    "failures": [
+     "p99 outer-edge deviation 0.10000005199168172 mm > 0.02 mm",
+     "max outer-edge deviation 0.10000005199168172 mm > 0.05 mm"
+    ],
+    "measured": {
+     "p99_mm": 0.1,
+     "max_mm": 0.1
+    }
+   },
+   {
+    "label": "G4 seam to top",
+    "result": "FAIL",
+    "expected": "FAIL",
+    "ok": true,
+    "failures": [
+     "2 closed forefoot loop starts are off the plantar face (0 required)",
+     "4 closed-loop starts left their BASE station (X within 0.05 mm, Y within 0.50 mm)"
+    ],
+    "measured": {
+     "closed_off_bottom": 2,
+     "starts_moved": 4
+    }
+   },
+   {
+    "label": "G5 post-forefoot byte",
+    "result": "FAIL",
+    "expected": "FAIL",
+    "ok": true,
+    "failures": [
+     "orthocad layers after 165 differ at character 49"
+    ],
+    "measured": {}
+   },
+   {
+    "label": "G5 cand + light/forge/bounce",
+    "result": "PASS",
+    "expected": "PASS",
+    "ok": true,
+    "failures": [],
+    "measured": {}
+   },
+   {
+    "label": "G6 over 35",
+    "result": "FAIL",
+    "expected": "FAIL",
+    "ok": true,
+    "failures": [
+     "4 forefoot moves exceed 17.1 mm^3/s (max 82.199)",
+     "4 forefoot moves exceed the 35.0 mm^3/s hard cap"
+    ],
+    "measured": {
+     "max_mm3_s": 82.19853
+    }
+   },
+   {
+    "label": "G7 over +2%",
+    "result": "FAIL",
+    "expected": "FAIL",
+    "ok": true,
+    "failures": [
+     "time 290.3 s > BASE 65.0 s + 2% (+346.39%)"
+    ],
+    "measured": {
+     "delta_pct": 346.389986
+    }
+   },
+   {
+    "label": "G8 crossing",
+    "result": "FAIL",
+    "expected": "FAIL",
+    "ok": true,
+    "failures": [
+     "perimeter_crossings 1 > 0"
+    ],
+    "measured": {}
+   },
+   {
+    "label": "G9 outside outline",
+    "result": "FAIL",
+    "expected": "FAIL",
+    "ok": true,
+    "failures": [
+     "12 forefoot bead samples lie outside the BASE outer outline (showing 12)"
+    ],
+    "measured": {
+     "increase_mm": 92.91442
+    }
+   }
+  ],
+  "ok": true,
+  "problems": []
+ },
+ "leader_ignored": {
+  "extrusion_layers": [
+   80
+  ],
+  "ok": true,
+  "problem": null
+ },
+ "real_base": {
+  "rows": [
+   {
+    "label": "G1 BASE no-op orthocad",
+    "result": "FAIL",
+    "expected": "FAIL",
+    "ok": true,
+    "failures": [
+     "15300 unbonded thin columns (skin overlap < 0.05 mm); 0 required"
+    ],
+    "measured": {
+     "median_gap_mm": 0.409522,
+     "base_median_gap_mm": 0.409522,
+     "unbonded": 15300,
+     "thin_columns": 15764
+    }
+   },
+   {
+    "label": "G2 BASE no-op orthocad",
+    "result": "FAIL",
+    "expected": "FAIL",
+    "ok": true,
+    "failures": [
+     "7941 of 8117 columns 3-6 mm are unbonded (need overlap >= 0.15 mm through the stack)"
+    ],
+    "measured": {
+     "unbonded": 7941,
+     "thick_columns": 8117,
+     "belt_air_pct": 93.704571,
+     "dorsal_air_pct": 87.544659
+    }
+   },
+   {
+    "label": "G3 BASE no-op orthocad",
+    "result": "PASS",
+    "expected": "PASS",
+    "ok": true,
+    "failures": [],
+    "measured": {
+     "p99_mm": 0.0,
+     "max_mm": 0.0
+    }
+   },
+   {
+    "label": "G4 BASE no-op orthocad",
+    "result": "PASS",
+    "expected": "PASS",
+    "ok": true,
+    "failures": [],
+    "measured": {
+     "closed_loops": 165,
+     "closed_off_bottom": 0
+    }
+   },
+   {
+    "label": "G6 BASE no-op orthocad",
+    "result": "FAIL",
+    "expected": "FAIL",
+    "ok": true,
+    "failures": [
+     "1691 forefoot moves exceed 17.1 mm^3/s (max 125.341)",
+     "83 forefoot moves exceed the 35.0 mm^3/s hard cap"
+    ],
+    "measured": {
+     "max_mm3_s": 125.340932,
+     "over_17_1": 1691,
+     "over_35": 83
+    }
+   },
+   {
+    "label": "G7 BASE no-op orthocad",
+    "result": "PASS",
+    "expected": "PASS",
+    "ok": true,
+    "failures": [],
+    "measured": {
+     "cand_s": 5326.980562,
+     "base_s": 5326.980562,
+     "delta_pct": 0.0
+    }
+   },
+   {
+    "label": "G8 BASE no-op orthocad",
+    "result": "PASS",
+    "expected": "PASS",
+    "ok": true,
+    "failures": [],
+    "measured": {}
+   },
+   {
+    "label": "G9 BASE no-op orthocad",
+    "result": "PASS",
+    "expected": "PASS",
+    "ok": true,
+    "failures": [],
+    "measured": {
+     "increase_mm": 0.0
+    }
+   },
+   {
+    "label": "G5 BASE core+light self",
+    "result": "PASS",
+    "expected": "PASS",
+    "ok": true,
+    "failures": [],
+    "measured": {
+     "unchecked_materials": [
+      "ApexForge",
+      "ApexBounce"
+     ]
+    }
+   },
+   {
+    "label": "G1 BASE no-op insole",
+    "result": "FAIL",
+    "expected": "FAIL",
+    "ok": true,
+    "failures": [
+     "178 unbonded thin columns (skin overlap < 0.05 mm); 0 required"
+    ],
+    "measured": {
+     "median_gap_mm": 0.425165,
+     "base_median_gap_mm": 0.425165,
+     "unbonded": 178,
+     "thin_columns": 178
+    }
+   },
+   {
+    "label": "G3 outer wall 0.1 mm inward",
+    "result": "FAIL",
+    "expected": "FAIL",
+    "ok": true,
+    "failures": [
+     "p99 outer-edge deviation 0.08691698280882604 mm > 0.02 mm",
+     "max outer-edge deviation 0.09830840881248326 mm > 0.05 mm"
+    ],
+    "measured": {
+     "p99_mm": 0.086917,
+     "max_mm": 0.098308
+    }
+   },
+   {
+    "label": "G4 seam moved to top",
+    "result": "FAIL",
+    "expected": "FAIL",
+    "ok": true,
+    "failures": [
+     "37 closed forefoot loop starts are off the plantar face (0 required)",
+     "128 open-loop starts off the plantar face > BASE 0",
+     "202 closed-loop starts left their BASE station (X within 0.05 mm, Y within 0.50 mm)",
+     "39 forefoot layer changes left the plantar face or their BASE station"
+    ],
+    "measured": {
+     "closed_loops": 37,
+     "closed_off_bottom": 37
+    }
+   }
+  ],
+  "ok": true,
+  "problems": []
+ },
+ "ok": true,
+ "problems": []
+}
