@@ -265,3 +265,121 @@ jobs:
             ${{ runner.temp }}/slices
           retention-days: 14
           if-no-files-found: error
+
+      # BASE is the LIVE image with g2b scripts from main 10b3703b. CANDIDATE
+      # is that same image with this branch's scripts/g2b_heelmod (sliced in
+      # the step above). Names stay fixed so a grader can download them.
+      - name: Slice BASE g2b at 10b3703b
+        if: always()
+        run: |
+          set -euo pipefail
+          s="$RUNNER_TEMP/slices"
+          test -s "$s/cand_apex_core_orthocad.gcode"
+          test -s "$s/cand_apex_light_orthocad.gcode"
+          test -s "$s/cand_apex_core_insole2.gcode"
+          test -s "$s/cand_apex_light_insole2.gcode"
+          LIVE="ghcr.io/kdho77/vertexslice-server@sha256:dd5127f59f5acc9674ae0bc5e48705432481db5d61f23cb8c90b4e0c0cbf1fa4"
+          docker pull "$LIVE"
+          root="$RUNNER_TEMP/seam-fuse-base"
+          rm -rf "$root"
+          mkdir -p "$root/ctx"
+          git archive 10b3703b155be44e21269f37ef927595f06485bd scripts/g2b_heelmod | tar -x -C "$root"
+          mv "$root/scripts/g2b_heelmod" "$root/ctx/g2b_heelmod"
+          cat > "$root/base.Dockerfile" << 'EOF'
+          FROM live-base
+          COPY g2b_heelmod /app/scripts/g2b_heelmod
+          EOF
+          sed -i 's/^          //' "$root/base.Dockerfile"
+          docker tag "$LIVE" live-base
+          docker build -f "$root/base.Dockerfile" -t vertexslice-server:base "$root/ctx"
+          bash validation/seam_fuse_gates/slice_all.sh "$s" "base=vertexslice-server:base"
+          d="$RUNNER_TEMP/gcode-pair"
+          mkdir -p "$d"
+          cp "$s/base_apex_core_orthocad.gcode" "$d/BASE_ApexCore_orthocad_sample_top_insole.gcode"
+          cp "$s/base_apex_light_orthocad.gcode" "$d/BASE_ApexLight_orthocad_sample_top_insole.gcode"
+          cp "$s/base_apex_core_insole2.gcode" "$d/BASE_ApexCore_insole_sample.gcode"
+          cp "$s/base_apex_light_insole2.gcode" "$d/BASE_ApexLight_insole_sample.gcode"
+          cp "$s/cand_apex_core_orthocad.gcode" "$d/CANDIDATE_ApexCore_orthocad_sample_top_insole.gcode"
+          cp "$s/cand_apex_light_orthocad.gcode" "$d/CANDIDATE_ApexLight_orthocad_sample_top_insole.gcode"
+          cp "$s/cand_apex_core_insole2.gcode" "$d/CANDIDATE_ApexCore_insole_sample.gcode"
+          cp "$s/cand_apex_light_insole2.gcode" "$d/CANDIDATE_ApexLight_insole_sample.gcode"
+          test -s "$d/BASE_ApexCore_orthocad_sample_top_insole.gcode"
+          test -s "$d/BASE_ApexLight_orthocad_sample_top_insole.gcode"
+          test -s "$d/BASE_ApexCore_insole_sample.gcode"
+          test -s "$d/BASE_ApexLight_insole_sample.gcode"
+          test -s "$d/CANDIDATE_ApexCore_orthocad_sample_top_insole.gcode"
+          test -s "$d/CANDIDATE_ApexLight_orthocad_sample_top_insole.gcode"
+          test -s "$d/CANDIDATE_ApexCore_insole_sample.gcode"
+          test -s "$d/CANDIDATE_ApexLight_insole_sample.gcode"
+
+      - name: Upload BASE ApexCore orthocad_sample_top_insole
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: BASE-ApexCore-orthocad_sample_top_insole
+          path: ${{ runner.temp }}/gcode-pair/BASE_ApexCore_orthocad_sample_top_insole.gcode
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload BASE ApexLight orthocad_sample_top_insole
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: BASE-ApexLight-orthocad_sample_top_insole
+          path: ${{ runner.temp }}/gcode-pair/BASE_ApexLight_orthocad_sample_top_insole.gcode
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload BASE ApexCore insole_sample
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: BASE-ApexCore-insole_sample
+          path: ${{ runner.temp }}/gcode-pair/BASE_ApexCore_insole_sample.gcode
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload BASE ApexLight insole_sample
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: BASE-ApexLight-insole_sample
+          path: ${{ runner.temp }}/gcode-pair/BASE_ApexLight_insole_sample.gcode
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload CANDIDATE ApexCore orthocad_sample_top_insole
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: CANDIDATE-ApexCore-orthocad_sample_top_insole
+          path: ${{ runner.temp }}/gcode-pair/CANDIDATE_ApexCore_orthocad_sample_top_insole.gcode
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload CANDIDATE ApexLight orthocad_sample_top_insole
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: CANDIDATE-ApexLight-orthocad_sample_top_insole
+          path: ${{ runner.temp }}/gcode-pair/CANDIDATE_ApexLight_orthocad_sample_top_insole.gcode
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload CANDIDATE ApexCore insole_sample
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: CANDIDATE-ApexCore-insole_sample
+          path: ${{ runner.temp }}/gcode-pair/CANDIDATE_ApexCore_insole_sample.gcode
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload CANDIDATE ApexLight insole_sample
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: CANDIDATE-ApexLight-insole_sample
+          path: ${{ runner.temp }}/gcode-pair/CANDIDATE_ApexLight_insole_sample.gcode
+          if-no-files-found: error
+          retention-days: 14

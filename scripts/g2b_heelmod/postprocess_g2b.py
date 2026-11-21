@@ -4,16 +4,20 @@
 efix rescales every extruding XY move from the belt-shear length
 sqrt(dx^2+2*dy^2) back to the true XY length. It never changes F.
 
-Closed outer and overhang walls start at the belt-side (min-Y) edge
-midpoint, the same rotate as PRE-29, including the short-edge vertex
-fallback. The joint is a butt: the loop ends on its own start. The 0.7 mm
+Closed outer and overhang walls start at the X center of that loop's own
+bottom face (the path within 0.25 mm of the loop's min Y). A face narrower
+than 3 mm keeps the PRE-29 longest-edge midpoint, including the short-edge
+vertex fallback. The joint is a butt: the loop ends on its own start. The 0.7 mm
 dry glide follows, along the last segment, at 60% of that segment's feed.
-Retract stays 0.5 mm and the prime equals it. On a closed outer or overhang
-loop the first 10 mm after the seam and the last 10 mm into it run at
-F1200, unless that stretch was already slower; a move is split only at
-those two arc lengths. Inner walls still restart on the belt
-contact at the outer seam's X. A seam travel whose lifted chord would cross
-the outer wall is routed inside the wall and lands on the seam start.
+Retract stays 0.5 mm and the prime equals it. The decision still uses the
+distance to the longest-edge seam, so moving the start does not add or drop
+a prime. The 10 mm F1200 ends stay on that same longest-edge seam: the loop
+start moves, the feeds do not. A move is split only at those two arc lengths
+and at the new start. The first XY move in a file is still rotated onto the
+face center, with no retract and no wipe added. Inner walls still restart on
+the belt contact at the outer seam's X. A seam travel whose lifted chord
+would cross the outer wall is routed inside the wall and lands on the seam
+start.
 ApexLight does not run this seam pass. Its post-edit is the production fan
 lock, the pp_c E-pair drop, and the inside-wall travel walk, with heel-route
 E±1.5 left as written.
@@ -139,13 +143,94 @@ def _is_closed_loop(segs: list[dict]) -> bool:
     return gap <= CLOSED_GAP_MM and length >= gap * 4.0
 
 
-def _belt_split(segments: list[dict], closed_gap: float = _CLOSED_GAP_MM) -> list[dict]:
-    """Rotate a closed wall loop so it starts at the belt-side (min-Y) edge midpoint."""
-    if len(segments) < 3:
-        return segments
+# Bottom-face band. Same 0.25 mm as frozen gate G1 (sfg_common.bottom_edge).
+_BOTTOM_BAND_MM = 0.25
+# A plantar face narrower than this keeps the longest-edge midpoint.
+_BOTTOM_FACE_MIN_MM = 3.0
+# A center this close to the longest-edge start stays there. A shorter
+# split leaves the start within the 0.02 mm butt tolerance of the previous
+# segment, so the loop no longer returns on its last move.
+_SEAM_SNAP_MM = 0.02
+
+
+def _bottom_face_extent(segments: list[dict], ymin: float) -> tuple[float, float] | None:
+    """X extent of the contiguous bottom face that holds the lowest vertex.
+
+    Matches frozen G1 ``bottom_edge``: fully in-band segments, plus in-band
+    vertices, merged where they touch. The merged interval that contains the
+    loop's lowest vertex is the face. None only when nothing is in the band.
+    """
+    ivs: list[list[float]] = []
+    pts = [(segments[0]["x0"], segments[0]["y0"])]
+    for s in segments:
+        pts.append((s["x1"], s["y1"]))
+        in0 = s["y0"] <= ymin + _BOTTOM_BAND_MM
+        in1 = s["y1"] <= ymin + _BOTTOM_BAND_MM
+        if in0 and in1:
+            a, b = sorted((s["x0"], s["x1"]))
+            ivs.append([a, b])
+        else:
+            if in0:
+                ivs.append([s["x0"], s["x0"]])
+            if in1:
+                ivs.append([s["x1"], s["x1"]])
+    if not ivs:
+        return None
+    ivs.sort()
+    merged: list[list[float]] = [ivs[0]]
+    for a, b in ivs[1:]:
+        if a <= merged[-1][1] + 1e-6:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    # First minimum Y in path order, same as sfg_common.bottom_edge.
+    lo = min(pts, key=lambda p: p[1])
+    for a, b in merged:
+        if a - 1e-6 <= lo[0] <= b + 1e-6:
+            return (a, b)
+    widest = max(merged, key=lambda iv: iv[1] - iv[0])
+    return (widest[0], widest[1])
+
+
+def _face_center_hit(segments: list[dict], ymin: float, extent: tuple[float, float]) -> tuple[int, float] | None:
+    """Segment index and fraction where the face's X midpoint lies.
+
+    Only fully in-band segments of that extent are candidates. When several
+    cover the X, the lower one is the plantar surface.
+    """
+    xa, xb = extent
+    center_x = 0.5 * (xa + xb)
+    best: tuple[float, int, float] | None = None
+    for i, s in enumerate(segments):
+        if s["y0"] > ymin + _BOTTOM_BAND_MM or s["y1"] > ymin + _BOTTOM_BAND_MM:
+            continue
+        x0, x1 = s["x0"], s["x1"]
+        lo, hi = (x0, x1) if x0 <= x1 else (x1, x0)
+        if lo < xa - 1e-6 or hi > xb + 1e-6:
+            continue
+        if abs(x1 - x0) <= 1e-9:
+            if abs(x0 - center_x) > 1e-4:
+                continue
+            t = 0.0 if s["y0"] <= s["y1"] else 1.0
+        else:
+            if center_x < lo - 1e-6 or center_x > hi + 1e-6:
+                continue
+            t = (center_x - x0) / (x1 - x0)
+            t = min(1.0, max(0.0, t))
+        y = s["y0"] + (s["y1"] - s["y0"]) * t
+        if best is None or y < best[0] - 1e-9:
+            best = (y, i, t)
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
+def _belt_split_narrow(segments: list[dict]) -> list[dict]:
+    """Longest in-band move, split at its midpoint. Vertex fallback under 2 mm.
+
+    This is the PRE-29 pick. Faces narrower than 3 mm still use it.
+    """
     pts = [(segments[0]["x0"], segments[0]["y0"])] + [(s["x1"], s["y1"]) for s in segments]
-    if _end_gap(segments) > closed_gap:
-        return segments
     ymin = min(p[1] for p in pts)
     best_i = None
     best_len = -1.0
@@ -189,6 +274,46 @@ def _belt_split(segments: list[dict], closed_gap: float = _CLOSED_GAP_MM) -> lis
     a = dict(s)
     a.update(x1=mx, y1=my, e=e * t, raw=_synth(mx, my, e * t, f), comments=list(comments))
     return [b] + segments[best_i + 1 :] + segments[:best_i] + [a]
+
+
+def _tag_base_seam(result: list[dict], base_xy: tuple[float, float]) -> list[dict]:
+    """Remember the longest-edge seam on the first segment. Feeds and retracts stay there."""
+    if not result:
+        return result
+    result = list(result)
+    first = dict(result[0])
+    first["_base_xy"] = base_xy
+    result[0] = first
+    return result
+
+
+def _belt_split(segments: list[dict], closed_gap: float = _CLOSED_GAP_MM) -> list[dict]:
+    """Start a closed wall at the X center of that loop's bottom face.
+
+    The face is the contiguous stretch within 0.25 mm of the loop's min Y
+    that holds the lowest vertex (the same extent as frozen gate G1). The
+    move under the X midpoint is split with ``_start_on_segment``; the path
+    is unchanged. A face narrower than 3 mm keeps the longest-edge midpoint.
+    The longest-edge point is stored on the first segment so the 10 mm ends
+    and the retract decision can stay on it.
+    """
+    if len(segments) < 3:
+        return segments
+    if _end_gap(segments) > closed_gap:
+        return segments
+    base = _belt_split_narrow(segments)
+    base_xy = (base[0]["x0"], base[0]["y0"])
+    ymin = min([segments[0]["y0"]] + [s["y1"] for s in segments])
+    extent = _bottom_face_extent(segments, ymin)
+    result = base
+    if extent is not None and (extent[1] - extent[0]) >= _BOTTOM_FACE_MIN_MM:
+        hit = _face_center_hit(segments, ymin, extent)
+        if hit is not None:
+            i, t = hit
+            result = _start_on_segment(segments, i, t)
+            if math.hypot(result[0]["x0"] - base_xy[0], result[0]["y0"] - base_xy[1]) <= _SEAM_SNAP_MM:
+                result = base
+    return _tag_base_seam(result, base_xy)
 
 
 def _start_on_segment(segments: list[dict], i: int, t: float) -> list[dict]:
@@ -1397,14 +1522,13 @@ def _rewrite_feed(raw: str, feed: float, *, replace: bool) -> str:
     return core + nl + sep + com
 
 
-def _slow_end_lines(chain: list[dict], pre_feeds: list[float]) -> list[tuple[list[str], str]]:
-    """First and last 10 mm of a closed outer loop at F1200.
+def _slow_pieces(chain: list[dict], pre_feeds: list[float]) -> list[tuple[int, float, float, float, float, float]]:
+    """Collinear pieces of a closed loop, with the feed each piece keeps.
 
-    A feed already at or below 1200 is left alone. A segment is split only
-    where 10 mm or L-10 mm falls inside it and the two sides need different
-    feeds. The split is collinear and keeps that segment's E per mm. The
-    segment dicts themselves are not rewritten, so the dry glide still reads
-    the original end feed.
+    The slow zone is the first and last 10 mm of THIS chain's order. A feed
+    already at or below 1200 is left alone. A segment is split only where
+    10 mm or L-10 mm falls inside it. Each tuple is
+    (segment index, t0, t1, arc0, arc1, feed).
     """
     lengths = [math.hypot(s["x1"] - s["x0"], s["y1"] - s["y0"]) for s in chain]
     total = sum(lengths)
@@ -1421,7 +1545,7 @@ def _slow_end_lines(chain: list[dict], pre_feeds: list[float]) -> list[tuple[lis
             return True
         return a0 >= total - SLOW_END_MM - 0.02 and a1 <= total + 0.02
 
-    pieces: list[tuple[int, float, float, float, float]] = []
+    pieces: list[tuple[int, float, float, float, float, float]] = []
     acc = 0.0
     for i, s in enumerate(chain):
         length = lengths[i]
@@ -1445,15 +1569,29 @@ def _slow_end_lines(chain: list[dict], pre_feeds: list[float]) -> list[tuple[lis
             if t - dedup[-1] > 1e-9:
                 dedup.append(t)
         for t0, t1 in zip(dedup, dedup[1:]):
-            pieces.append((i, t0, t1, acc + t0 * length, acc + t1 * length))
+            a0 = acc + t0 * length
+            a1 = acc + t1 * length
+            orig = pre_feeds[i]
+            dest = min(orig, SLOW_END_F) if in_slow(a0, a1) else orig
+            pieces.append((i, t0, t1, a0, a1, dest))
         acc += length
+    return pieces
 
+
+def _slow_end_lines(chain: list[dict], pre_feeds: list[float]) -> list[tuple[list[str], str]]:
+    """First and last 10 mm of a closed outer loop at F1200.
+
+    A feed already at or below 1200 is left alone. A segment is split only
+    where 10 mm or L-10 mm falls inside it and the two sides need different
+    feeds. The split is collinear and keeps that segment's E per mm. The
+    segment dicts themselves are not rewritten, so the dry glide still reads
+    the original end feed.
+    """
     lines: list[tuple[list[str], str]] = []
     emitted: float | None = None
-    for i, t0, t1, a0, a1 in pieces:
+    for i, t0, t1, _a0, _a1, dest in _slow_pieces(chain, pre_feeds):
         s = chain[i]
         orig = pre_feeds[i]
-        dest = min(orig, SLOW_END_F) if in_slow(a0, a1) else orig
         comments = list(s.get("comments") or []) if t0 <= 1e-6 else []
         raw = s["raw"] if str(s.get("raw", "")).endswith("\n") else str(s.get("raw", "")) + "\n"
         unsplit = t0 <= 1e-9 and t1 >= 1.0 - 1e-9
@@ -1480,6 +1618,93 @@ def _slow_end_lines(chain: list[dict], pre_feeds: list[float]) -> list[tuple[lis
     return lines
 
 
+def _point_on_seg(px: float, py: float, s: dict) -> tuple[float, float]:
+    dx, dy = s["x1"] - s["x0"], s["y1"] - s["y0"]
+    l2 = dx * dx + dy * dy
+    if l2 <= 1e-18:
+        return math.hypot(px - s["x0"], py - s["y0"]), 0.0
+    t = max(0.0, min(1.0, ((px - s["x0"]) * dx + (py - s["y0"]) * dy) / l2))
+    qx = s["x0"] + t * dx
+    qy = s["y0"] + t * dy
+    return math.hypot(px - qx, py - qy), t
+
+
+def _rotate_to_point(segs: list[dict], px: float, py: float) -> list[dict]:
+    """Rotate so the loop starts at the point already on its path."""
+    best: tuple[float, int, float] | None = None
+    for i, s in enumerate(segs):
+        dist, t = _point_on_seg(px, py, s)
+        if best is None or dist < best[0] - 1e-9:
+            best = (dist, i, t)
+    if best is None or best[0] > 0.05:
+        return segs
+    return _start_on_segment(segs, best[1], best[2])
+
+
+def _modal_feeds(chain: list[dict], modal: float) -> list[float]:
+    feeds: list[float] = []
+    for s in chain:
+        if s.get("f"):
+            modal = float(s["f"])
+        feeds.append(modal)
+    return feeds
+
+
+def _slow_segments(chain: list[dict], pre_feeds: list[float]) -> list[dict]:
+    """Same splits as ``_slow_end_lines``, as segments whose ``f`` is the emitted feed."""
+    out: list[dict] = []
+    for i, t0, t1, _a0, _a1, dest in _slow_pieces(chain, pre_feeds):
+        s = chain[i]
+        x0 = s["x0"] + (s["x1"] - s["x0"]) * t0
+        y0 = s["y0"] + (s["y1"] - s["y0"]) * t0
+        x1 = s["x0"] + (s["x1"] - s["x0"]) * t1
+        y1 = s["y0"] + (s["y1"] - s["y0"]) * t1
+        ee = float(s.get("e") or 0.0) * (t1 - t0)
+        comments = list(s.get("comments") or []) if t0 <= 1e-6 else []
+        raw = " ".join(["G1", f"X{_fmt(x1, 3)}", f"Y{_fmt(y1, 3)}", f"E{ee:.5f}", f"F{dest:.0f}"]) + "\n"
+        out.append({
+            "x0": x0, "y0": y0, "x1": x1, "y1": y1, "e": ee,
+            "f": f"{dest:.0f}", "comments": comments, "raw": raw,
+        })
+    return out
+
+
+def _chain_with_base_feeds(chain: list[dict], modal: float) -> list[dict] | None:
+    """Center start, with F1200 still measured from the longest-edge seam.
+
+    None when that seam is already the start, so the caller keeps the
+    byte-identical slow-from-start path.
+    """
+    base_xy = chain[0].get("_base_xy") if chain else None
+    if not base_xy:
+        return None
+    if abs(base_xy[0] - chain[0]["x0"]) <= 5e-4 and abs(base_xy[1] - chain[0]["y0"]) <= 5e-4:
+        return None
+    oriented = _rotate_to_point(chain, base_xy[0], base_xy[1])
+    slowed = _slow_segments(oriented, _modal_feeds(oriented, modal))
+    return _rotate_to_point(slowed, chain[0]["x0"], chain[0]["y0"])
+
+
+def _retarget_xy(line: str, x: float, y: float) -> str:
+    """Rewrite X and Y on one travel. Z, F, and the comment stay."""
+    body, sep, com = line.partition(";")
+    nl = "\n" if body.endswith("\n") else ""
+    core = body[:-1] if nl else body
+
+    def sub(axis: str, val: float) -> None:
+        nonlocal core
+        pat = re.compile(rf"{axis}[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+        repl = f"{axis}{_fmt(val, 3)}"
+        if pat.search(core):
+            core = pat.sub(repl, core, count=1)
+        else:
+            core = core.rstrip() + " " + repl
+
+    sub("X", x)
+    sub("Y", y)
+    return core + nl + (sep + com if sep else "")
+
+
 def seam(
     text: str,
     *,
@@ -1493,6 +1718,9 @@ def seam(
     f = None
     typ = ""
     anchor_x: float | None = None
+    # X of the longest-edge outer seam. Retracts for the inners that follow
+    # it use the distance to that point, not the moved face-center start.
+    old_anchor_x: float | None = None
     i = 0
     n = len(lines)
     counts = {"seam_travel": 0, "retract": 0, "prime": 0, "wipe": 0, "overlap": 0, "seam_start": 0}
@@ -1553,7 +1781,15 @@ def seam(
                     j += 1
                     continue
                 break
-            if j < n and extrusion(lines[j]) and x is not None:
+            # The first XY in the file has no previous position, so the old
+            # pass copied that wall unchanged. A closed outer whose landing
+            # travel is that first move still has to start at its face center.
+            # There is no retract and no wipe: BASE never seamed this loop.
+            # An earlier travel in the same gap is a real approach. Copy it
+            # so the landing travel can seam normally.
+            n_travels = sum(1 for tl in gap if travelish(tl))
+            fresh = x is None and n_travels <= 1 and dest_type in ("Outer wall", "Overhang wall")
+            if j < n and extrusion(lines[j]) and (x is not None or fresh):
                 src_type = typ
                 dx, dy, dz = x, y, z
                 feeds: list[str] = []
@@ -1639,12 +1875,71 @@ def seam(
                     chains, anchor_x = _wall_chains(segs, dest_type, anchor_x, g2b_anchor)
                 else:
                     chains = [segs]
+                if fresh:
+                    chain = chains[0] if chains else []
+                    if chain and chain[0].get("_base_xy"):
+                        old_anchor_x = chain[0]["_base_xy"][0]
+                    sx = chain[0]["x0"] if chain else dx
+                    sy = chain[0]["y0"] if chain else dy
+                    same = (
+                        not chain
+                        or dx is None
+                        or (abs(sx - dx) <= 5e-4 and abs(sy - dy) <= 5e-4)
+                    )
+                    if same:
+                        for ln in lines[i:k]:
+                            out.append(ln if ln.endswith("\n") else ln + "\n")
+                            if ln.startswith(";TYPE:"):
+                                # Orca prints a type only when it changes. The
+                                # next layer has no comment, so this one has to
+                                # stick or that layer is not seamed.
+                                typ = ln[6:].strip()
+                            if _is_g01(ln):
+                                w = _words(ln)
+                                if "X" in w:
+                                    x = float(w["X"])
+                                if "Y" in w:
+                                    y = float(w["Y"])
+                                if "Z" in w:
+                                    z = float(w["Z"])
+                                if "F" in w:
+                                    f = float(w["F"])
+                    else:
+                        for tl in gap:
+                            if travelish(tl):
+                                out.append(_retarget_xy(tl, sx, sy))
+                            else:
+                                out.append(tl if tl.endswith("\n") else tl + "\n")
+                                if tl.startswith(";TYPE:"):
+                                    typ = tl[6:].strip()
+                        for s in chain:
+                            out.extend(s.get("comments") or [])
+                            raw = s["raw"] if str(s.get("raw", "")).endswith("\n") else str(s.get("raw", "")) + "\n"
+                            out.append(raw)
+                        x, y = chain[-1]["x1"], chain[-1]["y1"]
+                        z = cz
+                    i = k
+                    continue
                 for ci, chain in enumerate(chains):
                     if not chain:
                         continue
                     dx, dy = chain[0]["x0"], chain[0]["y0"]
-                    travel_dist = math.hypot(dx - x, dy - y)
+                    base_xy = chain[0].get("_base_xy")
+                    rx, ry = dx, dy
+                    if base_xy and dest_type in ("Outer wall", "Overhang wall"):
+                        rx, ry = base_xy
+                        old_anchor_x = base_xy[0]
+                    elif dest_type == "Inner wall" and old_anchor_x is not None and _path_closed(chain):
+                        hit = _hit_anchor(chain, old_anchor_x)
+                        if hit is not None:
+                            _hy, ii, tt = hit
+                            ss = chain[ii]
+                            rx = ss["x0"] + (ss["x1"] - ss["x0"]) * tt
+                            ry = ss["y0"] + (ss["y1"] - ss["y0"]) * tt
+                    travel_dist = math.hypot(rx - x, ry - y)
                     # Retract only on wall approaches of at least retraction_minimum_travel (2 mm).
+                    # The distance is to the longest-edge seam, so a face-center
+                    # start does not add or drop the 0.5 mm prime.
                     do_retract = wall and (retract_min_mm is None or travel_dist + 1e-6 >= retract_min_mm)
                     if ci == 0:
                         for tl in gap:
@@ -1671,13 +1966,14 @@ def seam(
                     if wall:
                         out.append(";C_SEAM_START\n")
                         counts["seam_start"] += 1
-                    modal = float(TRAVEL_F)
+                    modal0 = float(TRAVEL_F)
                     if ci == 0:
                         for fl in feeds:
                             fw = _words(fl)
                             if "F" in fw:
-                                modal = float(fw["F"])
+                                modal0 = float(fw["F"])
                     pre_feeds: list[float] = []
+                    modal = modal0
                     for s in chain:
                         if s.get("f"):
                             modal = float(s["f"])
@@ -1687,7 +1983,16 @@ def seam(
                         and len(chain) >= 3
                         and _path_closed(chain)
                     )
-                    if slow:
+                    # When the start moved, slow the longest-edge orientation
+                    # and then rotate. The wipe below still reads ``chain``.
+                    held = _chain_with_base_feeds(chain, modal0) if slow else None
+                    if held:
+                        for s in held:
+                            out.extend(s.get("comments") or [])
+                            raw = s["raw"] if str(s.get("raw", "")).endswith("\n") else str(s.get("raw", "")) + "\n"
+                            out.append(raw)
+                            x, y = s["x1"], s["y1"]
+                    elif slow:
                         for comments, raw in _slow_end_lines(chain, pre_feeds):
                             out.extend(comments)
                             out.append(raw)
