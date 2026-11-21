@@ -415,6 +415,52 @@ class SeamCenter(unittest.TestCase):
         self.assertLessEqual(old_feed, 1200.5)
         self.assertEqual(analyze(out)["totals"]["perimeter_crossings"], 0)
 
+    def test_center_within_butt_tolerance_keeps_the_old_start(self) -> None:
+        """A 0.01 mm shift would leave the start on the previous segment."""
+        segs = [
+            _seg(0, 0, 10, 0, 0.10),
+            _seg(10, 0, 10.02, 0, 0.001),
+            _seg(10.02, 0, 10.02, 4, 0.04),
+            _seg(10.02, 4, 0, 4, 0.10),
+            _seg(0, 4, 0, 0, 0.04),
+        ]
+        rotated = _belt_split(segs)
+        self.assertAlmostEqual(rotated[0]["x0"], 5.0, places=3)
+        self.assertAlmostEqual(rotated[0]["y0"], 0.0, places=3)
+
+    def test_type_sticks_when_the_first_wall_is_not_moved(self) -> None:
+        """The next layer omits ;TYPE. It must still seam and wipe."""
+        first = "\n".join([
+            ";LAYER_CHANGE",
+            "G1 X40 Y0 Z0.4 F12720",
+            ";TYPE:Outer wall",
+            "G1 X80 Y0 E0.4 F1560",
+            "G1 X80 Y2 E0.02",
+            "G1 X0 Y2 E0.8",
+            "G1 X0 Y0 E0.02",
+            "G1 X40 Y0 E0.4",
+        ])
+        second = "\n".join([
+            ";LAYER_CHANGE",
+            "G1 X0 Y0 Z0.8 F12720",
+            "G1 X80 Y0 E0.8 F1560",
+            "G1 X80 Y2 E0.02",
+            "G1 X0 Y2 E0.8",
+            "G1 X0 Y0 E0.02",
+        ])
+        out, counts = seam(
+            _gcode([first, second]),
+            retract_min_mm=2.0,
+            skip_infill_travel=True,
+            g2b_anchor=True,
+        )
+        self.assertGreaterEqual(counts["wipe"], 1)
+        self.assertGreaterEqual(counts["seam_start"], 1)
+        self.assertIn(";WIPE_START", out)
+        starts = _seam_starts(out)
+        self.assertEqual(len(starts), 1)
+        self.assertAlmostEqual(starts[0][0], 40.0, places=3)
+
 
 if __name__ == "__main__":
     unittest.main()

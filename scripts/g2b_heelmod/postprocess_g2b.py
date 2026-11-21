@@ -147,6 +147,10 @@ def _is_closed_loop(segs: list[dict]) -> bool:
 _BOTTOM_BAND_MM = 0.25
 # A plantar face narrower than this keeps the longest-edge midpoint.
 _BOTTOM_FACE_MIN_MM = 3.0
+# A center this close to the longest-edge start stays there. A shorter
+# split leaves the start within the 0.02 mm butt tolerance of the previous
+# segment, so the loop no longer returns on its last move.
+_SEAM_SNAP_MM = 0.02
 
 
 def _bottom_face_extent(segments: list[dict], ymin: float) -> tuple[float, float] | None:
@@ -307,6 +311,8 @@ def _belt_split(segments: list[dict], closed_gap: float = _CLOSED_GAP_MM) -> lis
         if hit is not None:
             i, t = hit
             result = _start_on_segment(segments, i, t)
+            if math.hypot(result[0]["x0"] - base_xy[0], result[0]["y0"] - base_xy[1]) <= _SEAM_SNAP_MM:
+                result = base
     return _tag_base_seam(result, base_xy)
 
 
@@ -1883,6 +1889,11 @@ def seam(
                     if same:
                         for ln in lines[i:k]:
                             out.append(ln if ln.endswith("\n") else ln + "\n")
+                            if ln.startswith(";TYPE:"):
+                                # Orca prints a type only when it changes. The
+                                # next layer has no comment, so this one has to
+                                # stick or that layer is not seamed.
+                                typ = ln[6:].strip()
                             if _is_g01(ln):
                                 w = _words(ln)
                                 if "X" in w:
