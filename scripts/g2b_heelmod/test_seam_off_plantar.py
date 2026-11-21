@@ -2,7 +2,7 @@
 """ApexCore closed outers start on the belt edge again. ApexLight's path is unchanged.
 
 Retract and prime are both 0.5 mm. A closed outer butts, then glides. The first
-extruding move of that loop is F1200. Dorsal-split helpers remain for the
+and last 10 mm of that loop are F1200. Dorsal-split helpers remain for the
 unused reseat path and are still checked on their own.
 """
 from __future__ import annotations

@@ -253,7 +253,7 @@ jobs:
             "pre29=vertexslice-server:pre29" \
             "cand=vertexslice-server:cand"
           bash validation/seam_fuse_gates/run_gates.sh "$RUNNER_TEMP/slices" \
-            "ed9de52ca380735f08679d6049d21c72616b8501" \
+            "6d01dff5b6a174ec37468671579ee7d3bbafb230" \
             "${{ github.sha }}"
 
       - name: Upload slice and gate output

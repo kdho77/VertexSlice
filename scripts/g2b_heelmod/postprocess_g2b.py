@@ -8,9 +8,10 @@ Closed outer and overhang walls start at the belt-side (min-Y) edge
 midpoint, the same rotate as PRE-29, including the short-edge vertex
 fallback. The joint is a butt: the loop ends on its own start. The 0.7 mm
 dry glide follows, along the last segment, at 60% of that segment's feed.
-Retract stays 0.5 mm and the prime equals it. The first extruding move of
-a closed outer or overhang loop is F1200; the next move carries the feed
-that move had before the slowdown. Inner walls still restart on the belt
+Retract stays 0.5 mm and the prime equals it. On a closed outer or overhang
+loop the first 10 mm after the seam and the last 10 mm into it run at
+F1200, unless that stretch was already slower; a move is split only at
+those two arc lengths. Inner walls still restart on the belt
 contact at the outer seam's X. A seam travel whose lifted chord would cross
 the outer wall is routed inside the wall and lands on the seam start.
 ApexLight does not run this seam pass. Its post-edit is the production fan
@@ -48,8 +49,10 @@ RETRACT_F = 1800
 TRAVEL_F = 12720  # 212 mm/s
 WIPE_MM = 0.7
 WIPE_FRAC = 0.6
-# First extruding move of a closed outer/overhang loop. 20 mm/s, Cura's belt wall speed.
-SLOW_FIRST_F = 1200.0
+# First and last 10 mm of a closed outer/overhang loop. 20 mm/s, Cura's belt
+# wall speed. A feed already at or below this stays as written.
+SLOW_END_F = 1200.0
+SLOW_END_MM = 10.0
 # Extruded past the joint, along the wall the loop just started. The dry wipe
 # still follows, so the join is covered instead of left short.
 OVERLAP_MM = 0.4
@@ -1394,6 +1397,89 @@ def _rewrite_feed(raw: str, feed: float, *, replace: bool) -> str:
     return core + nl + sep + com
 
 
+def _slow_end_lines(chain: list[dict], pre_feeds: list[float]) -> list[tuple[list[str], str]]:
+    """First and last 10 mm of a closed outer loop at F1200.
+
+    A feed already at or below 1200 is left alone. A segment is split only
+    where 10 mm or L-10 mm falls inside it and the two sides need different
+    feeds. The split is collinear and keeps that segment's E per mm. The
+    segment dicts themselves are not rewritten, so the dry glide still reads
+    the original end feed.
+    """
+    lengths = [math.hypot(s["x1"] - s["x0"], s["y1"] - s["y0"]) for s in chain]
+    total = sum(lengths)
+    bounds: list[float] = []
+    if total + 1e-9 >= 2 * SLOW_END_MM:
+        for b in (SLOW_END_MM, total - SLOW_END_MM):
+            if not bounds or abs(b - bounds[-1]) > 1e-6:
+                bounds.append(b)
+
+    def in_slow(a0: float, a1: float) -> bool:
+        if total < 2 * SLOW_END_MM:
+            return True
+        if a0 >= -0.02 and a1 <= SLOW_END_MM + 0.02:
+            return True
+        return a0 >= total - SLOW_END_MM - 0.02 and a1 <= total + 0.02
+
+    pieces: list[tuple[int, float, float, float, float]] = []
+    acc = 0.0
+    for i, s in enumerate(chain):
+        length = lengths[i]
+        cuts = [0.0, 1.0]
+        if length > 1e-9 and pre_feeds[i] > SLOW_END_F + 0.5:
+            start_r = (round(s["x0"], 3), round(s["y0"], 3))
+            end_r = (round(s["x1"], 3), round(s["y1"], 3))
+            for b in bounds:
+                if acc + 1e-6 < b < acc + length - 1e-6:
+                    t = (b - acc) / length
+                    x = s["x0"] + (s["x1"] - s["x0"]) * t
+                    y = s["y0"] + (s["y1"] - s["y0"]) * t
+                    cut_r = (round(x, 3), round(y, 3))
+                    # A cut that rounds onto an existing vertex would emit a
+                    # zero-length move and break the perimeter chain.
+                    if cut_r != start_r and cut_r != end_r:
+                        cuts.append(t)
+        cuts = sorted(cuts)
+        dedup = [cuts[0]]
+        for t in cuts[1:]:
+            if t - dedup[-1] > 1e-9:
+                dedup.append(t)
+        for t0, t1 in zip(dedup, dedup[1:]):
+            pieces.append((i, t0, t1, acc + t0 * length, acc + t1 * length))
+        acc += length
+
+    lines: list[tuple[list[str], str]] = []
+    emitted: float | None = None
+    for i, t0, t1, a0, a1 in pieces:
+        s = chain[i]
+        orig = pre_feeds[i]
+        dest = min(orig, SLOW_END_F) if in_slow(a0, a1) else orig
+        comments = list(s.get("comments") or []) if t0 <= 1e-6 else []
+        raw = s["raw"] if str(s.get("raw", "")).endswith("\n") else str(s.get("raw", "")) + "\n"
+        unsplit = t0 <= 1e-9 and t1 >= 1.0 - 1e-9
+        if unsplit and abs(dest - orig) <= 0.5:
+            if emitted is not None and abs(emitted - orig) > 0.5 and not _line_has_feed(raw):
+                raw = _rewrite_feed(raw, orig, replace=False)
+            emitted = orig
+        elif unsplit:
+            raw = _rewrite_feed(raw, dest, replace=True)
+            emitted = dest
+        else:
+            x1 = s["x0"] + (s["x1"] - s["x0"]) * t1
+            y1 = s["y0"] + (s["y1"] - s["y0"]) * t1
+            ee = float(s.get("e") or 0.0) * (t1 - t0)
+            words = _words(raw)
+            parts = ["G1", f"X{_fmt(x1, 3)}", f"Y{_fmt(y1, 3)}"]
+            if "Z" in words:
+                parts.append(f"Z{words['Z']}")
+            parts.append(f"E{ee:.5f}")
+            parts.append(f"F{dest:.0f}")
+            raw = " ".join(parts) + "\n"
+            emitted = dest
+        lines.append((comments, raw))
+    return lines
+
+
 def seam(
     text: str,
     *,
@@ -1601,17 +1687,21 @@ def seam(
                         and len(chain) >= 3
                         and _path_closed(chain)
                     )
-                    for si, s in enumerate(chain):
-                        out.extend(s["comments"])
-                        raw = s["raw"] if s["raw"].endswith("\n") else s["raw"] + "\n"
-                        if slow and si == 0:
-                            raw = _rewrite_feed(raw, SLOW_FIRST_F, replace=True)
-                        elif slow and si == 1 and not _line_has_feed(raw):
-                            # The slow token would otherwise stick to every later
-                            # move that does not name its own feed.
-                            raw = _rewrite_feed(raw, pre_feeds[1], replace=False)
-                        out.append(raw)
-                        x, y = s["x1"], s["y1"]
+                    if slow:
+                        for comments, raw in _slow_end_lines(chain, pre_feeds):
+                            out.extend(comments)
+                            out.append(raw)
+                            w = _words(raw)
+                            if "X" in w:
+                                x = float(w["X"])
+                            if "Y" in w:
+                                y = float(w["Y"])
+                    else:
+                        for s in chain:
+                            out.extend(s["comments"])
+                            raw = s["raw"] if s["raw"].endswith("\n") else s["raw"] + "\n"
+                            out.append(raw)
+                            x, y = s["x1"], s["y1"]
                     last_chain = ci == len(chains) - 1
                     if wall:
                         if last_chain and dest_type in ("Outer wall", "Overhang wall"):
