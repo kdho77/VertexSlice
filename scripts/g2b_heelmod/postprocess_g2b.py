@@ -4,9 +4,10 @@
 efix rescales every extruding XY move from the belt-shear length
 sqrt(dx^2+2*dy^2) back to the true XY length. It never changes F.
 
-Closed outer and overhang walls start at the belt-side (min-Y) edge
-midpoint, the same rotate as PRE-29, including the short-edge vertex
-fallback. The joint is a butt: the loop ends on its own start. The 0.7 mm
+Closed outer and overhang walls start at the X center of that loop's own
+bottom face (the path within 0.25 mm of the loop's min Y). A face narrower
+than 3 mm keeps the PRE-29 longest-edge midpoint, including the short-edge
+vertex fallback. The joint is a butt: the loop ends on its own start. The 0.7 mm
 dry glide follows, along the last segment, at 60% of that segment's feed.
 Retract stays 0.5 mm and the prime equals it. On a closed outer or overhang
 loop the first 10 mm after the seam and the last 10 mm into it run at
@@ -139,13 +140,90 @@ def _is_closed_loop(segs: list[dict]) -> bool:
     return gap <= CLOSED_GAP_MM and length >= gap * 4.0
 
 
-def _belt_split(segments: list[dict], closed_gap: float = _CLOSED_GAP_MM) -> list[dict]:
-    """Rotate a closed wall loop so it starts at the belt-side (min-Y) edge midpoint."""
-    if len(segments) < 3:
-        return segments
+# Bottom-face band. Same 0.25 mm as frozen gate G1 (sfg_common.bottom_edge).
+_BOTTOM_BAND_MM = 0.25
+# A plantar face narrower than this keeps the longest-edge midpoint.
+_BOTTOM_FACE_MIN_MM = 3.0
+
+
+def _bottom_face_extent(segments: list[dict], ymin: float) -> tuple[float, float] | None:
+    """X extent of the contiguous bottom face that holds the lowest vertex.
+
+    Matches frozen G1 ``bottom_edge``: fully in-band segments, plus in-band
+    vertices, merged where they touch. The merged interval that contains the
+    loop's lowest vertex is the face. None only when nothing is in the band.
+    """
+    ivs: list[list[float]] = []
+    pts = [(segments[0]["x0"], segments[0]["y0"])]
+    for s in segments:
+        pts.append((s["x1"], s["y1"]))
+        in0 = s["y0"] <= ymin + _BOTTOM_BAND_MM
+        in1 = s["y1"] <= ymin + _BOTTOM_BAND_MM
+        if in0 and in1:
+            a, b = sorted((s["x0"], s["x1"]))
+            ivs.append([a, b])
+        else:
+            if in0:
+                ivs.append([s["x0"], s["x0"]])
+            if in1:
+                ivs.append([s["x1"], s["x1"]])
+    if not ivs:
+        return None
+    ivs.sort()
+    merged: list[list[float]] = [ivs[0]]
+    for a, b in ivs[1:]:
+        if a <= merged[-1][1] + 1e-6:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    # First minimum Y in path order, same as sfg_common.bottom_edge.
+    lo = min(pts, key=lambda p: p[1])
+    for a, b in merged:
+        if a - 1e-6 <= lo[0] <= b + 1e-6:
+            return (a, b)
+    widest = max(merged, key=lambda iv: iv[1] - iv[0])
+    return (widest[0], widest[1])
+
+
+def _face_center_hit(segments: list[dict], ymin: float, extent: tuple[float, float]) -> tuple[int, float] | None:
+    """Segment index and fraction where the face's X midpoint lies.
+
+    Only fully in-band segments of that extent are candidates. When several
+    cover the X, the lower one is the plantar surface.
+    """
+    xa, xb = extent
+    center_x = 0.5 * (xa + xb)
+    best: tuple[float, int, float] | None = None
+    for i, s in enumerate(segments):
+        if s["y0"] > ymin + _BOTTOM_BAND_MM or s["y1"] > ymin + _BOTTOM_BAND_MM:
+            continue
+        x0, x1 = s["x0"], s["x1"]
+        lo, hi = (x0, x1) if x0 <= x1 else (x1, x0)
+        if lo < xa - 1e-6 or hi > xb + 1e-6:
+            continue
+        if abs(x1 - x0) <= 1e-9:
+            if abs(x0 - center_x) > 1e-4:
+                continue
+            t = 0.0 if s["y0"] <= s["y1"] else 1.0
+        else:
+            if center_x < lo - 1e-6 or center_x > hi + 1e-6:
+                continue
+            t = (center_x - x0) / (x1 - x0)
+            t = min(1.0, max(0.0, t))
+        y = s["y0"] + (s["y1"] - s["y0"]) * t
+        if best is None or y < best[0] - 1e-9:
+            best = (y, i, t)
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
+def _belt_split_narrow(segments: list[dict]) -> list[dict]:
+    """Longest in-band move, split at its midpoint. Vertex fallback under 2 mm.
+
+    This is the PRE-29 pick. Faces narrower than 3 mm still use it.
+    """
     pts = [(segments[0]["x0"], segments[0]["y0"])] + [(s["x1"], s["y1"]) for s in segments]
-    if _end_gap(segments) > closed_gap:
-        return segments
     ymin = min(p[1] for p in pts)
     best_i = None
     best_len = -1.0
@@ -189,6 +267,28 @@ def _belt_split(segments: list[dict], closed_gap: float = _CLOSED_GAP_MM) -> lis
     a = dict(s)
     a.update(x1=mx, y1=my, e=e * t, raw=_synth(mx, my, e * t, f), comments=list(comments))
     return [b] + segments[best_i + 1 :] + segments[:best_i] + [a]
+
+
+def _belt_split(segments: list[dict], closed_gap: float = _CLOSED_GAP_MM) -> list[dict]:
+    """Start a closed wall at the X center of that loop's bottom face.
+
+    The face is the contiguous stretch within 0.25 mm of the loop's min Y
+    that holds the lowest vertex (the same extent as frozen gate G1). The
+    move under the X midpoint is split with ``_start_on_segment``; the path
+    is unchanged. A face narrower than 3 mm keeps the longest-edge midpoint.
+    """
+    if len(segments) < 3:
+        return segments
+    if _end_gap(segments) > closed_gap:
+        return segments
+    ymin = min([segments[0]["y0"]] + [s["y1"] for s in segments])
+    extent = _bottom_face_extent(segments, ymin)
+    if extent is not None and (extent[1] - extent[0]) >= _BOTTOM_FACE_MIN_MM:
+        hit = _face_center_hit(segments, ymin, extent)
+        if hit is not None:
+            i, t = hit
+            return _start_on_segment(segments, i, t)
+    return _belt_split_narrow(segments)
 
 
 def _start_on_segment(segments: list[dict], i: int, t: float) -> list[dict]:
