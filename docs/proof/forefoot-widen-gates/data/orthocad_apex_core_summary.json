@@ -1,0 +1,140 @@
+{
+  "gcode": "/tmp/sfg_slices/live_apex_core_orthocad.gcode",
+  "sha256": "27f36512cf2ad1d00652b23aabeb045d9cc4397a23e4c9e790ee9e278c238fdd",
+  "decimals": {
+    "xyz": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "E": [
+      0,
+      1,
+      2,
+      5
+    ],
+    "F": [
+      0
+    ]
+  },
+  "n_events_ext": 77150,
+  "extruding_layers": [
+    1,
+    438,
+    438
+  ],
+  "z_first": 1.952,
+  "z_last": 286.237,
+  "layer_pitch_mm": 0.650537757437071,
+  "L_prog_mm": 284.285,
+  "z_prog_boundary": 115.66600000000001,
+  "layer_prog_boundary": 176,
+  "z_anat_boundary": 108.9209686867,
+  "layer_anat_boundary": 165,
+  "boundary_difference_mm": 6.745031313300018,
+  "first_inner_wall_layer": 118,
+  "type_counts": {
+    "Overhang wall": 50,
+    "Outer wall": 28106,
+    "Inner wall": 27451,
+    "Sparse infill": 21523,
+    "Internal solid infill": 20
+  },
+  "live_Q_layers_21_119_outer": {
+    "n": 1932,
+    "max": 17.086663320882362,
+    "p99": 16.36367331631753,
+    "median": 12.656705339354513
+  },
+  "counts": {
+    "zone": 17760,
+    "bonded": 341,
+    "unbonded": 6749,
+    "forefoot_columns": 24850
+  },
+  "gap_overall": {
+    "n": 17760,
+    "median": 0.4098647867309177,
+    "p5": 0.3622365763737675,
+    "p95": 0.4608840623201767,
+    "max": 1.8450652632734732,
+    "min": -1.2265580600034998
+  },
+  "s_bound": -9.9427,
+  "transform": {
+    "out_gcode": "/tmp/forefoot_transform_live_apex_core_orthocad.gcode",
+    "n_rewritten_lines": 3514,
+    "n_zone_layers": 174,
+    "transitions_geom_n": 1122,
+    "max_geom_endpoint_gap_mm": 0.48626631581836904,
+    "max_written_endpoint_gap_mm": 0.4864832987883592,
+    "written_gap_n": 745,
+    "exterior_max_mm": 0.15198678220600326,
+    "exterior_by_layer_worst": [
+      {
+        "layer": 171,
+        "protrusion": 0.15198678220600326,
+        "recession": 0.036696686637183173
+      },
+      {
+        "layer": 154,
+        "protrusion": 0.13467779547002112,
+        "recession": 0.043201483484657355
+      },
+      {
+        "layer": 165,
+        "protrusion": 0.1305950609469797,
+        "recession": 0.040255680092462276
+      },
+      {
+        "layer": 166,
+        "protrusion": 0.12973891667602344,
+        "recession": 1.5765166949677223e-14
+      },
+      {
+        "layer": 161,
+        "protrusion": 0.1276070132522712,
+        "recession": 0.004612459857062712
+      },
+      {
+        "layer": 167,
+        "protrusion": 0.12078554026087196,
+        "recession": 1.432187701766452e-14
+      },
+      {
+        "layer": 150,
+        "protrusion": 0.11909263390135916,
+        "recession": 0.03157527987308506
+      },
+      {
+        "layer": 164,
+        "protrusion": 0.11701270967386224,
+        "recession": 0.04389573423948734
+      }
+    ],
+    "seam_max_disp_mm": 0.16108699038220795,
+    "seam_bottom_max_disp_mm": 0.16108699038220795,
+    "seam_bottom_n": 174,
+    "seam_moved_over_0_001": 117,
+    "Q_all_max": 125.3409323244869,
+    "Q_all_p99": 28.67764103532396,
+    "Q_zone_max": 22.894946210321134,
+    "Q_zone_p99": 20.209467688068944,
+    "added_filament_mm": 886.8464501347198,
+    "added_filament_mm3": 2133.1156927760267,
+    "added_volume_mm3": 2133.1156927760267,
+    "time_base_s": 5326.980562273873,
+    "time_new_s": 5332.176408452633,
+    "time_delta_s": 5.1958461787598935,
+    "outside_partial_failures": [],
+    "outside_partial_failure_n": 0,
+    "Q_cap": 35.0,
+    "overlap_target": 0.1,
+    "note": "Centre-line shift on a zone run moves its endpoints off the frozen outside path by dw/2. The writer emits G0 across that jump so the following G1 is the shifted segment rather than a diagonal that hides the gap. F5 reports both the geometric gap and the gap re-read from the written coordinates.",
+    "per_layer_added_n": 174
+  },
+  "axis_length_mm": 273.3381,
+  "boundary_s": -9.9427,
+  "per_layer_n": 174
+}

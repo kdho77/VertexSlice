@@ -1,0 +1,42 @@
+{
+  "stl": "/agent/repos/VertexSlice/validation/test_models/orthocad_sample_top_insole.stl",
+  "placement": {
+    "function": "validation.stl_preprocess.prepare_orthocad_insole_stl",
+    "print_direction": "toe_first",
+    "rotation_z_deg": 270,
+    "x_center_mm": 140.0,
+    "note": "Same placement server/chains/apex_core.py uses before slicing."
+  },
+  "placed_extents_mm": {
+    "x_across": 92.695,
+    "y_along_belt": 273.104,
+    "z_thickness": 25.24
+  },
+  "raw_extents_mm": {
+    "x": 273.104,
+    "y": 92.695,
+    "z": 25.24
+  },
+  "triangle_count": 74940,
+  "foot_shaped": true,
+  "method": "Placement matches ApexCore (Z rotation 270 deg, Y and Z mins shifted to 0, X centered at 140). Plantar outline = convex hull of mesh vertices with Z <= 0.50 mm (belt side) plus the hull of the full footprint for the length. Axis = first principal component of the plantar vertices, flipped so s increases toward +Y (heel). Toe is the low-s end. Length = hull extent along that axis. 40% boundary is the plane normal to the axis at s_min + 0.40*L.",
+  "pca_angle_deg_from_plus_x": 87.825,
+  "pca_angle_deg_from_plus_y": -2.175,
+  "axis_origin_xy": [
+    140.7316,
+    118.8565
+  ],
+  "axis_dir_xy": [
+    0.037959,
+    0.999279
+  ],
+  "s_min": -119.278,
+  "s_max": 154.0601,
+  "anatomical_length_mm": 273.3381,
+  "boundary_s": -9.9427,
+  "boundary_fraction": 0.4,
+  "toe_end_width_mm": 74.881,
+  "heel_end_width_mm": 72.964,
+  "plantar_vertex_count": 104166,
+  "plantar_z_cut_mm": 0.5048
+}
