@@ -96,35 +96,17 @@ def overlay_g2b(machine: dict, process: dict, filament: dict) -> None:
     machine["machine_start_gcode"] = unescape(CFG["machine_start_gcode"])
 
 
-# Kendon, 2026-11-13 (his own words, PM): ApexCore 95A / apex-v2-insole-95a
-# only. Stitch the thin-forefoot tangent joint. The belt-edge center seam
-# stays aligned (seam_position and the match postprocess are not in this set).
-# Kendon, 2026-11-13 11:27 AM MT: wall_loops stays 2. Classic walls leave one
-# loop only where the section cannot hold two closed loops, so the heel and
-# arch keep the inner wall. The same rule fits a youth insole and an M13.
-# Kendon, 2026-11-13 4:35 PM MT: the extra hour was travel between gap beads
-# that already meet, not a slow gap speed (gap_infill_speed is already the
-# outer-wall 26 mm/s). filter_out_gap_fill 8 drops polylines shorter than
-# 8 mm. Those are scattered heel and arch islands. The forefoot stitch
-# polylines are longer than 8 mm, so the joint stays.
-# Kendon, 2026-11-18: detect_thin_wall goes back to 0. #29 (3717053d3c) turned
-# it on, and the short outer-wall pieces were each treated as a seam. Classic
-# walls, gap fill everywhere, the 8 mm filter, 25% min bead width, and
-# wall_loops 2 stay.
-# Kendon, 2026-11-18 t2245u: the toe skins separate with nothing between
-# them that they can bond to. On the sample belt the thin toe is two 1.0 mm
-# walls and a gap bead that does not reach either wall. That geometry is
-# already in the shared G2b block before #27 (parent of c3510806d2): line
-# width 1, ensure_vertical_shell_thickness none, top_shell_layers 0.
-# Widening the walls to 1.3 mm closed the toe and opened wall-crossing
-# travels, and the 15-30% band stayed open, so the walls stay 1.
-# close_thin_skins() widens the bead until it meets both skins. The 8 mm
-# filter, classic walls, and wall_loops 2 stay.
+# ApexCore effective slicing is PRE-29 again (3717053d3c^). The #29 forefoot
+# stitch overrode the G2b overlay with classic walls, gap fill everywhere, an
+# 8 mm filter and a 25% bead. That override is not applied. These values are
+# the overlay, and prepare() only checks them. wall_loops stays 2.
+# Kendon, 2026-11-13 11:27 AM MT kept two walls. 2026-11-18 turned
+# detect_thin_wall back to 0. 2026-11-20 restored the rest of this set.
 APEXCORE_FOREFOOT_STITCH = {
-    "wall_generator": "classic",
-    "filter_out_gap_fill": "8",
-    "gap_fill_target": "everywhere",
-    "min_bead_width": "25%",
+    "wall_generator": "arachne",
+    "filter_out_gap_fill": "9999",
+    "gap_fill_target": "nowhere",
+    "min_bead_width": "50%",
     "detect_thin_wall": "0",
 }
 
@@ -139,9 +121,8 @@ def assert_g2b_identity(
     """Refuse the e2b2 / PR #7 profile drift called out in review.
 
     The default check is the shared G2b block (ApexLight and the ApexCore
-    overlay, before the forefoot stitch). ApexCore 95A applies
-    APEXCORE_FOREFOOT_STITCH and calls again with forefoot_stitch=True.
-    That second check is the approved ApexCore identity (Kendon, 2026-11-13).
+    overlay). ApexCore calls again with forefoot_stitch=True, which checks
+    APEXCORE_FOREFOOT_STITCH and does not write it. Those values are PRE-29.
     wall_loops stays 2 (Kendon, 2026-11-13 11:27 AM MT).
     """
     checks = {

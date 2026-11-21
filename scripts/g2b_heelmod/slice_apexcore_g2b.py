@@ -3,20 +3,16 @@
 
 Printed file sha256
 1eb294be4315565e868c0960a569f4f4158253f41b69955dc15cd3da77fb826e
-is the file from before the forefoot stitch. Kendon approved that stitch
-on 2026-11-13 (PM): classic walls, gap fill on, min bead 25%, detect thin
-walls. At 11:27 AM MT the same day he kept wall_loops at 2, so the heel and
-arch still get two walls. Classic walls stitch a section that cannot hold
-two closed loops. At 4:35 PM MT the extra print time was travels between
-gap beads that already meet. This script prints each of those chains as one
-path, and the lock drops gap polylines shorter than 8 mm. The belt-edge
-center seam stays aligned. The numbers live in apexcore_95a_locked.json.
-prepare() refuses to slice if a setting drifts from that file.
+is the file Kendon printed. Effective slicing is PRE-29 (3717053d3c^):
+Arachne walls, gap fill nowhere, filter_out_gap_fill 9999, min bead 50%,
+detect_thin_wall 0, wall_loops 2. The #29 forefoot-stitch override is not
+applied, and gap-fill travels are left as the slicer wrote them. The
+numbers live in apexcore_95a_locked.json. prepare() refuses to slice if a
+setting drifts from that file.
 
 G2b CONFIG_BLOCK with the ApexCore filament swapped in. No heelmod
 layer-range flow, min_bead, or ensure_all. Wall line width stays 1 mm.
-close_thin_skins() widens the thin-section gap bead until it meets both
-skins. No global infill_wall_overlap or minimum_sparse_infill_area edits.
+No global infill_wall_overlap or minimum_sparse_infill_area edits.
 Layer height stays 0.46 mm. ApexCore additions are nozzle temperature 225 °C, part fan 50% /
 aux 25%, the locked wall/sparse/gap flow ratios, and pressure advance 0.05.
 Layer-change retract is off and retraction length is 0.
@@ -160,14 +156,11 @@ def prepare(work: Path, material: str) -> tuple[dict, dict, dict, float]:
     saved = json.loads(json.dumps(filament))
     overlay_g2b(machine, process, filament)
     assert_g2b_identity(process, filament, machine)
-    # Filament block is ApexCore. Process/machine stay on the G2b CONFIG_BLOCK,
-    # then the forefoot stitch Kendon approved on 2026-11-13 is applied on top.
-    # wall_loops stays the shared G2b value of 2 (Kendon, 11:27 AM MT).
-    # Shared G2b keys (ApexLight, seam, fan, flow targets, overlap) stay put.
+    # Filament block is ApexCore. Process/machine stay on the G2b CONFIG_BLOCK.
+    # The #29 stitch is not written over that overlay. The check is the
+    # PRE-29 values (Arachne, gap fill nowhere, 9999, 50% bead, thin-wall off,
+    # wall_loops 2). Shared G2b keys stay put.
     filament = saved
-    for key, value in APEXCORE_FOREFOOT_STITCH.items():
-        cur = process.get(key)
-        process[key] = [value] if isinstance(cur, list) else value
     assert_g2b_identity(process, filament, machine, forefoot_stitch=True)
     if process.get("layer_height") != "0.46":
         raise SystemExit(f"layer height drifted to {process.get('layer_height')!r}")
@@ -791,8 +784,9 @@ def main() -> None:
         return
     gcode = slice_model(work, stl, y_offset)
     dest = Path(sys.argv[4]) if len(sys.argv) > 4 else work / "sliced.gcode"
-    text = rewrite_print_time(chain_gap_fill_travels(gcode.read_text(errors="replace")))
-    dest.write_text(text)
+    # PRE-29 wrote the slicer file through. #29's gap-fill chain and the
+    # footer rewrite are not on this path.
+    dest.write_bytes(gcode.read_bytes())
     print("wrote", dest, dest.stat().st_size)
 
 

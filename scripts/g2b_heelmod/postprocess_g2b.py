@@ -4,27 +4,22 @@
 efix rescales every extruding XY move from the belt-shear length
 sqrt(dx^2+2*dy^2) back to the true XY length. It never changes F.
 
-Closed outer and overhang walls used to start on the belt (min-Y) to match
-the G2b toe file. That stacks the seam on the plantar face. They now start
-at the midpoint of the face away from the belt (max-Y). A flat loop with no
-point above the belt band still uses that toe-file belt start, so a leader
-tab with no dorsal face is unchanged. A loop whose ends miss by more than
-the 0.8 mm wipe margin but by at most two nozzles, and whose path is the
-loop rather than the opening, is the same kind of closed wall. Inner walls
-still restart on the belt contact at the outer seam's X. Coupon cut and
-min-layer-time do not use the seam point. The inside-wall travel still ends
-on whatever point the seam uses. A closed chain of only a few millimetres
-gets the wipe and no overlap: that overlap is a second copy of the wall,
-and the lift-and-direct hop was chosen before the copy existed. A near-closed
-loop is joined across its opening before the rotate, so the raw lines cannot
-become a chord. ApexLight does not run this seam pass. Its post-edit is
-the production fan lock, the pp_c E-pair drop, and the inside-wall travel
-walk, with heel-route E±1.5 left as written.
+Closed outer and overhang walls start at the belt-side (min-Y) edge
+midpoint, the same rotate as PRE-29, including the short-edge vertex
+fallback. The joint is a butt: the loop ends on its own start. The 0.7 mm
+dry glide follows, along the last segment, at 60% of that segment's feed.
+Retract stays 0.5 mm and the prime equals it. On a closed outer or overhang
+loop the first 10 mm after the seam and the last 10 mm into it run at
+F1200, unless that stretch was already slower; a move is split only at
+those two arc lengths. Inner walls still restart on the belt
+contact at the outer seam's X. A seam travel whose lifted chord would cross
+the outer wall is routed inside the wall and lands on the seam start.
+ApexLight does not run this seam pass. Its post-edit is the production fan
+lock, the pp_c E-pair drop, and the inside-wall travel walk, with heel-route
+E±1.5 left as written.
 
-Retract 0.5 and prime 0.5. A closed outer loop then extrudes a 0.4 mm
-overlap and wipes 0.7 mm dry at 60% of that wall's feed. Infill travels get
-the lift only (no retract). E on split edges is divided by true XY length
-so outer E/mm stays flat across a layer.
+Infill travels get the lift only (no retract). E on split edges is divided
+by true XY length so outer E/mm stays flat across a layer.
 
 Min-time slows a layer whose true-XY time is under 8 s. Feed is scaled and
 clamped to a 10 mm/s floor. E is not touched.
@@ -54,6 +49,10 @@ RETRACT_F = 1800
 TRAVEL_F = 12720  # 212 mm/s
 WIPE_MM = 0.7
 WIPE_FRAC = 0.6
+# First and last 10 mm of a closed outer/overhang loop. 20 mm/s, Cura's belt
+# wall speed. A feed already at or below this stays as written.
+SLOW_END_F = 1200.0
+SLOW_END_MM = 10.0
 # Extruded past the joint, along the wall the loop just started. The dry wipe
 # still follows, so the join is covered instead of left short.
 OVERLAP_MM = 0.4
@@ -436,20 +435,15 @@ def _rotate_at(segs: list[dict], i: int, t: float) -> list[dict]:
 
 
 def _wall_chains(segs: list[dict], kind: str, anchor_x: float | None, anchor: bool) -> tuple[list[list[dict]], float | None]:
-    """Outer and overhang walls start off the belt. Other walls start at that seam's X.
+    """Outer walls start at their belt-edge midpoint. Other walls start at that same X.
 
-    A closed outer loop starts at the midpoint of its max-Y edge. Inner walls,
-    when the G2b anchor is on, still restart on the belt contact at that X.
     An open wall that crosses the anchor in its middle is extruded as two runs,
     both beginning on the belt. That is the extra seam the G2b toe file inserts.
     """
     if not segs:
         return [segs], anchor_x
     if not anchor or kind in ("Outer wall", "Overhang wall"):
-        if kind in ("Outer wall", "Overhang wall"):
-            segs = _dorsal_split(segs)
-        else:
-            segs = _belt_split(segs)
+        segs = _belt_split(segs)
         new_anchor = segs[0]["x0"] if kind in ("Outer wall", "Overhang wall") else anchor_x
         return [segs], new_anchor
     if anchor_x is None:
@@ -1380,6 +1374,112 @@ def reseat_closed_outers(text: str) -> str:
     return "".join(out)
 
 
+def _line_has_feed(raw: str) -> bool:
+    return re.search(r"F[+-]?(?:\d+\.?\d*|\.\d+)", raw.split(";", 1)[0]) is not None
+
+
+def _rewrite_feed(raw: str, feed: float, *, replace: bool) -> str:
+    """Set F on one G1. replace rewrites an existing token; otherwise only a missing one is added."""
+    body, sep, com = raw.partition(";")
+    nl = "\n" if body.endswith("\n") else ""
+    core = body[:-1] if nl else body
+    if _line_has_feed(core):
+        if not replace:
+            return raw
+        core = re.sub(
+            r"F[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?",
+            f"F{feed:.0f}",
+            core,
+            count=1,
+        )
+    else:
+        core = core + f" F{feed:.0f}"
+    return core + nl + sep + com
+
+
+def _slow_end_lines(chain: list[dict], pre_feeds: list[float]) -> list[tuple[list[str], str]]:
+    """First and last 10 mm of a closed outer loop at F1200.
+
+    A feed already at or below 1200 is left alone. A segment is split only
+    where 10 mm or L-10 mm falls inside it and the two sides need different
+    feeds. The split is collinear and keeps that segment's E per mm. The
+    segment dicts themselves are not rewritten, so the dry glide still reads
+    the original end feed.
+    """
+    lengths = [math.hypot(s["x1"] - s["x0"], s["y1"] - s["y0"]) for s in chain]
+    total = sum(lengths)
+    bounds: list[float] = []
+    if total + 1e-9 >= 2 * SLOW_END_MM:
+        for b in (SLOW_END_MM, total - SLOW_END_MM):
+            if not bounds or abs(b - bounds[-1]) > 1e-6:
+                bounds.append(b)
+
+    def in_slow(a0: float, a1: float) -> bool:
+        if total < 2 * SLOW_END_MM:
+            return True
+        if a0 >= -0.02 and a1 <= SLOW_END_MM + 0.02:
+            return True
+        return a0 >= total - SLOW_END_MM - 0.02 and a1 <= total + 0.02
+
+    pieces: list[tuple[int, float, float, float, float]] = []
+    acc = 0.0
+    for i, s in enumerate(chain):
+        length = lengths[i]
+        cuts = [0.0, 1.0]
+        if length > 1e-9 and pre_feeds[i] > SLOW_END_F + 0.5:
+            start_r = (round(s["x0"], 3), round(s["y0"], 3))
+            end_r = (round(s["x1"], 3), round(s["y1"], 3))
+            for b in bounds:
+                if acc + 1e-6 < b < acc + length - 1e-6:
+                    t = (b - acc) / length
+                    x = s["x0"] + (s["x1"] - s["x0"]) * t
+                    y = s["y0"] + (s["y1"] - s["y0"]) * t
+                    cut_r = (round(x, 3), round(y, 3))
+                    # A cut that rounds onto an existing vertex would emit a
+                    # zero-length move and break the perimeter chain.
+                    if cut_r != start_r and cut_r != end_r:
+                        cuts.append(t)
+        cuts = sorted(cuts)
+        dedup = [cuts[0]]
+        for t in cuts[1:]:
+            if t - dedup[-1] > 1e-9:
+                dedup.append(t)
+        for t0, t1 in zip(dedup, dedup[1:]):
+            pieces.append((i, t0, t1, acc + t0 * length, acc + t1 * length))
+        acc += length
+
+    lines: list[tuple[list[str], str]] = []
+    emitted: float | None = None
+    for i, t0, t1, a0, a1 in pieces:
+        s = chain[i]
+        orig = pre_feeds[i]
+        dest = min(orig, SLOW_END_F) if in_slow(a0, a1) else orig
+        comments = list(s.get("comments") or []) if t0 <= 1e-6 else []
+        raw = s["raw"] if str(s.get("raw", "")).endswith("\n") else str(s.get("raw", "")) + "\n"
+        unsplit = t0 <= 1e-9 and t1 >= 1.0 - 1e-9
+        if unsplit and abs(dest - orig) <= 0.5:
+            if emitted is not None and abs(emitted - orig) > 0.5 and not _line_has_feed(raw):
+                raw = _rewrite_feed(raw, orig, replace=False)
+            emitted = orig
+        elif unsplit:
+            raw = _rewrite_feed(raw, dest, replace=True)
+            emitted = dest
+        else:
+            x1 = s["x0"] + (s["x1"] - s["x0"]) * t1
+            y1 = s["y0"] + (s["y1"] - s["y0"]) * t1
+            ee = float(s.get("e") or 0.0) * (t1 - t0)
+            words = _words(raw)
+            parts = ["G1", f"X{_fmt(x1, 3)}", f"Y{_fmt(y1, 3)}"]
+            if "Z" in words:
+                parts.append(f"Z{words['Z']}")
+            parts.append(f"E{ee:.5f}")
+            parts.append(f"F{dest:.0f}")
+            raw = " ".join(parts) + "\n"
+            emitted = dest
+        lines.append((comments, raw))
+    return lines
+
+
 def seam(
     text: str,
     *,
@@ -1480,18 +1580,8 @@ def seam(
                     lj = lines[k]
                     if lj.startswith(";TYPE:"):
                         # Outer and overhang share one perimeter. A type comment
-                        # between them is not a new path; splitting there misses
-                        # the belt edge. Any other feature ends the wall. Leaving
-                        # the type in the chain made the outer look like gap
-                        # infill, so a near-closed tab was not rotated.
-                        new_type = lj[6:].strip()
-                        if (
-                            segs
-                            and dest_type in ("Outer wall", "Overhang wall")
-                            and new_type not in ("Outer wall", "Overhang wall")
-                        ):
-                            break
-                        dest_type = new_type
+                        # is not a new path; splitting there misses the belt edge.
+                        dest_type = lj[6:].strip()
                         comments.append(lj if lj.endswith("\n") else lj + "\n")
                         k += 1
                         continue
@@ -1581,16 +1671,53 @@ def seam(
                     if wall:
                         out.append(";C_SEAM_START\n")
                         counts["seam_start"] += 1
+                    modal = float(TRAVEL_F)
+                    if ci == 0:
+                        for fl in feeds:
+                            fw = _words(fl)
+                            if "F" in fw:
+                                modal = float(fw["F"])
+                    pre_feeds: list[float] = []
                     for s in chain:
-                        out.extend(s["comments"])
-                        out.append(s["raw"] if s["raw"].endswith("\n") else s["raw"] + "\n")
-                        x, y = s["x1"], s["y1"]
+                        if s.get("f"):
+                            modal = float(s["f"])
+                        pre_feeds.append(modal)
+                    slow = (
+                        dest_type in ("Outer wall", "Overhang wall")
+                        and len(chain) >= 3
+                        and _path_closed(chain)
+                    )
+                    if slow:
+                        for comments, raw in _slow_end_lines(chain, pre_feeds):
+                            out.extend(comments)
+                            out.append(raw)
+                            w = _words(raw)
+                            if "X" in w:
+                                x = float(w["X"])
+                            if "Y" in w:
+                                y = float(w["Y"])
+                    else:
+                        for s in chain:
+                            out.extend(s["comments"])
+                            raw = s["raw"] if s["raw"].endswith("\n") else s["raw"] + "\n"
+                            out.append(raw)
+                            x, y = s["x1"], s["y1"]
                     last_chain = ci == len(chains) - 1
                     if wall:
                         if last_chain and dest_type in ("Outer wall", "Overhang wall"):
-                            finished = _emit_outer_finish(out, chain, f or 1560.0, counts)
-                            if finished is not None:
-                                x, y = finished
+                            last = chain[-1]
+                            span = math.hypot(last["x1"] - last["x0"], last["y1"] - last["y0"])
+                            if span > 1e-6:
+                                ux = (last["x1"] - last["x0"]) / span
+                                uy = (last["y1"] - last["y0"]) / span
+                                feed = float(last["f"]) if last.get("f") else (f or 1560.0)
+                                wx = last["x1"] + ux * WIPE_MM
+                                wy = last["y1"] + uy * WIPE_MM
+                                out.append(";WIPE_START\n")
+                                out.append(f"G1 X{_fmt(wx, 3)} Y{_fmt(wy, 3)} F{feed * WIPE_FRAC:.0f} ;glide\n")
+                                out.append(";WIPE_END\n")
+                                counts["wipe"] += 1
+                                x, y = wx, wy
                         out.append(";C_SEAM_END\n")
                     elif last_chain:
                         out.extend(comments)

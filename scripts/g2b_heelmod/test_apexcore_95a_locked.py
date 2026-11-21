@@ -157,18 +157,18 @@ class ApexCore95ALocked(unittest.TestCase):
         for key, value in APEXCORE_FOREFOOT_STITCH.items():
             self.assertEqual(lock["settings"][key]["value"], value)
             self.assertEqual(stitch["changes"][key]["new"], value)
-        # #29 turned detect_thin_wall on. Kendon 2026-11-18 turned it back off.
-        # The other #29 keys stay, and reduce_crossing_wall stays 1.
+        # Effective ApexCore slicing is PRE-29. The #29 stitch is recorded as
+        # the old value and is not what the slicer receives.
         self.assertEqual(APEXCORE_FOREFOOT_STITCH["detect_thin_wall"], "0")
         self.assertEqual(lock["settings"]["detect_thin_wall"]["value"], "0")
         self.assertEqual(stitch["changes"]["detect_thin_wall"]["new"], "0")
-        kept_from_29 = {
-            "wall_generator": "classic",
-            "filter_out_gap_fill": "8",
-            "gap_fill_target": "everywhere",
-            "min_bead_width": "25%",
+        restored = {
+            "wall_generator": "arachne",
+            "filter_out_gap_fill": "9999",
+            "gap_fill_target": "nowhere",
+            "min_bead_width": "50%",
         }
-        for key, value in kept_from_29.items():
+        for key, value in restored.items():
             self.assertEqual(APEXCORE_FOREFOOT_STITCH[key], value)
             self.assertEqual(lock["settings"][key]["value"], value)
             self.assertEqual(stitch["changes"][key]["new"], value)
@@ -179,7 +179,7 @@ class ApexCore95ALocked(unittest.TestCase):
         self.assertEqual(lock["settings"]["outer_wall_flow_ratio"]["value"], "1.0142")
         self.assertEqual(lock["settings"]["infill_wall_overlap"]["value"], "15%")
         self.assertEqual(lock["settings"]["gap_infill_speed"]["value"], "26")
-        self.assertEqual(lock["settings"]["filter_out_gap_fill"]["value"], "8")
+        self.assertEqual(lock["settings"]["filter_out_gap_fill"]["value"], "9999")
         self.assertIn("4:35 PM MT", lock["approval"])
 
     def test_prepare_applies_only_the_forefoot_stitch(self) -> None:
@@ -199,10 +199,10 @@ class ApexCore95ALocked(unittest.TestCase):
             self.assertEqual(str(got), value)
         self.assertEqual(str(process["detect_thin_wall"]), "0")
         self.assertEqual(str(process["reduce_crossing_wall"]), "1")
-        self.assertEqual(str(process["wall_generator"]), "classic")
-        self.assertEqual(str(process["filter_out_gap_fill"]), "8")
-        self.assertEqual(str(process["gap_fill_target"]), "everywhere")
-        self.assertEqual(str(process["min_bead_width"]), "25%")
+        self.assertEqual(str(process["wall_generator"]), "arachne")
+        self.assertEqual(str(process["filter_out_gap_fill"]), "9999")
+        self.assertEqual(str(process["gap_fill_target"]), "nowhere")
+        self.assertEqual(str(process["min_bead_width"]), "50%")
         self.assertEqual(str(process["wall_loops"]), "2")
         self.assertEqual(str(process["outer_wall_line_width"]), "1")
         self.assertEqual(str(process["inner_wall_line_width"]), "1")
@@ -259,11 +259,10 @@ class ApexCore95ALocked(unittest.TestCase):
         self.assertEqual(out.count("G1 F12720\n"), 1)
 
     def test_reslice_matches_printed_file(self) -> None:
-        # The stored sha is the pre-stitch print. Kendon approved the
-        # forefoot stitch on 2026-11-13, so a new slice must not match it.
+        # The stored sha is the printed file. It is not re-pinned.
         self.skipTest(
-            "printed sha 1eb294be is the pre-stitch file; "
-            "Kendon approved the forefoot stitch on 2026-11-13"
+            "printed sha 1eb294be stays the locked file hash; "
+            "this restoration is not a byte match to that print"
         )
         slicer = _slicer_bin()
         resources = _resources()
