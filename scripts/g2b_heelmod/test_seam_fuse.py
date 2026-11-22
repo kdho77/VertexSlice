@@ -271,14 +271,16 @@ def _loop(typ: str, pts: list[tuple[float, float]], width: float = 1.15) -> list
 
 
 def _slice(loops: list[tuple[str, list[tuple[float, float]]]]) -> str:
-    lines = ["M83", "G90", ";LAYER_CHANGE", ";Z:0.46", "G1 X70 Y1 F1560"]
+    # The real belt file has an empty ``;LAYER_CHANGE`` before the first printed
+    # layer. The bond numbers layers the same way the forefoot gates do.
+    lines = ["M83", "G90", ";LAYER_CHANGE", ";LAYER_CHANGE", ";Z:0.46", "G1 X70 Y1 F1560"]
     for typ, pts in loops:
         lines.extend(_loop(typ, pts))
     lines += ["", ";LAYER_CHANGE", ";Z:1.06", ";TYPE:Outer wall", "G1 X10 Y1 E0.10000 F1560"]
     return "\n".join(lines) + "\n"
 
 
-def _horiz(text: str, layer: int = 1) -> list[tuple[float, float, float, float]]:
+def _horiz(text: str, layer: int = 2) -> list[tuple[float, float, float, float]]:
     """Horizontal extrusions in one layer: (y, width, feed, length)."""
     body = text.split(";LAYER_CHANGE")[layer]
     x = y = None
@@ -319,7 +321,7 @@ class ForefootCuraBond(unittest.TestCase):
         seamed, _counts = seam(src, retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
         out, stats = forefoot_cura_bond(seamed, last_layer=1)
         self.assertTrue(stats["applied"])
-        self.assertEqual(seamed.split(";LAYER_CHANGE")[2], out.split(";LAYER_CHANGE")[2])
+        self.assertEqual(seamed.split(";LAYER_CHANGE")[3], out.split(";LAYER_CHANGE")[3])
         rows = _horiz(out)
         low = [r for r in rows if r[0] < 1.2]
         high = [r for r in rows if r[0] > 1.2]
@@ -334,7 +336,7 @@ class ForefootCuraBond(unittest.TestCase):
         for y, width, _feed, _length in high:
             self.assertAlmostEqual(y + width / 2, 2.06 + 1.15 / 2, delta=0.02)
         # Side centres stay on the outline, so the printed side edge does too.
-        body = out.split(";LAYER_CHANGE")[1]
+        body = out.split(";LAYER_CHANGE")[2]
         x = y = None
         sides = []
         for line in body.splitlines():
@@ -356,7 +358,7 @@ class ForefootCuraBond(unittest.TestCase):
             self.assertEqual(report["totals"][key], 0)
         # The seam stays on the loop's own bottom edge.
         start = None
-        for line in out.split(";LAYER_CHANGE")[1].splitlines():
+        for line in out.split(";LAYER_CHANGE")[2].splitlines():
             if line.endswith(";seam travel") or " ;seam travel" in line:
                 w = _words(line)
                 if "Y" in w:
@@ -372,7 +374,7 @@ class ForefootCuraBond(unittest.TestCase):
         ])
         seamed, _counts = seam(src, retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
         out, _stats = forefoot_cura_bond(seamed, last_layer=1)
-        self.assertEqual(seamed.split(";LAYER_CHANGE")[2], out.split(";LAYER_CHANGE")[2])
+        self.assertEqual(seamed.split(";LAYER_CHANGE")[3], out.split(";LAYER_CHANGE")[3])
         rows = _horiz(out)
         plantar = min(rows, key=lambda r: r[0])
         dorsal = max(rows, key=lambda r: r[0])
