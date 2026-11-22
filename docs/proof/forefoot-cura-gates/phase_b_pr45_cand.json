@@ -1,0 +1,440 @@
+{
+ "gates": [
+  {
+   "gate": "G1 thin_bond",
+   "model": "orthocad",
+   "stl": "orthocad_sample_top_insole.stl",
+   "forefoot_layers": "1-165",
+   "thin_columns": 15813,
+   "unbonded": 3,
+   "bonded": 15810,
+   "median_gap_mm": -0.232554,
+   "base_median_gap_mm": 0.409522,
+   "cura_median_gap_mm": -0.45,
+   "overlap_required_mm": 0.05,
+   "examples": [
+    {
+     "layer": 111,
+     "x_bin": 224,
+     "x_mm": 112.25,
+     "overlap_mm": -0.0848
+    },
+    {
+     "layer": 113,
+     "x_bin": 319,
+     "x_mm": 159.75,
+     "overlap_mm": -0.0835
+    },
+    {
+     "layer": 113,
+     "x_bin": 318,
+     "x_mm": 159.25,
+     "overlap_mm": -0.09
+    }
+   ],
+   "result": "FAIL",
+   "failures": [
+    "3 unbonded thin columns (skin overlap < 0.05 mm); 0 required"
+   ]
+  },
+  {
+   "gate": "G2 thick_bond",
+   "model": "orthocad",
+   "stl": "orthocad_sample_top_insole.stl",
+   "forefoot_layers": "1-165",
+   "thick_columns": 8443,
+   "unbonded": 0,
+   "belt_air_pct": 0.0,
+   "dorsal_air_pct": 0.0,
+   "cura_belt_air_pct": 46.0,
+   "cura_dorsal_air_pct": 39.0,
+   "overlap_required_mm": 0.15,
+   "examples": [],
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G3 outer_edge",
+   "model": "orthocad",
+   "samples": 98191,
+   "missing_samples": 0,
+   "p99_mm": 0.003968,
+   "max_mm": 0.110391,
+   "p99_limit_mm": 0.02,
+   "max_limit_mm": 0.05,
+   "cand_bead_height_mm": 0.46,
+   "base_bead_height_mm": 0.46,
+   "result": "FAIL",
+   "failures": [
+    "max outer-edge deviation 0.11039101651112182 mm > 0.05 mm"
+   ]
+  },
+  {
+   "gate": "G4 seams",
+   "model": "orthocad",
+   "closed_loops": 165,
+   "base_closed_loops": 165,
+   "closed_off_bottom": 0,
+   "starts_moved": 0,
+   "layer_changes_bad": 0,
+   "examples_off_bottom": [],
+   "examples_moved": [],
+   "examples_layer_change": [],
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G9 filament_outline",
+   "model": "orthocad",
+   "cand_forefoot_mm": 7651.75271,
+   "base_forefoot_mm": 6098.20747,
+   "increase_mm": 1553.54524,
+   "increase_pct": 25.475441,
+   "outside_samples": [
+    {
+     "layer": 5,
+     "x": 115.1748,
+     "y": 0.9253,
+     "dist_mm": 0.1718,
+     "line": 450,
+     "type": "Outer wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 6,
+     "x": 113.9567,
+     "y": 0.9267,
+     "dist_mm": 0.2958,
+     "line": 509,
+     "type": "Outer wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 7,
+     "x": 112.8757,
+     "y": 0.9406,
+     "dist_mm": 0.3671,
+     "line": 566,
+     "type": "Outer wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 8,
+     "x": 112.0277,
+     "y": 0.9327,
+     "dist_mm": 0.347,
+     "line": 616,
+     "type": "Outer wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 8,
+     "x": 112.5045,
+     "y": 2.334,
+     "dist_mm": 0.1907,
+     "line": 619,
+     "type": "Outer wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 8,
+     "x": 116.261,
+     "y": -0.4803,
+     "dist_mm": 0.0412,
+     "line": 624,
+     "type": "Outer wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 9,
+     "x": 111.1219,
+     "y": 0.9274,
+     "dist_mm": 0.4498,
+     "line": 666,
+     "type": "Outer wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 10,
+     "x": 110.4527,
+     "y": 0.937,
+     "dist_mm": 0.3932,
+     "line": 714,
+     "type": "Outer wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 11,
+     "x": 110.0213,
+     "y": 0.9022,
+     "dist_mm": 0.184,
+     "line": 761,
+     "type": "Outer wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 12,
+     "x": 109.1851,
+     "y": 0.9291,
+     "dist_mm": 0.3718,
+     "line": 807,
+     "type": "Outer wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 13,
+     "x": 108.8318,
+     "y": 0.9508,
+     "dist_mm": 0.1768,
+     "line": 855,
+     "type": "Outer wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 14,
+     "x": 108.23,
+     "y": 0.8796,
+     "dist_mm": 0.3021,
+     "line": 900,
+     "type": "Outer wall",
+     "why": "outward of the BASE outer edge"
+    }
+   ],
+   "outline_tol_mm": 0.02,
+   "result": "FAIL",
+   "failures": [
+    "12 forefoot bead samples lie outside the BASE outer outline (showing 12)"
+   ]
+  },
+  {
+   "gate": "G6 flow",
+   "model": "orthocad",
+   "moves": 13238,
+   "max_mm3_s": 17.086663,
+   "p95_mm3_s": 16.799232,
+   "median_mm3_s": 16.789547,
+   "over_17_1": 0,
+   "over_35": 0,
+   "cap_mm3_s": 17.1,
+   "hard_cap_mm3_s": 35.0,
+   "worst": {
+    "q": 17.086663,
+    "layer": 117,
+    "line": 8624,
+    "type": "Outer wall",
+    "speed_mm_s": 26.0
+   },
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G7 time",
+   "cand_s": 5451.244891,
+   "base_s": 5326.980562,
+   "delta_pct": 2.332735,
+   "limit_pct": 2.0,
+   "cand_footer": "1h 27m 15s",
+   "base_footer": "1h 27m 15s",
+   "result": "FAIL",
+   "failures": [
+    "time 5451.2 s > BASE 5327.0 s + 2% (+2.33%)"
+   ]
+  },
+  {
+   "gate": "G8 crossings",
+   "crossings_frozen_sha256": "5641f7ec52424040ca11a14090462ab2448b1fc8f3b51695530a18b22d1faf19",
+   "cand": {
+    "perimeter_crossings": 0,
+    "surface_crossings": 0,
+    "seam_block_crossings": 0
+   },
+   "base": {
+    "perimeter_crossings": 0,
+    "surface_crossings": 0,
+    "seam_block_crossings": 0
+   },
+   "cand_skin_interior_travels": 2,
+   "base_skin_interior_travels": 111,
+   "samples": [],
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G1 thin_bond",
+   "model": "insole",
+   "stl": "insole_sample.stl",
+   "forefoot_layers": "1-31",
+   "thin_columns": 178,
+   "unbonded": 0,
+   "bonded": 178,
+   "median_gap_mm": -0.230418,
+   "base_median_gap_mm": 0.425165,
+   "cura_median_gap_mm": -0.45,
+   "overlap_required_mm": 0.05,
+   "examples": [],
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G2 thick_bond",
+   "model": "insole",
+   "stl": "insole_sample.stl",
+   "forefoot_layers": "1-31",
+   "thick_columns": 534,
+   "unbonded": 0,
+   "belt_air_pct": 0.0,
+   "dorsal_air_pct": 0.0,
+   "cura_belt_air_pct": 46.0,
+   "cura_dorsal_air_pct": 39.0,
+   "overlap_required_mm": 0.15,
+   "examples": [],
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G3 outer_edge",
+   "model": "insole",
+   "samples": 24416,
+   "missing_samples": 0,
+   "p99_mm": 0.000209,
+   "max_mm": 0.000209,
+   "p99_limit_mm": 0.02,
+   "max_limit_mm": 0.05,
+   "cand_bead_height_mm": 0.46,
+   "base_bead_height_mm": 0.46,
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G4 seams",
+   "model": "insole",
+   "closed_loops": 30,
+   "base_closed_loops": 30,
+   "closed_off_bottom": 0,
+   "starts_moved": 0,
+   "layer_changes_bad": 0,
+   "examples_off_bottom": [],
+   "examples_moved": [],
+   "examples_layer_change": [],
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G9 filament_outline",
+   "model": "insole",
+   "cand_forefoot_mm": 3311.51291,
+   "base_forefoot_mm": 3239.67189,
+   "increase_mm": 71.84102,
+   "increase_pct": 2.21754,
+   "outside_samples": [],
+   "outline_tol_mm": 0.02,
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G6 flow",
+   "model": "insole",
+   "moves": 6846,
+   "max_mm3_s": 19.740809,
+   "p95_mm3_s": 16.787694,
+   "median_mm3_s": 11.256471,
+   "over_17_1": 125,
+   "over_35": 0,
+   "cap_mm3_s": 17.1,
+   "hard_cap_mm3_s": 35.0,
+   "worst": {
+    "q": 19.740809,
+    "layer": 7,
+    "line": 888,
+    "type": "Inner wall",
+    "speed_mm_s": 42.0
+   },
+   "result": "FAIL",
+   "failures": [
+    "125 forefoot moves exceed 17.1 mm^3/s (max 19.741)"
+   ]
+  },
+  {
+   "gate": "G7 time",
+   "cand_s": 2054.4489,
+   "base_s": 2044.313456,
+   "delta_pct": 0.495787,
+   "limit_pct": 2.0,
+   "cand_footer": "34m 4s",
+   "base_footer": "34m 4s",
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G8 crossings",
+   "crossings_frozen_sha256": "5641f7ec52424040ca11a14090462ab2448b1fc8f3b51695530a18b22d1faf19",
+   "cand": {
+    "perimeter_crossings": 0,
+    "surface_crossings": 0,
+    "seam_block_crossings": 0
+   },
+   "base": {
+    "perimeter_crossings": 0,
+    "surface_crossings": 0,
+    "seam_block_crossings": 0
+   },
+   "cand_skin_interior_travels": 1,
+   "base_skin_interior_travels": 1,
+   "samples": [],
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G5 outside_scope",
+   "cores": [
+    {
+     "model": "orthocad",
+     "forefoot_last_layer": 165,
+     "post_forefoot_chars": 2611915,
+     "post_forefoot_equal": true,
+     "first_diff_char": null,
+     "process_mcodes_equal": true,
+     "base_sha256": "b58621bce3669580bb9b2e1ef67c7251e8155396c87cbe4098b477b05768b66a",
+     "cand_sha256": "178dc187019d85696e272865a39eb1bb7ce9bef4cdeee70b8eff0e5a6965a276"
+    },
+    {
+     "model": "insole",
+     "forefoot_last_layer": 31,
+     "post_forefoot_chars": 509481,
+     "post_forefoot_equal": true,
+     "first_diff_char": null,
+     "process_mcodes_equal": true,
+     "base_sha256": "c78aecc9c792cd860694bf4dfaee2b495e5e480d607b61c9087d0991d71c5c81",
+     "cand_sha256": "baeb459b4924f80b013a966657b4ab12d4db1fc3019318f0223133b936dd55f1"
+    }
+   ],
+   "pairs": [
+    {
+     "label": "ApexLight",
+     "equal": true,
+     "first_diff_byte": null,
+     "base_sha256_norm": "db9a72a04c985f0f5135809db64dcb1cd207bc32f0e314f718aa4d2a965a92fe",
+     "cand_sha256_norm": "db9a72a04c985f0f5135809db64dcb1cd207bc32f0e314f718aa4d2a965a92fe"
+    },
+    {
+     "label": "ApexLight",
+     "equal": true,
+     "first_diff_byte": null,
+     "base_sha256_norm": "f6723dfc855385fc17c8f9ebbd7d131b2baac5f346026b3ac1a475abaeedf7aa",
+     "cand_sha256_norm": "f6723dfc855385fc17c8f9ebbd7d131b2baac5f346026b3ac1a475abaeedf7aa"
+    }
+   ],
+   "unchecked_materials": [
+    "ApexForge",
+    "ApexBounce"
+   ],
+   "strict_materials": false,
+   "note": "Unchecked ApexForge/ApexBounce means those files were not in the grade inputs. That is not a pass on Forge or Bounce. BASE CI run 44943125841 uploads ApexCore and ApexLight only.",
+   "result": "PASS",
+   "failures": []
+  }
+ ],
+ "result": "FAIL",
+ "fail_count": 5,
+ "pass_count": 12
+}
