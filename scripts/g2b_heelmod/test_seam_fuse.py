@@ -408,6 +408,51 @@ class ForefootBondTests(unittest.TestCase):
         self.assertEqual(stats["widened"], 0)
         self.assertEqual(_extrusions(out), before)
 
+    def test_corner_join_keeps_both_outer_edges(self) -> None:
+        # A thin loop: long plantar wall, vertical side, long dorsal wall.
+        # The plantar wall widens and the side wall does not. The corner is a
+        # short connector. Both long outer edges stay on the sliced line, and
+        # the path stays one continuous loop.
+        plantar_y, dorsal_y, side_x = 0.55, 2.35, 180.0
+        width = 1.10
+        pts = [
+            (100.0, plantar_y, width),
+            (side_x, plantar_y, width),
+            (side_x, dorsal_y, width),
+            (100.0, dorsal_y, width),
+        ]
+        text = _program([_loop(pts, 0.46, "Outer wall")])
+        out, stats = forefoot_cura_bond(text, last_layer=1)
+        self.assertTrue(stats["applied"])
+        moves = _extrusions(out)
+        self.assertGreaterEqual(len(moves), 4)
+        for prev, nxt in zip(moves, moves[1:]):
+            self.assertLess(math.hypot(nxt[0] - prev[2], nxt[1] - prev[3]), 0.05)
+        # The loop returns to its start.
+        self.assertLess(math.hypot(moves[0][0] - moves[-1][2], moves[0][1] - moves[-1][3]), 0.05)
+        bottoms = [m for m in moves if m[2] - m[0] > 20.0 and abs(m[3] - m[1]) < 0.05]
+        tops = [m for m in moves if m[0] - m[2] > 20.0 and abs(m[3] - m[1]) < 0.05]
+        self.assertTrue(bottoms)
+        self.assertTrue(tops)
+        for move in bottoms:
+            self.assertLess(abs(_bottom_outer(*move) - (plantar_y - width * 0.5)), 0.02)
+        for x0, y0, x1, y1, e in tops:
+            length = math.hypot(x1 - x0, y1 - y0)
+            bead = (e / length) * _FILAMENT_AREA / 0.46 + 0.46 * (1.0 - math.pi / 4.0)
+            outer = 0.5 * (y0 + y1) + bead * 0.5
+            self.assertLess(abs(outer - (dorsal_y + width * 0.5)), 0.02)
+        sides = [
+            m for m in moves
+            if min(m[0], m[2]) > side_x - 1.0 and abs(m[2] - m[0]) < 0.05 and abs(m[3] - m[1]) > 0.8
+        ]
+        self.assertTrue(sides)
+        for x0, y0, x1, y1, e in sides:
+            length = math.hypot(x1 - x0, y1 - y0)
+            bead = (e / length) * _FILAMENT_AREA / 0.46 + 0.46 * (1.0 - math.pi / 4.0)
+            # The upward side faces +X, so the outer edge is the centre plus half the width.
+            outer = 0.5 * (x0 + x1) + (bead * 0.5 if y1 >= y0 else -bead * 0.5)
+            self.assertLess(abs(outer - (side_x + width * 0.5)), 0.05)
+
     def test_short_notch_is_kept_and_its_outer_edge_stays(self) -> None:
         # A 0.16 mm toe notch between the plantar wall and the side wall. Widening
         # the long wall must not average the notch away or collapse it.

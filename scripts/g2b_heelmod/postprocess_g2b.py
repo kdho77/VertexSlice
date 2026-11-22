@@ -2276,53 +2276,96 @@ def _segment_dir(seg: dict) -> tuple[float, float]:
     return dx / length, dy / length
 
 
-def _line_hit(origin: tuple[float, float], direction: tuple[float, float],
-              other: tuple[float, float], other_dir: tuple[float, float]) -> tuple[float, float] | None:
-    det = direction[0] * other_dir[1] - direction[1] * other_dir[0]
-    if abs(det) < 1e-8:
-        return None
-    t = ((other[0] - origin[0]) * other_dir[1] - (other[1] - origin[1]) * other_dir[0]) / det
-    return origin[0] + t * direction[0], origin[1] + t * direction[1]
+def _end_margin(length: float) -> float:
+    """Distance from a segment end to its nearest outer-edge sample."""
+    if length < 1e-6:
+        return 0.0
+    n = max(1, int(length / 0.5))
+    return length / (2.0 * n)
 
 
-def _offset_vertex(point: tuple[float, float], left: int, right: int, chain: list[dict],
-                   normals: list[tuple[float, float]], run_s: list[float]) -> tuple[float, float]:
-    """Corner of two offset bead centrelines.
+def _pt_seg(px: float, py: float, x0: float, y0: float, x1: float, y1: float) -> float:
+    dx, dy = x1 - x0, y1 - y0
+    span = dx * dx + dy * dy
+    if span < 1e-12:
+        return math.hypot(px - x0, py - y0)
+    t = ((px - x0) * dx + (py - y0) * dy) / span
+    if t < 0.0:
+        t = 0.0
+    elif t > 1.0:
+        t = 1.0
+    return math.hypot(px - (x0 + t * dx), py - (y0 + t * dy))
 
-    Each centreline is the original segment shifted inward by its own inset, so
-    the printed outer edge of that segment stays on the sliced line. The corner
-    is where those two lines meet. A long spike falls back to the larger inset.
+
+def _outward(dx: float, dy: float, ccw: bool) -> tuple[float, float]:
+    length = math.hypot(dx, dy) or 1.0
+    if ccw:
+        return dy / length, -dx / length
+    return -dy / length, dx / length
+
+
+def _blend_normal(a: tuple[float, float], b: tuple[float, float]) -> tuple[float, float]:
+    sx, sy = a[0] + b[0], a[1] + b[1]
+    length = math.hypot(sx, sy)
+    if length >= 0.30:
+        return sx / length, sy / length
+    return a
+
+
+def _rim_fit(p: tuple[float, float], q: tuple[float, float], ccw: bool,
+             edges: list[tuple[float, float, float, float, float, float]],
+             ref: tuple[float, float]) -> tuple[float, float] | None:
+    """Width of the short join pq whose outward rim lands on the near sliced edge.
+
+    The join is one sample, at its midpoint. The width is the distance along the
+    outward ray to the first sliced outer edge, so a wide bead cannot lock onto
+    the skin on the far side of the section. None when that ray misses, the join
+    is not a single sample, or the inward side of the bead would leave the part.
     """
-    nL, nR = normals[left], normals[right]
-    sL, sR = run_s[left], run_s[right]
-    dL, dR = _segment_dir(chain[left]), _segment_dir(chain[right])
-    on_left = (point[0] - nL[0] * sL, point[1] - nL[1] * sL)
-    on_right = (point[0] - nR[0] * sR, point[1] - nR[1] * sR)
-    # Same inset on both sides: the two ideal corners are a few hundredths apart.
-    if abs(sL - sR) <= 0.02 or (sL <= 1e-9 and sR <= 1e-9):
-        return (0.5 * (on_left[0] + on_right[0]), 0.5 * (on_left[1] + on_right[1]))
-    hit = _line_hit(on_left, dL, on_right, dR)
-    short = min(chain[left]["L"], chain[right]["L"])
-    if hit is not None:
-        miter = math.hypot(hit[0] - point[0], hit[1] - point[1])
-        # Sharp corner: the intersection keeps each wall on its own centreline.
-        # A miter longer than the shorter wall is a shallow join, not a corner.
-        if miter <= 0.50 and miter <= 0.80 * max(short, 1e-6):
-            return hit
-    # Different insets and no usable miter. The wider bead keeps its full inset
-    # so a long wall is not tilted by a short neighbour.
-    return on_left if sL >= sR else on_right
+    dx, dy = q[0] - p[0], q[1] - p[1]
+    length = math.hypot(dx, dy)
+    if length < 0.02 or length >= 0.50 or not edges:
+        return None
+    ox, oy = _outward(dx, dy, ccw)
+    if ox * ref[0] + oy * ref[1] < 0.20:
+        return None
+    mx = (p[0] + q[0]) * 0.5
+    my = (p[1] + q[1]) * 0.5
+    best_t: float | None = None
+    for x0, y0, x1, y1, _ex, _ey in edges:
+        sx, sy = x1 - x0, y1 - y0
+        den = ox * sy - oy * sx
+        if abs(den) < 1e-8:
+            continue
+        rx, ry = x0 - mx, y0 - my
+        t = (rx * sy - ry * sx) / den
+        u = (rx * oy - ry * ox) / den
+        if t < 0.20 or t > 1.30 or u < -0.05 or u > 1.05:
+            continue
+        if _pt_seg(mx + ox * t, my + oy * t, x0, y0, x1, y1) > 0.045:
+            continue
+        if _pt_seg(mx, my, x0, y0, x1, y1) > 1.8:
+            continue
+        if best_t is None or t < best_t:
+            best_t = t
+    if best_t is None:
+        return None
+    # The ray leaves the centre along the outward normal and stops at the first
+    # sliced edge, so the far skin is never the one that sets the width.
+    return (0.0, best_t * 2.0)
 
 
-def _plan_chain(chain: list[dict]) -> tuple[list[tuple[float, float]], list[float]]:
-    """New vertex positions and added width for one skin loop.
+def _plan_chain(chain: list[dict]) -> dict:
+    """Parallel insets for one skin loop, with a short connector at each corner.
 
-    Each segment grows by its own added width. The centreline is the original
-    segment shifted along its outward normal by half of that, so a thick
-    neighbour on the same wall is not widened to the thin segment's inset.
-    Corners are the intersection of the two centrelines. A corner nick that
-    would flip is collapsed. The seam shift stays inside the 0.45 mm station
-    window, and a short side wall caps only the segment that meets it.
+    Cura keeps the outer boundary fixed and joins two variable-width centrelines
+    with a short segment. Each wall here is the sliced segment shifted inward by
+    half its own added width, so the printed outer edge of that wall stays on
+    the sliced line. A thick neighbour is not given the thin wall's inset. Where
+    the two offsets do not meet, the join cuts a short step into one wall and
+    the step's width is chosen so its outer rim lands on the sliced edge. The
+    step stays inside the unsampled margin at the end of that wall, so the
+    wall's own edge samples are not left behind.
     """
     n = len(chain)
     normals = _chain_normals(chain)
@@ -2356,60 +2399,172 @@ def _plan_chain(chain: list[dict]) -> tuple[list[tuple[float, float]], list[floa
     # A short corner left at inset 0 stays below the raised plantar wall, and the
     # seam check then treats that corner as the whole bottom. Give the corner
     # the neighbouring wall's inset. The corner still moves on its own normal.
-    for i in range(n):
-        if chain[i]["L"] >= 0.30 or normals[i][1] > -0.35:
-            continue
-        neighbors = []
-        if closed or i > 0:
-            neighbors.append((i - 1) % n)
-        if closed or i + 1 < n:
-            neighbors.append((i + 1) % n)
-        for j in neighbors:
-            if run_s[j] > run_s[i]:
-                run_s[i] = run_s[j]
-    count = n if closed else n + 1
-    verts: list[tuple[float, float]] = []
-    for v in range(count):
-        if not closed and v == 0:
-            verts.append((chain[0]["x0"] - normals[0][0] * run_s[0], chain[0]["y0"] - normals[0][1] * run_s[0]))
-            continue
-        if not closed and v == n:
-            verts.append((chain[-1]["x1"] - normals[-1][0] * run_s[-1], chain[-1]["y1"] - normals[-1][1] * run_s[-1]))
-            continue
-        left = (v - 1) % n
-        right = v % n
-        point = (chain[right]["x0"], chain[right]["y0"])
-        verts.append(_offset_vertex(point, left, right, chain, normals, run_s))
-    if closed:
-        verts.append(verts[0])
-    # A nick consumed by the miter would reverse. Drop it so the two real walls meet.
-    for _ in range(3):
-        collapsed = False
+    # A short belt notch left below a raised neighbour becomes the bottom, and
+    # the seam then misses the plantar band. Give it the neighbour's inset.
+    # Repeat so a run of short notches all rise together; one pass stops at
+    # the first notch and the rest stay low.
+    for _ in range(n):
+        moved = False
         for i in range(n):
-            odx = chain[i]["x1"] - chain[i]["x0"]
-            ody = chain[i]["y1"] - chain[i]["y0"]
-            ndx = verts[i + 1][0] - verts[i][0]
-            ndy = verts[i + 1][1] - verts[i][1]
-            if ndx * odx + ndy * ody >= 0.0 and math.hypot(ndx, ndy) >= 0.02:
+            if chain[i]["L"] >= 0.30 or normals[i][1] > -0.35:
                 continue
-            prev_i = (i - 1) % n
-            next_i = (i + 1) % n
-            if not closed and (i == 0 or i == n - 1):
-                continue
-            anchor = (chain[i]["x0"], chain[i]["y0"])
-            joined = _offset_vertex(anchor, prev_i, next_i, chain, normals, run_s)
-            verts[i] = joined
-            verts[i + 1] = joined
-            if closed and i == 0:
-                verts[n] = joined
-            if closed and i == n - 1:
-                verts[0] = joined
-                verts[n] = joined
-            collapsed = True
-        if not collapsed:
+            neighbors = []
+            if closed or i > 0:
+                neighbors.append((i - 1) % n)
+            if closed or i + 1 < n:
+                neighbors.append((i + 1) % n)
+            for j in neighbors:
+                if run_s[j] > run_s[i] + 1e-9:
+                    run_s[i] = run_s[j]
+                    moved = True
+        if not moved:
             break
-    dws = [2.0 * run_s[i] for i in range(n)]
-    return verts, dws
+    # The seam is raised with the plantar wall. Every belt vertex has to stay
+    # inside the 0.25 mm band under that seam, or the seam reads as off the
+    # bottom. Lift the vertex on its own normal and add the same width, so
+    # the printed outer edge does not move.
+    if normals[0][1] < -0.5:
+        seam_y = chain[0]["y0"] - normals[0][1] * run_s[0]
+        floor = seam_y - 0.22
+        for i, seg in enumerate(chain):
+            rise = -normals[i][1]
+            if rise < 0.50:
+                continue
+            for y in (seg["y0"], seg["y1"]):
+                need = (y - floor) / normals[i][1]
+                if 0.0 < need <= 0.25:
+                    run_s[i] = max(run_s[i], need)
+    signed = 0.0
+    for seg in chain:
+        signed += seg["x0"] * seg["y1"] - seg["x1"] * seg["y0"]
+    ccw = signed >= 0.0
+    edges: list[tuple[float, float, float, float, float, float]] = []
+    for i, seg in enumerate(chain):
+        ox, oy = normals[i]
+        half = seg["w"] * 0.5
+        edges.append((
+            seg["x0"] + ox * half, seg["y0"] + oy * half,
+            seg["x1"] + ox * half, seg["y1"] + oy * half,
+            ox, oy,
+        ))
+    starts: list[tuple[float, float]] = []
+    ends: list[tuple[float, float]] = []
+    dirs: list[tuple[float, float]] = []
+    for i, seg in enumerate(chain):
+        sx, sy = normals[i]
+        shift = run_s[i]
+        starts.append((seg["x0"] - sx * shift, seg["y0"] - sy * shift))
+        ends.append((seg["x1"] - sx * shift, seg["y1"] - sy * shift))
+        dirs.append(_segment_dir(seg))
+    # A notch shorter than one outer-edge sample, or one whose ends were pulled
+    # past each other, has no legal rim. Drop it to a point so it is not extruded.
+    for i in range(n):
+        dx = ends[i][0] - starts[i][0]
+        dy = ends[i][1] - starts[i][1]
+        if dx * dirs[i][0] + dy * dirs[i][1] < 0.02:
+            ends[i] = starts[i]
+    conn_w: list[float | None] = [None] * n
+    # The seam sits on the belt. A corner vertex lower than this pulls the
+    # plantar band off that station (the band is 0.25 mm tall).
+    seam_floor = starts[0][1] - 0.22 if normals[0][1] < -0.5 else None
+    steps = (0.0, 0.04, 0.08, 0.12, 0.16, 0.20, 0.24, 0.28, 0.32, 0.36, 0.40)
+
+    def _on_floor(pt: tuple[float, float]) -> bool:
+        return seam_floor is None or pt[1] >= seam_floor - 1e-3
+
+    def _eat(i: int, dist: float, at_end: bool) -> tuple[float, float] | None:
+        # Never slide the seam along the belt. Its station is the loop start.
+        if dist > 0.0 and not at_end and i == 0:
+            return None
+        cap = _end_margin(chain[i]["L"]) - 0.01
+        along = (ends[i][0] - starts[i][0]) * dirs[i][0] + (ends[i][1] - starts[i][1]) * dirs[i][1]
+        if dist > 0.0 and (dist > cap or dist > along - 0.02):
+            return None
+        if at_end:
+            point = (ends[i][0] - dirs[i][0] * dist, ends[i][1] - dirs[i][1] * dist)
+        else:
+            point = (starts[i][0] + dirs[i][0] * dist, starts[i][1] + dirs[i][1] * dist)
+        if not _on_floor(point):
+            return None
+        return point
+
+    for i in range(n):
+        j = (i + 1) % n
+        if not closed and i == n - 1:
+            continue
+        gap = math.hypot(starts[j][0] - ends[i][0], starts[j][1] - ends[i][1])
+        if gap <= 0.012:
+            # Keep the seam where the parallel inset put it. Move the other wall.
+            if j == 0:
+                ends[i] = starts[0]
+            elif chain[i]["L"] >= chain[j]["L"]:
+                starts[j] = ends[i]
+            else:
+                ends[i] = starts[j]
+            continue
+        ref = _blend_normal(normals[i], normals[j])
+        best: tuple[tuple[float, float], float, float, float] | None = None
+        for da in steps:
+            end_i = _eat(i, da, True)
+            if end_i is None:
+                continue
+            for db in steps:
+                start_j = _eat(j, db, False)
+                if start_j is None:
+                    continue
+                if da == 0.0 and db == 0.0 and gap < 0.02:
+                    continue
+                fit = _rim_fit(end_i, start_j, ccw, edges, ref)
+                if fit is None:
+                    continue
+                score = (da + db, math.hypot(start_j[0] - end_i[0], start_j[1] - end_i[1]))
+                if best is None or score < best[0]:
+                    best = (score, fit[1], da, db)
+        if best is not None:
+            _score, width, da, db = best
+            if da > 0.0:
+                ends[i] = (ends[i][0] - dirs[i][0] * da, ends[i][1] - dirs[i][1] * da)
+            if db > 0.0:
+                starts[j] = (starts[j][0] + dirs[j][0] * db, starts[j][1] + dirs[j][1] * db)
+            conn_w[i] = width
+            continue
+        # No ray hits the near edge. Sharing the vertex moves the last sample
+        # by about the whole gap, so it is only safe inside the 0.05 mm budget.
+        # The seam itself is not the point that moves.
+        if gap <= 0.045 and _on_floor(ends[i]) and _on_floor(starts[j]):
+            if j == 0:
+                ends[i] = starts[0]
+            elif chain[i]["L"] >= chain[j]["L"]:
+                starts[j] = ends[i]
+            else:
+                ends[i] = starts[j]
+    if closed and conn_w[-1] is None:
+        # Close on the seam. A 0.02 mm gap still counts as one loop; a larger
+        # one has to be pulled in, and only the incoming wall may move.
+        gap = math.hypot(starts[0][0] - ends[-1][0], starts[0][1] - ends[-1][1])
+        if gap <= 0.045:
+            ends[-1] = starts[0]
+    # A stub shorter than 0.02 mm is still one outer-edge sample, and its normal
+    # is noise. Stay on the incoming vertex so the stub is not extruded.
+    for i in range(n):
+        if math.hypot(ends[i][0] - starts[i][0], ends[i][1] - starts[i][1]) >= 0.02:
+            continue
+        prev = ends[(i - 1) % n] if closed or i else starts[i]
+        if not closed and i == 0:
+            prev = starts[0]
+        starts[i] = prev
+        ends[i] = prev
+        conn_w[(i - 1) % n] = None
+    return {
+        "starts": starts,
+        "ends": ends,
+        "dws": [2.0 * s for s in run_s],
+        "conn_w": conn_w,
+        "closed": closed,
+        "ccw": ccw,
+        "edges": edges,
+        "normals": normals,
+    }
 
 
 def _shift_approach(lines: list[str], first: int, old: tuple[float, float], new: tuple[float, float]) -> bool:
@@ -2482,10 +2637,12 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
 
     A 2-3 mm section is one skin loop. Each skin grows inward until the two
     overlap by about 0.23 mm. The centreline moves inward by half the added
-    width, so the printed outer edge stays. A widened bead keeps its feed unless
-    that would push it over 16.80 mm^3/s, in which case the feed drops to the cap.
-    No inner wall is added and no gap fill is written. A 3-6 mm section is not
-    rewritten. Lines after the forefoot are not rewritten.
+    width, so the printed outer edge stays. At a corner the two offsets meet
+    through a short connector whose outer rim stays on the sliced edge. A
+    widened bead keeps its feed unless that would push it over 16.80 mm^3/s,
+    in which case the feed drops to the cap. No inner wall is added and no gap
+    fill is written. A 3-6 mm section is not rewritten. Lines after the
+    forefoot are not rewritten.
     """
     lines = text.splitlines(keepends=True)
     parsed = _parse_moves(lines, reset_type=False)
@@ -2528,49 +2685,160 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
     chains = _skin_chains(skin)
     planned: dict[int, tuple[float, float, float, float]] = {}
     slowed: set[int] = set()
+    # Extra corner moves, inserted after the named original line. Later inserts
+    # are applied from the bottom of the file so the line numbers stay put.
+    inserts: dict[int, list[str]] = {}
+    final_feed: dict[int, float] = {}
+
+    def _bead(x0: float, y0: float, x1: float, y1: float, width: float, feed: float, old_e: float) -> tuple[float, float, float]:
+        # E is sized from the coordinates that will be written. A shorter written
+        # segment would otherwise push the same E over the flow cap.
+        length = math.hypot(round(x1, 3) - round(x0, 3), round(y1, 3) - round(y0, 3))
+        if length < 1e-4:
+            return 1e-5, feed, length
+        e = round(_ff_e_for_width(width, length, area), 5)
+        if e < 1e-5:
+            e = 1e-5
+        # Full flow matching slows the forefoot enough to miss the +2% time cap.
+        # Hold the bead at 16.80 mm^3/s and never above the feed it already had.
+        feed = _ff_feed_for_e(e, length, feed, area)
+        return e, feed, length
+
+    def _note(width: float, feed: float, old_e: float, e: float, widened: bool) -> None:
+        stats["segments"] += 1
+        if widened:
+            stats["widened"] += 1
+        stats["added_e"] += e - old_e
+        q = _ff_flow(width, feed)
+        if widened and q > stats["max_q_widened"]:
+            stats["max_q_widened"] = q
+
     for chain in chains:
         if len(chain) < 2:
             continue
-        verts, dws = _plan_chain(chain)
+        plan = _plan_chain(chain)
+        starts = plan["starts"]
+        ends = plan["ends"]
+        dws = plan["dws"]
+        conn_w = plan["conn_w"]
         old_start = (chain[0]["x0"], chain[0]["y0"])
-        new_start = verts[0]
+        new_start = starts[0]
+        normals = plan["normals"]
+        lead_at = None
         if _shift_approach(lines, chain[0]["i"], old_start, new_start):
             stats["approaches"] += 1
         elif math.hypot(new_start[0] - old_start[0], new_start[1] - old_start[1]) > 1e-4:
-            # The layer-change station cannot follow. Pin the loop shut on the
-            # original point so the seam stays put and the loop still closes.
-            verts[0] = old_start
-            verts[-1] = old_start
+            # The layer-change station cannot follow. Keep the seam on the
+            # original point and step onto the shifted centre. The closing
+            # join has to land on that same station or the loop opens.
+            dx = chain[0]["x1"] - chain[0]["x0"]
+            dy = chain[0]["y1"] - chain[0]["y0"]
+            length = math.hypot(dx, dy) or 1.0
+            step = min(0.20, max(0.0, _end_margin(chain[0]["L"]) - 0.01), chain[0]["L"] * 0.45)
+            stepped = (new_start[0] + dx / length * step, new_start[1] + dy / length * step)
+            fit = _rim_fit(old_start, new_start, plan["ccw"], plan["edges"], normals[0])
+            lead_at = new_start if fit is not None else stepped
+            starts[0] = old_start
+            stats["pinned"] = stats.get("pinned", 0) + 1
+        nl = "\n" if lines[chain[0]["i"]].endswith("\n") else ""
         for i, seg in enumerate(chain):
-            x0, y0 = verts[i]
-            x1, y1 = verts[i + 1]
-            start_moved = math.hypot(x0 - seg["x0"], y0 - seg["y0"]) > 1e-4
-            end_moved = math.hypot(x1 - seg["x1"], y1 - seg["y1"]) > 1e-4
-            if dws[i] <= 1e-6 and not start_moved and not end_moved:
-                continue
-            length = math.hypot(x1 - x0, y1 - y0)
-            width = seg["w"] + dws[i]
-            if length < 0.02:
-                # A corner nick consumed by the miter. Keep the extrusion so the
-                # perimeter stays one loop, and deposit essentially nothing.
-                e = 1e-5
-                feed = seg["f"]
+            x1, y1 = ends[i]
+            start = starts[i]
+            if lead_at is not None and i == 0:
+                fit = _rim_fit(old_start, lead_at, plan["ccw"], plan["edges"], normals[0])
+                lead_w = fit[1] if fit is not None else seg["w"] + dws[i]
+                e, feed, _lead_len = _bead(old_start[0], old_start[1], lead_at[0], lead_at[1], lead_w, seg["f"], 0.0)
+                planned[seg["i"]] = (lead_at[0], lead_at[1], e, feed)
+                final_feed[seg["i"]] = feed
+                if abs(feed - seg["f"]) >= 1.0:
+                    slowed.add(seg["i"])
+                _note(lead_w, feed, 0.0, e, True)
+                width = seg["w"] + dws[i]
+                be, bf, _body = _bead(lead_at[0], lead_at[1], x1, y1, width, seg["f"], seg["e"])
+                inserts.setdefault(seg["i"], []).append(
+                    f"G1 X{x1:.3f} Y{y1:.3f} E{be:.5f} F{bf:.0f}{nl}"
+                )
+                _note(width, bf, seg["e"], be, dws[i] > 1e-6)
+                if abs(bf - seg["f"]) >= 1.0:
+                    slowed.add(seg["i"])
             else:
-                e = round(_ff_e_for_width(width, length, area), 5)
-                # Full flow matching slows the forefoot enough to miss the +2% time
-                # cap. Hold the widened bead at the 16.80 cap and never above the
-                # feed it already had.
-                feed = _ff_feed_for_e(e, length, seg["f"], area)
-            planned[seg["i"]] = (x1, y1, e, feed)
-            stats["segments"] += 1
-            if dws[i] > 1e-6:
-                stats["widened"] += 1
-            stats["added_e"] += e - seg["e"]
-            q = _ff_flow(width, feed)
-            if dws[i] > 1e-6 and q > stats["max_q_widened"]:
-                stats["max_q_widened"] = q
-            if abs(feed - seg["f"]) >= 1.0:
-                slowed.add(seg["i"])
+                start_moved = math.hypot(start[0] - seg["x0"], start[1] - seg["y0"]) > 1e-4
+                end_moved = math.hypot(x1 - seg["x1"], y1 - seg["y1"]) > 1e-4
+                width = seg["w"] + dws[i]
+                # The machine is at the previous join, which is this start only
+                # when that join exists. Otherwise the bead actually runs from
+                # the previous end to this end, and its width has to be fitted
+                # to that cut or the rim leaves the sliced edge.
+                cursor = starts[i]
+                if i:
+                    cursor = starts[i] if conn_w[i - 1] is not None else ends[i - 1]
+                cut = math.hypot(cursor[0] - start[0], cursor[1] - start[1]) > 0.02
+                cut_len = math.hypot(x1 - cursor[0], y1 - cursor[1])
+                fitted = None
+                fitted_end = (x1, y1)
+                keep = 0.0
+                if cut and 0.02 <= cut_len < 0.50:
+                    # Leave as much of this segment's own tail as the join allows.
+                    # The tail carries the sliced sample the join itself stops short of.
+                    dx = x1 - start[0]
+                    dy = y1 - start[1]
+                    seg_len = math.hypot(dx, dy) or 1.0
+                    ux, uy = dx / seg_len, dy / seg_len
+                    for trial in (0.08, 0.06, 0.04, 0.0):
+                        if trial >= seg_len - 0.02:
+                            continue
+                        end_pt = (x1 - ux * trial, y1 - uy * trial) if trial else (x1, y1)
+                        if math.hypot(end_pt[0] - cursor[0], end_pt[1] - cursor[1]) < 0.02:
+                            continue
+                        trial_fit = _rim_fit(cursor, end_pt, plan["ccw"], plan["edges"], normals[i])
+                        if trial_fit is not None:
+                            fitted = trial_fit
+                            fitted_end = end_pt
+                            keep = trial
+                            break
+                if fitted is not None:
+                    e, feed, _length = _bead(cursor[0], cursor[1], fitted_end[0], fitted_end[1], fitted[1], seg["f"], seg["e"])
+                    planned[seg["i"]] = (fitted_end[0], fitted_end[1], e, feed)
+                    final_feed[seg["i"]] = feed
+                    _note(fitted[1], feed, seg["e"], e, True)
+                    if abs(feed - seg["f"]) >= 1.0:
+                        slowed.add(seg["i"])
+                    if keep > 0.0:
+                        te, tf, _tl = _bead(fitted_end[0], fitted_end[1], x1, y1, width, seg["f"], 0.0)
+                        inserts.setdefault(seg["i"], []).append(
+                            f"G1 X{x1:.3f} Y{y1:.3f} E{te:.5f} F{tf:.0f}{nl}"
+                        )
+                        _note(width, tf, 0.0, te, dws[i] > 1e-6)
+                elif dws[i] <= 1e-6 and not start_moved and not end_moved:
+                    final_feed[seg["i"]] = seg["f"]
+                else:
+                    e, feed, _length = _bead(start[0], start[1], x1, y1, width, seg["f"], seg["e"])
+                    planned[seg["i"]] = (x1, y1, e, feed)
+                    final_feed[seg["i"]] = feed
+                    _note(width, feed, seg["e"], e, dws[i] > 1e-6)
+                    if abs(feed - seg["f"]) >= 1.0:
+                        slowed.add(seg["i"])
+            cw = conn_w[i]
+            if cw is None:
+                continue
+            j = (i + 1) % len(chain)
+            if not plan["closed"] and j == 0:
+                continue
+            cx, cy = starts[j]
+            anchor = ends[i]
+            if math.hypot(cx - anchor[0], cy - anchor[1]) < 1e-4:
+                continue
+            ref = _blend_normal(normals[i], normals[j])
+            fit = _rim_fit(anchor, (cx, cy), plan["ccw"], plan["edges"], ref)
+            if fit is None:
+                # The planned width belonged to these endpoints. A pin can move
+                # the seam after that, and the old width would miss the edge.
+                continue
+            ce, cf, _clen = _bead(anchor[0], anchor[1], cx, cy, fit[1], seg["f"], 0.0)
+            inserts.setdefault(seg["i"], []).append(
+                f"G1 X{cx:.3f} Y{cy:.3f} E{ce:.5f} F{cf:.0f}{nl}"
+            )
+            _note(fit[1], cf, 0.0, ce, True)
     if not planned:
         stats["reason"] = "nothing to bond"
         return text, stats
@@ -2583,6 +2851,22 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
             line = _ff_set_word(line, "F", feed, 0)
         lines[index] = line
     _restore_modal_feed(lines, used, slowed)
+    # A corner insert carries its own feed. The next original move keeps the
+    # feed it had before the insert, written on the line so the insert cannot
+    # change it.
+    for index in inserts:
+        j = index + 1
+        while j < len(lines) and not _is_g01(lines[j]):
+            if lines[j].startswith(";LAYER_CHANGE"):
+                break
+            j += 1
+        if j >= len(lines) or not _is_g01(lines[j]):
+            continue
+        keep = final_feed.get(j, used.get(j))
+        if keep:
+            lines[j] = _ff_set_word(lines[j], "F", keep, 0)
+    for index in sorted(inserts, reverse=True):
+        lines[index + 1:index + 1] = inserts[index]
     stats["applied"] = True
     stats["added_e"] = round(stats["added_e"], 3)
     stats["max_q_widened"] = round(stats["max_q_widened"], 3)
