@@ -1941,10 +1941,10 @@ FOREFOOT_LAYER_H = 0.46
 # few thousandths shorter than the length used to size E, and that alone was
 # enough to land a widened move at 17.10-17.12.
 FOREFOOT_FLOW_CAP = 16.80
-_FOREFOOT_THIN_NEED = 0.07
-_FOREFOOT_THICK_NEED = 0.17
+# Cura's thin single loop overlaps the two skins by about 0.23 mm. The 0.05 mm
+# gate is the floor, not the amount to copy. Thick sections are not widened.
+_FOREFOOT_THIN_NEED = 0.23
 _FOREFOOT_COS_MIN = 0.25
-_FOREFOOT_FLAT_DOT = 0.97  # about 14 degrees; Arachne toe steps are ~8 degrees
 _FF_WORD = re.compile(r"([XYZEFGMZ])([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)")
 _FF_DIAM = re.compile(r"^;\s*filament_diameter:\s*([0-9.]+)")
 _SKIN_TYPES = {"Outer wall", "Overhang wall"}
@@ -2237,99 +2237,6 @@ def _pair_of(beads: list[tuple[float, float, float, int]], kinds: list[str]):
     return plow, phigh, dlow, dhigh, dhigh - plow, dlow - phigh
 
 
-def _extend_inners(segs: list[dict]) -> int:
-    """Stretch an interior loop sideways so a thick end column is not two skins with a hollow between them."""
-    by_layer: dict[int, list[int]] = {}
-    for index, seg in enumerate(segs):
-        by_layer.setdefault(seg["layer"], []).append(index)
-    moved = 0
-    for layer, idxs in by_layer.items():
-        layer_segs = [segs[i] for i in idxs]
-        cols = _columns(layer_segs)
-        kinds = [s["kind"] for s in layer_segs]
-        # Map local index back to global.
-        local_of = {id(layer_segs[k]): idxs[k] for k in range(len(idxs))}
-        holes = []
-        for key, beads in cols.items():
-            # beads carry local indices into layer_segs
-            pair = _pair_of(beads, kinds)
-            if pair is None:
-                continue
-            _pl, _ph, _dl, _dh, thick, gap = pair
-            if not (3.0 <= thick <= 6.0):
-                continue
-            if any(kinds[b[3]] == "inner" for b in beads):
-                continue
-            holes.append((key[1] + 0.5) * 0.5)
-        if not holes:
-            continue
-        inner_idx = [i for i in idxs if segs[i]["kind"] == "inner"]
-        if not inner_idx:
-            continue
-        xs = []
-        for i in inner_idx:
-            xs.append(segs[i]["x0"])
-            xs.append(segs[i]["x1"])
-        inner_lo, inner_hi = min(xs), max(xs)
-        skin_steep = [segs[i] for i in idxs if segs[i]["kind"] == "skin" and segs[i]["cos"] < 0.35]
-        if not skin_steep:
-            continue
-        # Outer edge of each steep skin, signed so the right side is +X.
-        right_edge = None
-        left_edge = None
-        for seg in skin_steep:
-            mx = 0.5 * (seg["x0"] + seg["x1"])
-            # A right-hand wall sits at the high X. Its bead extends further out by w/2.
-            if mx >= inner_hi - 0.2:
-                edge = mx + seg["w"] * 0.5
-                right_edge = edge if right_edge is None else max(right_edge, edge)
-            if mx <= inner_lo + 0.2:
-                edge = mx - seg["w"] * 0.5
-                left_edge = edge if left_edge is None else min(left_edge, edge)
-        need_hi = max((x for x in holes if x > inner_hi - 0.05), default=None)
-        need_lo = min((x for x in holes if x < inner_lo + 0.05), default=None)
-
-        def _cap_right(target: float, width: float) -> float:
-            if right_edge is None:
-                return target
-            return min(target, right_edge - 0.08 - width * 0.5)
-
-        def _cap_left(target: float, width: float) -> float:
-            if left_edge is None:
-                return target
-            return max(target, left_edge + 0.08 + width * 0.5)
-
-        if need_hi is not None and need_hi > inner_hi + 0.02 and need_hi < inner_hi + 2.0:
-            width = max(segs[i]["w"] for i in inner_idx)
-            target = _cap_right(need_hi + 0.05, width)
-            if target > inner_hi + 0.02:
-                for i in inner_idx:
-                    if segs[i]["x0"] >= inner_hi - 0.25:
-                        segs[i]["x0"] = target
-                        moved += 1
-                    if segs[i]["x1"] >= inner_hi - 0.25:
-                        segs[i]["x1"] = target
-                        moved += 1
-                inner_hi = target
-        if need_lo is not None and need_lo < inner_lo - 0.02 and need_lo > inner_lo - 2.0:
-            width = max(segs[i]["w"] for i in inner_idx)
-            target = _cap_left(need_lo - 0.05, width)
-            if target < inner_lo - 0.02:
-                for i in inner_idx:
-                    if segs[i]["x0"] <= inner_lo + 0.25:
-                        segs[i]["x0"] = target
-                        moved += 1
-                    if segs[i]["x1"] <= inner_lo + 0.25:
-                        segs[i]["x1"] = target
-                        moved += 1
-    for seg in segs:
-        dx = seg["x1"] - seg["x0"]
-        dy = seg["y1"] - seg["y0"]
-        seg["L"] = math.hypot(dx, dy)
-        seg["cos"] = abs(dx) / seg["L"] if seg["L"] > 1e-9 else 0.0
-    return moved
-
-
 def _assign_needs(segs: list[dict]) -> None:
     for seg in segs:
         seg["need_lo"] = 0.0
@@ -2341,67 +2248,25 @@ def _assign_needs(segs: list[dict]) -> None:
         if pair is None:
             continue
         _pl, _ph, _dl, _dh, thick, gap = pair
-        if 2.0 <= thick < 3.0:
-            req = _FOREFOOT_THIN_NEED
-            zone = "thin"
-        elif 3.0 <= thick <= 6.0:
-            req = _FOREFOOT_THICK_NEED
-            zone = "thick"
-        else:
+        # Thick columns (3-6 mm) stay as sliced. Only a single-loop thin section
+        # is bonded, by widening the two skins toward each other.
+        if not (2.0 <= thick < 3.0):
             continue
-        if zone == "thin":
-            if gap + req <= 0:
-                continue
-            skins = [b for b in beads if kinds[b[3]] == "skin"]
-            if len(skins) < 2:
-                continue
-            half = (gap + req) / 2.0
-            lo = min(skins, key=lambda b: b[2])
-            hi = max(skins, key=lambda b: b[2])
-            segs[lo[3]]["need_hi"] = max(segs[lo[3]]["need_hi"], half)
-            segs[hi[3]]["need_lo"] = max(segs[hi[3]]["need_lo"], half)
+        if gap + _FOREFOOT_THIN_NEED <= 0:
             continue
-        ordered = sorted(beads, key=lambda b: b[2])
-        for low, high in zip(ordered, ordered[1:]):
-            overlap = min(low[1], high[1]) - max(low[0], high[0])
-            deficit = req - overlap
-            if deficit <= 0:
-                continue
-            lk, hk = kinds[low[3]], kinds[high[3]]
-            if lk == "skin" and hk != "skin":
-                segs[low[3]]["need_hi"] = max(segs[low[3]]["need_hi"], deficit)
-            elif hk == "skin" and lk != "skin":
-                segs[high[3]]["need_lo"] = max(segs[high[3]]["need_lo"], deficit)
-            else:
-                half = deficit / 2.0
-                segs[low[3]]["need_hi"] = max(segs[low[3]]["need_hi"], half)
-                segs[high[3]]["need_lo"] = max(segs[high[3]]["need_lo"], half)
-
-
-def _flat_runs(chain: list[dict], normals: list[tuple[float, float]]) -> list[list[int]]:
-    """Consecutive skin segments whose outward normals stay within a few degrees and face up or down."""
-    runs: list[list[int]] = []
-    cur: list[int] = []
-
-    def _flat(i: int) -> bool:
-        return abs(normals[i][1]) >= 0.80 and chain[i]["cos"] >= 0.80
-
-    for i in range(len(chain)):
-        if not _flat(i):
-            if cur:
-                runs.append(cur)
-                cur = []
+        skins = [b for b in beads if kinds[b[3]] == "skin"]
+        if len(skins) < 2:
             continue
-        if cur:
-            dot = normals[i][0] * normals[cur[-1]][0] + normals[i][1] * normals[cur[-1]][1]
-            same_side = normals[i][1] * normals[cur[-1]][1] > 0
-            if dot < _FOREFOOT_FLAT_DOT or not same_side:
-                runs.append(cur)
-                cur = []
-        cur.append(i)
-    if cur:
-        runs.append(cur)
-    return runs
+        # The plantar skin cannot rise more than 0.20 mm or an unmoved thick
+        # neighbour becomes the whole bottom. The dorsal skin takes the rest,
+        # so the two still overlap by 0.23 mm.
+        closure = gap + _FOREFOOT_THIN_NEED
+        lo = min(skins, key=lambda b: b[2])
+        hi = max(skins, key=lambda b: b[2])
+        lo_adv = min(closure / 2.0, 0.40)
+        hi_adv = closure - lo_adv
+        segs[lo[3]]["need_hi"] = max(segs[lo[3]]["need_hi"], lo_adv)
+        segs[hi[3]]["need_lo"] = max(segs[hi[3]]["need_lo"], hi_adv)
 
 
 def _segment_dir(seg: dict) -> tuple[float, float]:
@@ -2433,11 +2298,9 @@ def _offset_vertex(point: tuple[float, float], left: int, right: int, chain: lis
     dL, dR = _segment_dir(chain[left]), _segment_dir(chain[right])
     on_left = (point[0] - nL[0] * sL, point[1] - nL[1] * sL)
     on_right = (point[0] - nR[0] * sR, point[1] - nR[1] * sR)
-    averaged = (0.5 * (on_left[0] + on_right[0]), 0.5 * (on_left[1] + on_right[1]))
-    # Same inset on both sides: average the normal offsets. The two ideal corners
-    # are a few hundredths apart, and the average stays inside the edge tolerance.
+    # Same inset on both sides: the two ideal corners are a few hundredths apart.
     if abs(sL - sR) <= 0.02 or (sL <= 1e-9 and sR <= 1e-9):
-        return averaged
+        return (0.5 * (on_left[0] + on_right[0]), 0.5 * (on_left[1] + on_right[1]))
     hit = _line_hit(on_left, dL, on_right, dR)
     short = min(chain[left]["L"], chain[right]["L"])
     if hit is not None:
@@ -2454,12 +2317,12 @@ def _offset_vertex(point: tuple[float, float], left: int, right: int, chain: lis
 def _plan_chain(chain: list[dict]) -> tuple[list[tuple[float, float]], list[float]]:
     """New vertex positions and added width for one skin loop.
 
-    Every flat segment in a run grows by the same added width and its centreline
-    is the original segment shifted along its outward normal by half of that.
-    Corners are the intersection of the two centrelines, so a side wall stays on
-    its own line and only gets longer or shorter. A corner nick that would flip
-    is collapsed. The seam shift stays inside the 0.45 mm station window, and a
-    long side wall caps the shift at its first outer-edge sample.
+    Each segment grows by its own added width. The centreline is the original
+    segment shifted along its outward normal by half of that, so a thick
+    neighbour on the same wall is not widened to the thin segment's inset.
+    Corners are the intersection of the two centrelines. A corner nick that
+    would flip is collapsed. The seam shift stays inside the 0.45 mm station
+    window, and a short side wall caps only the segment that meets it.
     """
     n = len(chain)
     normals = _chain_normals(chain)
@@ -2473,27 +2336,23 @@ def _plan_chain(chain: list[dict]) -> tuple[list[tuple[float, float]], list[floa
         else:
             advances.append(max(seg["need_lo"], seg["need_hi"]))
     run_s = [0.0] * n
-    runs = _flat_runs(chain, normals)
-    for run in runs:
-        need = max(advances[i] for i in run)
-        s = need / 2.0
-        ends = []
-        for i in run:
-            prev_i = (i - 1) % n if closed or i > 0 else None
-            next_i = (i + 1) % n if closed or i + 1 < n else None
-            for j in (prev_i, next_i):
-                if j is None or j in run:
-                    continue
-                ends.append(j)
-        for j in ends:
-            # A corner nick shorter than a sample step cannot set the shift for the whole flat.
+    for i in range(n):
+        s = advances[i] / 2.0
+        neighbors = []
+        if closed or i > 0:
+            neighbors.append((i - 1) % n)
+        if closed or i + 1 < n:
+            neighbors.append((i + 1) % n)
+        for j in neighbors:
             if chain[j]["L"] < 0.6 or chain[j]["cos"] >= 0.45:
                 continue
             s = min(s, _sample_inset(chain[j]["L"]))
-        if 0 in run:
+        if i == 0:
             s = min(s, 0.45)
-        for i in run:
-            run_s[i] = s
+        # Belt-facing centreline shift stays inside the 0.25 mm bottom window.
+        if normals[i][1] < -0.5:
+            s = min(s, 0.20)
+        run_s[i] = s
     # A short corner left at inset 0 stays below the raised plantar wall, and the
     # seam check then treats that corner as the whole bottom. Give the corner
     # the neighbouring wall's inset. The corner still moves on its own normal.
@@ -2619,13 +2478,14 @@ def _restore_modal_feed(lines: list[str], used: dict[int, float], slowed: set[in
 
 
 def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, dict]:
-    """Bond forefoot skins to each other and to the interior without moving the outer edge.
+    """Bond a thin single-loop forefoot the way Cura does, and leave thick sections alone.
 
-    Thin columns (section 2-3 mm) get at least 0.05 mm of skin overlap. Thick
-    columns (3-6 mm) get a stack overlapped by at least 0.15 mm. Widened moves
-    are slowed so their volumetric flow stays at or below 16.80 mm^3/s. Moves
-    that are not widened keep their feed. Lines after the forefoot are not
-    rewritten.
+    A 2-3 mm section is one skin loop. Each skin grows inward until the two
+    overlap by about 0.23 mm. The centreline moves inward by half the added
+    width, so the printed outer edge stays. A widened bead keeps its feed unless
+    that would push it over 16.80 mm^3/s, in which case the feed drops to the cap.
+    No inner wall is added and no gap fill is written. A 3-6 mm section is not
+    rewritten. Lines after the forefoot are not rewritten.
     """
     lines = text.splitlines(keepends=True)
     parsed = _parse_moves(lines, reset_type=False)
@@ -2639,7 +2499,6 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
         "segments": 0,
         "added_e": 0.0,
         "approaches": 0,
-        "extended": 0,
         "max_q_widened": 0.0,
     }
     if not last_layer or last_layer < 1:
@@ -2664,7 +2523,6 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
     if not segs:
         stats["reason"] = "no forefoot extrusion"
         return text, stats
-    stats["extended"] = _extend_inners(segs)
     _assign_needs(segs)
     skin = [s for s in segs if s["kind"] == "skin"]
     chains = _skin_chains(skin)
@@ -2684,8 +2542,13 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
             verts[0] = old_start
             verts[-1] = old_start
         for i, seg in enumerate(chain):
+            x0, y0 = verts[i]
             x1, y1 = verts[i + 1]
-            length = math.hypot(x1 - verts[i][0], y1 - verts[i][1])
+            start_moved = math.hypot(x0 - seg["x0"], y0 - seg["y0"]) > 1e-4
+            end_moved = math.hypot(x1 - seg["x1"], y1 - seg["y1"]) > 1e-4
+            if dws[i] <= 1e-6 and not start_moved and not end_moved:
+                continue
+            length = math.hypot(x1 - x0, y1 - y0)
             width = seg["w"] + dws[i]
             if length < 0.02:
                 # A corner nick consumed by the miter. Keep the extrusion so the
@@ -2694,53 +2557,21 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
                 feed = seg["f"]
             else:
                 e = round(_ff_e_for_width(width, length, area), 5)
+                # Full flow matching slows the forefoot enough to miss the +2% time
+                # cap. Hold the widened bead at the 16.80 cap and never above the
+                # feed it already had.
                 feed = _ff_feed_for_e(e, length, seg["f"], area)
             planned[seg["i"]] = (x1, y1, e, feed)
             stats["segments"] += 1
-            if dws[i] > 1e-6 or stats["extended"]:
-                if dws[i] > 1e-6:
-                    stats["widened"] += 1
-                stats["added_e"] += e - seg["e"]
+            if dws[i] > 1e-6:
+                stats["widened"] += 1
+            stats["added_e"] += e - seg["e"]
             q = _ff_flow(width, feed)
-            if q > stats["max_q_widened"]:
+            if dws[i] > 1e-6 and q > stats["max_q_widened"]:
                 stats["max_q_widened"] = q
             if abs(feed - seg["f"]) >= 1.0:
                 slowed.add(seg["i"])
-    for chain in _skin_chains([s for s in segs if s["kind"] == "inner"]):
-        if math.hypot(chain[0]["x0"] - chain[0]["ox0"], chain[0]["y0"] - chain[0]["oy0"]) > 1e-4:
-            if _shift_approach(lines, chain[0]["i"], (chain[0]["ox0"], chain[0]["oy0"]), (chain[0]["x0"], chain[0]["y0"])):
-                stats["approaches"] += 1
-    for seg in segs:
-        if seg["kind"] == "skin" or seg["i"] in planned:
-            continue
-        dw = 2.0 * max(seg["need_lo"], seg["need_hi"])
-        x1, y1 = seg["x1"], seg["y1"]
-        length = math.hypot(x1 - seg["x0"], y1 - seg["y0"])
-        if length < 1e-6:
-            continue
-        width = seg["w"] + dw
-        # Extension may have changed the length. Rebuild E from the width either way.
-        e = round(_ff_e_for_width(width, length, area), 5)
-        feed = _ff_feed_for_e(e, length, seg["f"], area)
-        moved_xy = (
-            abs(seg["x0"] - seg["ox0"]) > 1e-4
-            or abs(seg["y0"] - seg["oy0"]) > 1e-4
-            or abs(x1 - seg["ox1"]) > 1e-4
-            or abs(y1 - seg["oy1"]) > 1e-4
-        )
-        if dw <= 1e-6 and not moved_xy and abs(e - seg["e"]) <= 1e-6:
-            continue
-        planned[seg["i"]] = (x1, y1, e, feed)
-        stats["segments"] += 1
-        if dw > 1e-6:
-            stats["widened"] += 1
-        stats["added_e"] += e - seg["e"]
-        q = _ff_flow(width, feed)
-        if q > stats["max_q_widened"]:
-            stats["max_q_widened"] = q
-        if abs(feed - seg["f"]) >= 1.0:
-            slowed.add(seg["i"])
-    if not planned and stats["extended"] == 0:
+    if not planned:
         stats["reason"] = "nothing to bond"
         return text, stats
     for index, (x1, y1, e, feed) in planned.items():

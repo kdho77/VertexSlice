@@ -373,9 +373,9 @@ class ForefootBondTests(unittest.TestCase):
         for move in bottoms:
             self.assertLess(abs(_bottom_outer(*move) - outer), 0.02)
 
-    def test_disconnected_interior_stack_bonds(self) -> None:
-        # Two skins and two interior beads with air between them. The skins shift
-        # inward, the interior widens about its centre, and the outer edge stays.
+    def test_thick_section_is_left_as_sliced(self) -> None:
+        # A 4 mm section with an interior stack is outside the thin single-loop
+        # bond. Skins and inner beads stay on the sliced path.
         outer_pts = [
             (90.0, 0.50, 1.146),
             (130.0, 0.50, 1.146),
@@ -404,32 +404,9 @@ class ForefootBondTests(unittest.TestCase):
         text = _program([body])
         before = _extrusions(text)
         out, stats = forefoot_cura_bond(text, last_layer=1)
-        self.assertTrue(stats["applied"])
-        after = _extrusions(out)
-        self.assertGreaterEqual(len(after), len(before))
-        # Bottom outer edge of the long skin. Column pieces stay on that edge.
-        skin = [
-            m for m in after
-            if abs(m[1] - m[3]) < 0.02 and m[2] - m[0] > 0.4 and m[1] < 1.2
-        ]
-        self.assertGreaterEqual(len(skin), 1)
-        self.assertGreater(sum(m[2] - m[0] for m in skin), 20)
-        for move in skin:
-            self.assertLess(abs(_bottom_outer(*move) - (0.50 - 1.146 * 0.5)), 0.02)
-        # A middle column: the horizontal beads overlap their neighbours.
-        def _covers(move: tuple[float, float, float, float, float]) -> bool:
-            lo, hi = sorted((move[0], move[2]))
-            return lo - 1e-6 <= 110.25 <= hi + 1e-6 and abs(move[3] - move[1]) < 0.05
-
-        mids = sorted([m for m in after if _covers(m)], key=lambda m: m[1])
-        self.assertGreaterEqual(len(mids), 4)
-        edges = []
-        for m in mids:
-            length = abs(m[2] - m[0])
-            width = (m[4] / length) * _FILAMENT_AREA / 0.46 + 0.46 * (1.0 - math.pi / 4.0)
-            edges.append((m[1] - width * 0.5, m[1] + width * 0.5))
-        for lo, hi in zip(edges, edges[1:]):
-            self.assertGreater(lo[1] - hi[0], 0.15)
+        self.assertFalse(stats["applied"])
+        self.assertEqual(stats["widened"], 0)
+        self.assertEqual(_extrusions(out), before)
 
     def test_short_notch_is_kept_and_its_outer_edge_stays(self) -> None:
         # A 0.16 mm toe notch between the plantar wall and the side wall. Widening
