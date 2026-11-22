@@ -1952,6 +1952,12 @@ _FOREFOOT_THICK_PRESS = 0.23
 _FOREFOOT_THICK_LO = 2.95
 _FOREFOOT_THICK_HI = 7.5
 _FOREFOOT_COS_MIN = 0.25
+# The over-6 mm band is sparse infill, not the solid 3-6 mm bead. A 1.05 mm
+# line at 26% is one line every 4.04 mm, which is main's gyroid density.
+# The line is pressed the same 0.23 mm into the outer wall as the thick bead.
+_OPEN_WIDTH = 1.05
+_OPEN_DENSITY = 0.26
+_OPEN_PERIOD = 9.0
 _FF_WORD = re.compile(r"([XYZEFGMZ])([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)")
 _FF_DIAM = re.compile(r"^;\s*filament_diameter:\s*([0-9.]+)")
 _SKIN_TYPES = {"Outer wall", "Overhang wall"}
@@ -2831,15 +2837,206 @@ def _thick_position_needed(lines: list[str], last_index: int) -> bool:
     return False
 
 
+def _open_lane_count(bounds: tuple[float, float, float, float]) -> int:
+    """How many ~1 mm lines fit the open gap at about 26% without filling it solid."""
+    flo, fhi = _thick_span(bounds)
+    room = fhi - flo - _OPEN_WIDTH
+    if room <= 0.15:
+        return 1
+    spacing = _OPEN_WIDTH / _OPEN_DENSITY
+    return max(1, int(math.ceil(room / spacing - 1e-9)))
+
+
+def _open_y_at(bounds: tuple[float, float, float, float], x: float, x0: float, span: float, lane: int, n: int) -> float:
+    """Centreline pressed 0.23 mm into the skins. One line waves from wall to wall."""
+    flo, fhi = _thick_span(bounds)
+    lo = flo + _OPEN_WIDTH * 0.5
+    hi = fhi - _OPEN_WIDTH * 0.5
+    if hi < lo + 0.02 or n < 2:
+        if hi < lo + 0.02:
+            return 0.5 * (flo + fhi)
+        mid = 0.5 * (lo + hi)
+        amp = 0.5 * (hi - lo)
+        # A short run stays on the plantar wall. Standing the wave up would
+        # fill that column and can miss the 0.5 mm column test.
+        if span < _OPEN_PERIOD * 0.5:
+            return lo
+        phase = -math.pi / 2.0 + 2.0 * math.pi * (x - x0) / _OPEN_PERIOD
+        return mid + amp * math.sin(phase)
+    t = lane / (n - 1)
+    return lo + t * (hi - lo)
+
+
+def _open_run_lines(
+    run: list[int],
+    hollow: dict,
+    layer: int,
+    area: float,
+    nl: str,
+    cx: float,
+    cy: float,
+) -> tuple[list[str], float, float]:
+    """Sparse lines across one contiguous hollow. Travels stay inside the gap."""
+    n = _open_lane_count(hollow[(layer, run[0])])
+    increasing = len(run) < 2 or run[1] > run[0]
+    samples: list[tuple[float, int]] = []
+    for i, binn in enumerate(run):
+        near = binn * 0.5 if increasing else (binn + 1) * 0.5
+        far = (binn + 1) * 0.5 if increasing else binn * 0.5
+        if i == 0:
+            samples.append((near, binn))
+        samples.append((far, binn))
+    xs = [x for x, _binn in samples]
+    x0 = min(xs)
+    span = max(xs) - x0
+    lanes: list[list[tuple[float, float]]] = []
+    for lane in range(n):
+        seq = [(x, _open_y_at(hollow[(layer, binn)], x, x0, span, lane, n)) for x, binn in samples]
+        if lane % 2 == 1:
+            seq.reverse()
+        lanes.append(seq)
+    out: list[str] = []
+    sx, sy = lanes[0][0]
+    if math.hypot(sx - cx, sy - cy) > 1e-4:
+        # A travel, not an extrusion: a short bead here would sit on the outer wall.
+        out.append(f"G1 X{sx:.3f} Y{sy:.3f} F30000{nl}")
+        cx, cy = sx, sy
+    for lane, seq in enumerate(lanes):
+        if lane:
+            # Travel inside the gap. Extruding the turn would fill that column solid.
+            tx, ty = seq[0]
+            if math.hypot(tx - cx, ty - cy) > 1e-4:
+                out.append(f"G1 X{tx:.3f} Y{ty:.3f} F30000{nl}")
+                cx, cy = tx, ty
+        for x, y in seq:
+            line, cx, cy = _thick_ex(x, y, cx, cy, _OPEN_WIDTH, area, nl)
+            if line:
+                out.append(line)
+    return out, cx, cy
+
+
+def _open_band(text: str, last: int) -> tuple[str, int]:
+    """Fill an enclosed forefoot column thicker than 6 mm that has no extrusion in the gap.
+
+    The 3-6 mm pass drops a whole inner wall once any part of it is in that band,
+    and the part of the wall that was over 6 mm is left empty. Cura fills that
+    space with sparse infill about 1 mm wide. The lines are pressed about 0.23 mm
+    into the outer wall and are not a solid span of the gap. A file with no such
+    column is returned unchanged.
+    """
+    if last < 1:
+        return text, 0
+    lines = text.splitlines(keepends=True)
+    parsed = _parse_moves(lines, reset_type=False)
+    if parsed["area"] <= 0:
+        return text, 0
+    segs = parsed["segs"]
+    area = parsed["area"]
+    cols = _columns(segs)
+    kinds = [seg["kind"] for seg in segs]
+    hollow: dict[tuple[int, int], tuple[float, float, float, float]] = {}
+    for key, beads in cols.items():
+        if not (1 <= key[0] <= last):
+            continue
+        pair = _pair_of(beads, kinds)
+        if pair is None:
+            continue
+        plow, phigh, dlow, dhigh, thick, gap = pair
+        if thick <= 6.0 or gap <= 0.0:
+            continue
+        covered = False
+        for lo, hi, _yc, idx in beads:
+            if kinds[idx] == "skin":
+                continue
+            if min(hi, dlow) - max(lo, phigh) > 0.02:
+                covered = True
+                break
+        if not covered:
+            hollow[key] = (plow, phigh, dlow, dhigh)
+    if not hollow:
+        return text, 0
+    by_layer: dict[int, dict[int, list[int]]] = {}
+    for layer, binn in hollow:
+        n = _open_lane_count(hollow[(layer, binn)])
+        by_layer.setdefault(layer, {}).setdefault(n, []).append(binn)
+    inserts: dict[int, list[str]] = {}
+    changes = [i for i, line in enumerate(lines) if line.startswith(";LAYER_CHANGE")]
+    for layer, groups in by_layer.items():
+        at = changes[layer + 1] if layer + 1 < len(changes) else len(lines)
+        nl = "\n" if at >= len(lines) or lines[at].endswith("\n") else ""
+        px, py, typ, modal = 0.0, 0.0, "", 0.0
+        for i, line in enumerate(lines):
+            if i >= at:
+                break
+            raw = line.strip()
+            if raw.startswith(";TYPE:"):
+                typ = raw[6:].strip()
+                continue
+            if not _is_g01(line):
+                continue
+            words = _ff_words(line)
+            if "F" in words:
+                modal = float(words["F"])
+            if "X" in words:
+                px = float(words["X"])
+            if "Y" in words:
+                py = float(words["Y"])
+        block = [f";TYPE:Sparse infill{nl}"]
+        cx, cy = px, py
+        # Wide and narrow stretches are separate, so a 14 mm gap gets several
+        # lines and a 4 mm gap stays one line. Start at the end nearest the nozzle.
+        pending: list[list[int]] = []
+        for bins in groups.values():
+            pending.extend(_thick_runs(sorted(bins), True))
+        while pending:
+            run = min(pending, key=lambda run: min(abs(cx - run[0] * 0.5), abs(cx - (run[-1] + 1) * 0.5)))
+            pending.remove(run)
+            left = run[0] * 0.5
+            right = (run[-1] + 1) * 0.5
+            ordered = run if abs(cx - left) <= abs(cx - right) else list(reversed(run))
+            part, cx, cy = _open_run_lines(ordered, hollow, layer, area, nl, cx, cy)
+            block.extend(part)
+        if typ:
+            block.append(f";TYPE:{typ}{nl}")
+        # Put the feed back without rewriting the next layer's line.
+        if modal > 0:
+            block.append(f"G1 F{int(modal)}{nl}")
+        inserts[at] = block
+    out: list[str] = []
+    for index, line in enumerate(lines):
+        if index in inserts:
+            out.extend(inserts[index])
+        out.append(line)
+    if len(lines) in inserts:
+        out.extend(inserts[len(lines)])
+    return "".join(out), len(hollow)
+
+
+def _finish_open(base: str, original: str, stats: dict) -> tuple[str, dict]:
+    """Add the over-6 mm sparse band, then walk any new wall-crossing travel inside."""
+    last = stats.get("last_layer") or 0
+    banded, nopen = _open_band(base, int(last))
+    stats["open_bins"] = nopen
+    if nopen == 0 and base == original:
+        return original, stats
+    routed = clear_perimeter_crossings(banded)
+    stats["thick_routes"] = 0 if routed == banded else routed.count("\n") - banded.count("\n")
+    if routed != original:
+        stats["applied"] = True
+    return routed, stats
+
+
 def _thick_cura_fill(text: str, stats: dict) -> tuple[str, dict]:
     """Replace the inner wall in a 3-6 mm forefoot with one fill bead.
 
     Cura's thick toe is one outer wall per side and fill pressed about 0.23 mm
     into that wall. The outer wall is not moved. A 2-3 mm section is not
     touched. The bead is sized so its envelope meets both skins, and its feed
-    is held at 16.80 mm^3/s. The fill ends at the toe tip, and the seam travel
-    that leaves from there can cut the outer wall. That travel is walked
-    inside the part. A file with no such travel is returned unchanged.
+    is held at 16.80 mm^3/s. A column thicker than 6 mm that this pass leaves
+    empty gets sparse infill, about 1 mm wide at about 26%, pressed the same
+    0.23 mm into the outer wall. The seam travel that leaves the toe can cut
+    the outer wall. That travel is walked inside the part. A file with no
+    such travel is returned unchanged.
     """
     lines = text.splitlines(keepends=True)
     parsed = _parse_moves(lines, reset_type=False)
@@ -2874,7 +3071,7 @@ def _thick_cura_fill(text: str, stats: dict) -> tuple[str, dict]:
         failing[key] = (plow, phigh, dlow, dhigh)
     stats["thick_bins"] = len(failing)
     if not failing:
-        return text, stats
+        return _finish_open(text, text, stats)
     fail_bins: dict[int, set[int]] = {}
     for layer, binn in failing:
         fail_bins.setdefault(layer, set()).add(binn)
@@ -3006,7 +3203,7 @@ def _thick_cura_fill(text: str, stats: dict) -> tuple[str, dict]:
             block.append(f";TYPE:{typ}{nl}")
         inserts[at] = block
     if not repl and not drop and not inserts:
-        return text, stats
+        return _finish_open(text, text, stats)
     out: list[str] = []
     modal = 0.0
     restore: float | None = None
@@ -3037,12 +3234,9 @@ def _thick_cura_fill(text: str, stats: dict) -> tuple[str, dict]:
     stats["thick_chains"] = replaced
     stats["thick_orphans"] = sum(len(bins) for bins in uncovered.values())
     joined = "".join(out)
-    # Same inside-wall walk the seam pass uses. It rewrites a travel only when
-    # that travel cuts the wall and neither end is already on the wall, and it
-    # keeps the travel's own end point, Z, and comment.
-    routed = clear_perimeter_crossings(joined)
-    stats["thick_routes"] = 0 if routed == joined else routed.count("\n") - joined.count("\n")
-    return routed, stats
+    # The over-6 mm band is added to this text, then a travel that cuts the
+    # wall is walked inside. The walk keeps that travel's end point, Z, and comment.
+    return _finish_open(joined, text, stats)
 
 
 def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, dict]:
@@ -3053,9 +3247,11 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
     width, so the printed outer edge stays. At a corner the two offsets meet
     through a short connector whose outer rim stays on the sliced edge. A
     widened bead keeps its feed unless that would push it over 16.80 mm^3/s,
-    in which case the feed drops to the cap. A 3-6 mm section loses its inner
+    in which case the feed drops to the cap.     A 3-6 mm section loses its inner
     wall and gains one fill bead pressed about 0.23 mm into each outer wall.
-    Lines after the forefoot are not rewritten.
+    A section over 6 mm that loses that wall gets sparse infill, about 1 mm
+    wide, pressed the same 0.23 mm into the outer wall. Lines after the
+    forefoot are not rewritten.
     """
     lines = text.splitlines(keepends=True)
     parsed = _parse_moves(lines, reset_type=False)

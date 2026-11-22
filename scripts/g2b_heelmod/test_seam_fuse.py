@@ -26,8 +26,11 @@ from postprocess_g2b import (  # noqa: E402
     WIPE_FRAC,
     WIPE_MM,
     _belt_split,
+    _columns,
     _crossing,
     _ff_e_for_width,
+    _pair_of,
+    _parse_moves,
     forefoot_cura_bond,
     forefoot_type_audit,
     seam,
@@ -323,6 +326,39 @@ def _extrusions(text: str) -> list[tuple[float, float, float, float, float]]:
     return out
 
 
+def _open_gaps(text: str, last: int) -> list[tuple[tuple[int, int], float, float, float]]:
+    """Enclosed columns thicker than 6 mm with a positive gap.
+
+    Each row is (key, gap, millimetres of non-skin extrusion in the gap,
+    deepest press of that extrusion into either skin).
+    """
+    lines = text.splitlines(keepends=True)
+    parsed = _parse_moves(lines, reset_type=False)
+    cols = _columns(parsed["segs"])
+    kinds = [seg["kind"] for seg in parsed["segs"]]
+    rows = []
+    for key, beads in cols.items():
+        if not (1 <= key[0] <= last):
+            continue
+        pair = _pair_of(beads, kinds)
+        if pair is None:
+            continue
+        plow, phigh, dlow, dhigh, thick, gap = pair
+        if thick <= 6.0 or gap <= 0.0:
+            continue
+        covered = 0.0
+        reach = 0.0
+        for lo, hi, _yc, idx in beads:
+            if kinds[idx] == "skin":
+                continue
+            overlap = min(hi, dlow) - max(lo, phigh)
+            if overlap > covered:
+                covered = overlap
+            reach = max(reach, phigh - lo, hi - dlow)
+        rows.append((key, gap, covered, reach))
+    return rows
+
+
 def _bottom_outer(x0, y0, x1, y1, e) -> float:
     length = math.hypot(x1 - x0, y1 - y0)
     width = (e / length) * _FILAMENT_AREA / 0.46 + 0.46 * (1.0 - math.pi / 4.0)
@@ -514,6 +550,47 @@ class ForefootBondTests(unittest.TestCase):
             ny = float(words["Y"]) if "Y" in words else sy
             self.assertFalse(_crossing(grid, sx, sy, nx, ny), line)
             sx, sy = nx, ny
+
+    def test_over_six_millimetre_column_is_not_left_empty(self) -> None:
+        # The thick pass drops a whole inner wall when any of it sits in a
+        # 3-6 mm column. The part of that wall over 6 mm used to print as two
+        # outer walls and nothing between them. Every such column has to keep
+        # some extrusion in the open gap, and that extrusion stays a ~1 mm
+        # line rather than a solid fill of the gap.
+        outer = [
+            (80.0, 0.50, 1.146),
+            (160.0, 0.50, 1.146),
+            (160.0, 4.30, 1.146),
+            (120.0, 4.30, 1.146),
+            (120.0, 5.646, 1.146),
+            (80.0, 5.646, 1.146),
+        ]
+        inner = [(85.0, 2.20, 0.80), (155.0, 2.20, 0.80), (155.0, 2.60, 0.80), (85.0, 2.60, 0.80)]
+        body = [
+            ";LAYER_CHANGE",
+            ";Z:0.46000",
+            _g1(80.0, 0.50, f=12720) + " Z0.460",
+            ";TYPE:Outer wall",
+            "G1 F1560",
+        ]
+
+        def emit(points):
+            nxt = points[1:] + [points[0]]
+            for (x0, y0, _w0), (x1, y1, w1) in zip(points, nxt):
+                length = math.hypot(x1 - x0, y1 - y0)
+                body.append(_g1(x1, y1, _forefoot_e(w1, length)))
+
+        emit(outer)
+        body += [";TYPE:Inner wall", _g1(85.0, 2.20, f=12720)]
+        emit(inner)
+        text = _program([body])
+        out, _stats = forefoot_cura_bond(text, last_layer=1)
+        hollow = _open_gaps(out, 1)
+        self.assertGreater(len(hollow), 10)
+        for _key, gap, covered, reach in hollow:
+            self.assertGreater(covered, 0.02, "over-6 mm column has no extrusion between the walls")
+            self.assertLess(covered, gap * 0.60, "over-6 mm column was filled solid")
+        self.assertTrue(any(reach >= 0.15 for _key, _gap, _covered, reach in hollow))
 
     def test_corner_join_keeps_both_outer_edges(self) -> None:
         # A thin loop: long plantar wall, vertical side, long dorsal wall.
