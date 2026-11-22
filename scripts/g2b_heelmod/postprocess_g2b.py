@@ -1942,8 +1942,15 @@ FOREFOOT_LAYER_H = 0.46
 # enough to land a widened move at 17.10-17.12.
 FOREFOOT_FLOW_CAP = 16.80
 # Cura's thin single loop overlaps the two skins by about 0.23 mm. The 0.05 mm
-# gate is the floor, not the amount to copy. Thick sections are not widened.
+# gate is the floor, not the amount to copy. A thick section keeps that same
+# 0.23 mm as the depth the fill is pressed into the single outer wall.
 _FOREFOOT_THIN_NEED = 0.23
+_FOREFOOT_THICK_PRESS = 0.23
+# 2.95 catches the three columns the thin bond pushed just under 3 mm. 7.5 catches
+# columns the gate still grades as thick because the baseline section is 3-6 mm
+# while a steep bead makes the candidate envelope read a little over 6.
+_FOREFOOT_THICK_LO = 2.95
+_FOREFOOT_THICK_HI = 7.5
 _FOREFOOT_COS_MIN = 0.25
 _FF_WORD = re.compile(r"([XYZEFGMZ])([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)")
 _FF_DIAM = re.compile(r"^;\s*filament_diameter:\s*([0-9.]+)")
@@ -2632,17 +2639,415 @@ def _restore_modal_feed(lines: list[str], used: dict[int, float], slowed: set[in
             modal = incoming
 
 
+def _thick_nearest(beads: list[tuple[float, float, float, int]], skin_lo: float, skin_hi: float, above: bool) -> float | None:
+    """Overlap of the nearest bead on one side of a skin. Same rule as the frozen gate."""
+    best = None
+    mid = (skin_lo + skin_hi) * 0.5
+    for lo, hi, yc, _idx in beads:
+        if abs(lo - skin_lo) < 1e-9 and abs(hi - skin_hi) < 1e-9:
+            continue
+        if above and yc <= mid:
+            continue
+        if not above and yc >= mid:
+            continue
+        ov = min(skin_hi, hi) - max(skin_lo, lo)
+        if best is None or ov > best:
+            best = ov
+    return best
+
+
+def _thick_stack(beads: list[tuple[float, float, float, int]]) -> bool:
+    ivs = sorted((b[0], b[1]) for b in beads)
+    if not ivs:
+        return False
+    comps = [[ivs[0][0], ivs[0][1]]]
+    for lo, hi in ivs[1:]:
+        placed = False
+        for comp in comps:
+            if min(comp[1], hi) - max(comp[0], lo) >= 0.15 - 1e-12:
+                comp[0] = min(comp[0], lo)
+                comp[1] = max(comp[1], hi)
+                placed = True
+                break
+        if not placed:
+            comps.append([lo, hi])
+    changed = True
+    while changed and len(comps) > 1:
+        changed = False
+        nxt: list[list[float]] = []
+        for comp in comps:
+            hit = None
+            for other in nxt:
+                if min(other[1], comp[1]) - max(other[0], comp[0]) >= 0.15 - 1e-12:
+                    hit = other
+                    break
+            if hit is None:
+                nxt.append(comp)
+            else:
+                hit[0] = min(hit[0], comp[0])
+                hit[1] = max(hit[1], comp[1])
+                changed = True
+        comps = nxt
+    return len(comps) == 1
+
+
+def _thick_bonded(beads: list[tuple[float, float, float, int]], plow: float, phigh: float, dlow: float, dhigh: float) -> bool:
+    belt = _thick_nearest(beads, plow, phigh, True)
+    dorsal = _thick_nearest(beads, dlow, dhigh, False)
+    if belt is None or belt < 0.15 - 1e-9 or dorsal is None or dorsal < 0.15 - 1e-9:
+        return False
+    return _thick_stack(beads)
+
+
+def _thick_span(bounds: tuple[float, float, float, float]) -> tuple[float, float]:
+    """Y interval of a fill bead pressed 0.23 mm into each outer skin, kept inside the outer rim."""
+    plow, phigh, dlow, dhigh = bounds
+    flo = max(phigh - _FOREFOOT_THICK_PRESS, plow + 0.02)
+    fhi = min(dlow + _FOREFOOT_THICK_PRESS, dhigh - 0.02)
+    if fhi < flo + 0.16:
+        mid = 0.5 * (max(phigh, plow) + min(dlow, dhigh))
+        flo, fhi = mid - 0.10, mid + 0.10
+    return flo, fhi
+
+
+def _thick_ex(x: float, y: float, cx: float, cy: float, width: float, area: float, nl: str) -> tuple[str | None, float, float]:
+    length = math.hypot(round(x, 3) - round(cx, 3), round(y, 3) - round(cy, 3))
+    if length < 1e-4:
+        return None, cx, cy
+    e = round(_ff_e_for_width(width, length, area), 5)
+    if e < 1e-5:
+        e = 1e-5
+    feed = _ff_feed_for_e(e, length, 100000.0, area)
+    return f"G1 X{x:.3f} Y{y:.3f} E{e:.5f} F{int(feed)}{nl}", x, y
+
+
+def _thick_link(x: float, y: float, cx: float, cy: float, area: float, nl: str) -> tuple[str | None, float, float]:
+    """Short joins are narrow extrusions. A long join is a travel, so it is not paid as plastic."""
+    dist = math.hypot(x - cx, y - cy)
+    if dist < 1e-4:
+        return None, cx, cy
+    if dist > 3.0:
+        return f"G1 X{x:.3f} Y{y:.3f} F30000{nl}", x, y
+    return _thick_ex(x, y, cx, cy, 0.50, area, nl)
+
+
+def _thick_runs(bins: list[int], increasing: bool) -> list[list[int]]:
+    ordered = sorted(bins)
+    runs: list[list[int]] = []
+    cur: list[int] = []
+    for binn in ordered:
+        if cur and binn != cur[-1] + 1:
+            runs.append(cur)
+            cur = []
+        cur.append(binn)
+    if cur:
+        runs.append(cur)
+    if not increasing:
+        runs = [list(reversed(run)) for run in reversed(runs)]
+    return runs
+
+
+def _thick_run_lines(
+    run: list[int],
+    failing: dict,
+    layer: int,
+    area: float,
+    nl: str,
+    cx: float,
+    cy: float,
+) -> tuple[list[str], float, float]:
+    """One continuous bead. Each column is centred on the 0.23 mm press into both skins."""
+    out: list[str] = []
+    y_edge = None
+    for binn in run:
+        flo, fhi = _thick_span(failing[(layer, binn)])
+        yc = 0.5 * (flo + fhi)
+        span = fhi - flo
+        x_lo = binn * 0.5
+        x_hi = (binn + 1) * 0.5
+        increasing = len(run) < 2 or run[1] > run[0]
+        x0, x1 = (x_lo, x_hi) if increasing else (x_hi, x_lo)
+        if y_edge is None or abs((2 * yc - y_edge) - y_edge) > 0.35:
+            link, cx, cy = _thick_link(x0, yc, cx, cy, area, nl)
+            if link:
+                out.append(link)
+            y0 = yc
+            y1 = yc
+        else:
+            y0 = y_edge
+            y1 = 2 * yc - y0
+        length = math.hypot(x1 - x0, y1 - y0) or 1.0
+        cos = abs(x1 - x0) / length
+        if cos < _FOREFOOT_COS_MIN:
+            link, cx, cy = _thick_link(x0, yc, cx, cy, area, nl)
+            if link:
+                out.append(link)
+            y0 = yc
+            y1 = yc
+            cos = 1.0
+        width = max(0.40, span * cos)
+        line, cx, cy = _thick_ex(x1, y1, cx, cy, width, area, nl)
+        if line:
+            out.append(line)
+        y_edge = cy
+    return out, cx, cy
+
+
+def _thick_next_xy(lines: list[str], last_index: int) -> tuple[float, float] | None:
+    """The next absolute travel, so a replacement can finish next to it."""
+    j = last_index + 1
+    seen = 0
+    while j < len(lines) and seen < 12:
+        raw = lines[j].strip()
+        if raw.startswith(("G0", "G1")):
+            seen += 1
+            words = _ff_words(lines[j])
+            de = float(words["E"]) if "E" in words else 0.0
+            if "X" in words and "Y" in words and de <= 1e-9:
+                return float(words["X"]), float(words["Y"])
+            if de > 1e-9 and ("X" in words or "Y" in words):
+                return None
+        j += 1
+    return None
+
+
+def _thick_position_needed(lines: list[str], last_index: int) -> bool:
+    """True when the next extrusion has no absolute XY travel ahead of it."""
+    j = last_index + 1
+    while j < len(lines):
+        if lines[j].startswith(";LAYER_CHANGE"):
+            return False
+        if not _is_g01(lines[j]):
+            j += 1
+            continue
+        words = _ff_words(lines[j])
+        has_xy = "X" in words or "Y" in words
+        has_e = "E" in words and float(words["E"]) > 1e-9
+        if has_xy and has_e:
+            return True
+        if "X" in words and "Y" in words:
+            return False
+        j += 1
+    return False
+
+
+def _thick_cura_fill(text: str, stats: dict) -> tuple[str, dict]:
+    """Replace the inner wall in a 3-6 mm forefoot with one fill bead.
+
+    Cura's thick toe is one outer wall per side and fill pressed about 0.23 mm
+    into that wall. The outer wall is not moved. A 2-3 mm section is not
+    touched. The bead is sized so its envelope meets both skins, and its feed
+    is held at 16.80 mm^3/s.
+    """
+    lines = text.splitlines(keepends=True)
+    parsed = _parse_moves(lines, reset_type=False)
+    last = stats.get("last_layer")
+    if not last or last < 1 or parsed["area"] <= 0:
+        return text, stats
+    segs = parsed["segs"]
+    area = parsed["area"]
+    cols = _columns(segs)
+    kinds = [seg["kind"] for seg in segs]
+    failing: dict[tuple[int, int], tuple[float, float, float, float]] = {}
+    for key, beads in cols.items():
+        if not (1 <= key[0] <= last):
+            continue
+        pair = _pair_of(beads, kinds)
+        if pair is None:
+            continue
+        plow, phigh, dlow, dhigh, thick, _gap = pair
+        # Membership comes from the section before the thin bond. A 2-3 mm loop
+        # that the thin bond widens can read a little over 3 mm afterwards, and
+        # that loop stays as the thin bond left it. The three columns the thin
+        # bond pushed just under 3 mm, and the steep beads the gate still grades
+        # from the baseline, are already in that pre-thin set.
+        pre = stats.get("pre_thick")
+        if pre is not None:
+            if key not in pre or not (_FOREFOOT_THICK_LO <= thick <= _FOREFOOT_THICK_HI):
+                continue
+        elif not (3.0 <= thick <= 6.0):
+            continue
+        if _thick_bonded(beads, plow, phigh, dlow, dhigh):
+            continue
+        failing[key] = (plow, phigh, dlow, dhigh)
+    stats["thick_bins"] = len(failing)
+    if not failing:
+        return text, stats
+    fail_bins: dict[int, set[int]] = {}
+    for layer, binn in failing:
+        fail_bins.setdefault(layer, set()).add(binn)
+    inner = [seg for seg in segs if seg["type"] == "Inner wall" and 1 <= seg["layer"] <= last]
+    chains = _skin_chains(inner)
+
+    def bins_of(chain: list[dict]) -> set[int]:
+        layer = chain[0]["layer"]
+        got: set[int] = set()
+        want = fail_bins.get(layer, ())
+        for seg in chain:
+            if seg["cos"] < _FOREFOOT_COS_MIN:
+                continue
+            xa, xb = sorted((seg["x0"], seg["x1"]))
+            b0 = int(math.floor(xa / 0.5))
+            b1 = int(math.floor((xb - 1e-9) / 0.5))
+            for binn in range(b0, b1 + 1):
+                if binn not in want:
+                    continue
+                lo = max(xa, binn * 0.5)
+                hi = min(xb, (binn + 1) * 0.5)
+                if hi - lo > 1e-9:
+                    got.add(binn)
+        return got
+
+    uncovered = {layer: set(bins) for layer, bins in fail_bins.items()}
+    chosen: list[tuple[list[dict], set[int]]] = []
+    order = sorted(range(len(chains)), key=lambda i: -len(bins_of(chains[i])))
+    for index in order:
+        chain = chains[index]
+        layer = chain[0]["layer"]
+        got = bins_of(chain) & uncovered.get(layer, set())
+        if not got:
+            continue
+        chosen.append((chain, got))
+        uncovered[layer] -= got
+    # A hole inside a chain's span is still failing, so the bead has to cross it.
+    # Fill it on the way across instead of travelling the hole and visiting it again.
+    for chain, got in chosen:
+        layer = chain[0]["layer"]
+        if len(got) < 2 or not uncovered.get(layer):
+            continue
+        lo, hi = min(got), max(got)
+        extra = {binn for binn in uncovered[layer] if lo < binn < hi}
+        if extra:
+            got |= extra
+            uncovered[layer] -= extra
+    chosen_ids = {id(chain) for chain, _got in chosen}
+    repl: dict[int, list[str]] = {}
+    drop: set[int] = set()
+    replaced = 0
+    for chain, _got in chosen:
+        # One fill sweep per layer prints the bead. Drop the inner wall here.
+        for seg in chain:
+            drop.add(seg["i"])
+        replaced += 1
+    for chain in chains:
+        if id(chain) in chosen_ids:
+            continue
+        layer = chain[0]["layer"]
+        want = fail_bins.get(layer, set())
+        group: list[dict] = []
+
+        def flush(group: list[dict] = group) -> None:
+            if not group:
+                return
+            entire = len(group) == len(chain) and group[0] is chain[0]
+            if entire and not _thick_position_needed(lines, chain[-1]["i"]):
+                for seg in group:
+                    drop.add(seg["i"])
+            else:
+                nl = "\n" if lines[group[0]["i"]].endswith("\n") else ""
+                ex, ey = group[-1]["x1"], group[-1]["y1"]
+                repl[group[0]["i"]] = [f"G1 X{ex:.3f} Y{ey:.3f} F30000{nl}"]
+                for seg in group[1:]:
+                    drop.add(seg["i"])
+            group.clear()
+
+        for seg in chain:
+            hit = bool(bins_of([seg]) & want)
+            if hit:
+                group.append(seg)
+            else:
+                flush()
+        flush()
+    inserts: dict[int, list[str]] = {}
+    changes = [i for i, line in enumerate(lines) if line.startswith(";LAYER_CHANGE")]
+    for layer, bins in fail_bins.items():
+        if not bins:
+            continue
+        # Before the next layer when there is one, otherwise after the last line.
+        at = changes[layer + 1] if layer + 1 < len(changes) else len(lines)
+        nl = "\n" if at >= len(lines) or lines[at].endswith("\n") else ""
+        px, py, typ = 0.0, 0.0, ""
+        for i, line in enumerate(lines):
+            if i >= at:
+                break
+            raw = line.strip()
+            if raw.startswith(";TYPE:"):
+                typ = raw[6:].strip()
+                continue
+            if not _is_g01(line):
+                continue
+            words = _ff_words(line)
+            if "X" in words:
+                px = float(words["X"])
+            if "Y" in words:
+                py = float(words["Y"])
+        runs = _thick_runs(sorted(bins), True)
+        left = runs[0][0] * 0.5
+        right = (runs[-1][-1] + 1) * 0.5
+        # Finish toward the end this layer already stops at, so the approach is one travel.
+        if abs(px - right) > abs(px - left):
+            runs = [list(reversed(run)) for run in reversed(runs)]
+        block = [f";TYPE:Sparse infill{nl}"]
+        # Travel onto the bead. A short extrusion from the layer-end point sits
+        # on the outer wall, and the outer-edge check would count it as the skin.
+        first = runs[0]
+        increasing = len(first) < 2 or first[1] > first[0]
+        flo, fhi = _thick_span(failing[(layer, first[0])])
+        x0 = first[0] * 0.5 if increasing else (first[0] + 1) * 0.5
+        y0 = 0.5 * (flo + fhi)
+        block.append(f"G1 X{x0:.3f} Y{y0:.3f} F30000{nl}")
+        cx, cy = x0, y0
+        for run in runs:
+            part, cx, cy = _thick_run_lines(run, failing, layer, area, nl, cx, cy)
+            block.extend(part)
+        if typ:
+            block.append(f";TYPE:{typ}{nl}")
+        inserts[at] = block
+    if not repl and not drop and not inserts:
+        return text, stats
+    out: list[str] = []
+    modal = 0.0
+    restore: float | None = None
+    for index, line in enumerate(lines):
+        if index in inserts:
+            # Before the next layer marker, so the bead stays on this layer.
+            restore = modal
+            out.extend(inserts[index])
+        if index in repl:
+            restore = modal
+            out.extend(repl[index])
+            continue
+        if index in drop:
+            continue
+        if restore is not None and _is_g01(line):
+            words = _ff_words(line)
+            if "F" not in words and ("X" in words or "Y" in words or "E" in words):
+                line = _ff_set_word(line, "F", restore, 0)
+            restore = None
+        if _is_g01(line):
+            words = _ff_words(line)
+            if "F" in words:
+                modal = float(words["F"])
+        out.append(line)
+    if len(lines) in inserts:
+        out.extend(inserts[len(lines)])
+    stats["applied"] = True
+    stats["thick_chains"] = replaced
+    stats["thick_orphans"] = sum(len(bins) for bins in uncovered.values())
+    return "".join(out), stats
+
+
 def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, dict]:
-    """Bond a thin single-loop forefoot the way Cura does, and leave thick sections alone.
+    """Bond the forefoot the way Cura does.
 
     A 2-3 mm section is one skin loop. Each skin grows inward until the two
     overlap by about 0.23 mm. The centreline moves inward by half the added
     width, so the printed outer edge stays. At a corner the two offsets meet
     through a short connector whose outer rim stays on the sliced edge. A
     widened bead keeps its feed unless that would push it over 16.80 mm^3/s,
-    in which case the feed drops to the cap. No inner wall is added and no gap
-    fill is written. A 3-6 mm section is not rewritten. Lines after the
-    forefoot are not rewritten.
+    in which case the feed drops to the cap. A 3-6 mm section loses its inner
+    wall and gains one fill bead pressed about 0.23 mm into each outer wall.
+    Lines after the forefoot are not rewritten.
     """
     lines = text.splitlines(keepends=True)
     parsed = _parse_moves(lines, reset_type=False)
@@ -2674,6 +3079,17 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
             used[index] = modal
     area = parsed["area"]
     segs = [s for s in parsed["segs"] if 1 <= s["layer"] <= last_layer]
+    # Thick membership is fixed here, before the thin bond moves any centreline.
+    pre_cols = _columns(segs)
+    pre_kinds = [seg["kind"] for seg in segs]
+    pre_thick: set[tuple[int, int]] = set()
+    for key, beads in pre_cols.items():
+        pair = _pair_of(beads, pre_kinds)
+        if pair is None:
+            continue
+        if 3.0 <= pair[4] <= 6.0:
+            pre_thick.add(key)
+    stats["pre_thick"] = pre_thick
     for seg in segs:
         seg["ox0"], seg["oy0"] = seg["x0"], seg["y0"]
         seg["ox1"], seg["oy1"] = seg["x1"], seg["y1"]
@@ -2841,7 +3257,7 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
             _note(fit[1], cf, 0.0, ce, True)
     if not planned:
         stats["reason"] = "nothing to bond"
-        return text, stats
+        return _thick_cura_fill(text, stats)
     for index, (x1, y1, e, feed) in planned.items():
         line = lines[index]
         line = _ff_set_word(line, "X", x1, 3)
@@ -2870,7 +3286,7 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
     stats["applied"] = True
     stats["added_e"] = round(stats["added_e"], 3)
     stats["max_q_widened"] = round(stats["max_q_widened"], 3)
-    return "".join(lines), stats
+    return _thick_cura_fill("".join(lines), stats)
 
 
 def main() -> None:

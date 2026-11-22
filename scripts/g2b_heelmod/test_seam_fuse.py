@@ -373,9 +373,9 @@ class ForefootBondTests(unittest.TestCase):
         for move in bottoms:
             self.assertLess(abs(_bottom_outer(*move) - outer), 0.02)
 
-    def test_thick_section_is_left_as_sliced(self) -> None:
-        # A 4 mm section with an interior stack is outside the thin single-loop
-        # bond. Skins and inner beads stay on the sliced path.
+    def test_thick_section_fill_presses_into_the_skins(self) -> None:
+        # A 4 mm section keeps the outer wall and replaces the inner wall with
+        # one fill bead pressed into both skins. The outer edge does not move.
         outer_pts = [
             (90.0, 0.50, 1.146),
             (130.0, 0.50, 1.146),
@@ -404,9 +404,30 @@ class ForefootBondTests(unittest.TestCase):
         text = _program([body])
         before = _extrusions(text)
         out, stats = forefoot_cura_bond(text, last_layer=1)
-        self.assertFalse(stats["applied"])
-        self.assertEqual(stats["widened"], 0)
-        self.assertEqual(_extrusions(out), before)
+        self.assertTrue(stats["applied"])
+        self.assertGreater(stats["thick_bins"], 0)
+        after = _extrusions(out)
+        outer_before = [m for m in before if min(m[1], m[3]) < 0.6 or max(m[1], m[3]) > 3.2]
+        outer_after = [m for m in after if min(m[1], m[3]) < 0.6 or max(m[1], m[3]) > 3.2]
+        self.assertEqual(outer_after, outer_before)
+        # The old inner-wall centreline at y=1.55 is gone.
+        self.assertFalse(any(abs(m[1] - 1.55) < 0.01 and abs(m[3] - 1.55) < 0.01 for m in after))
+        corner = 0.46 * (1.0 - math.pi / 4.0)
+        covered = False
+        for x0, y0, x1, y1, e in after:
+            length = math.hypot(x1 - x0, y1 - y0)
+            if length < 0.4 or abs(x1 - x0) / length < 0.25:
+                continue
+            if max(x0, x1) < 100.0 or min(x0, x1) > 120.0:
+                continue
+            width = (e / length) * _FILAMENT_AREA / 0.46 + corner
+            yc = 0.5 * (y0 + y1)
+            half = (width * 0.5) / (abs(x1 - x0) / length)
+            lo, hi = yc - half, yc + half
+            # Plantar skin inner edge is 1.073, dorsal inner edge is 2.827.
+            if min(1.073, hi) - max(0.50 - 0.573, lo) >= 0.15 and min(3.40 + 0.573, hi) - max(2.827, lo) >= 0.15:
+                covered = True
+        self.assertTrue(covered, "fill bead does not reach both skins")
 
     def test_corner_join_keeps_both_outer_edges(self) -> None:
         # A thin loop: long plantar wall, vertical side, long dorsal wall.
