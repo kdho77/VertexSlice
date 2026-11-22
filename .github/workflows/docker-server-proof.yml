@@ -265,3 +265,14 @@ jobs:
             ${{ runner.temp }}/slices
           retention-days: 14
           if-no-files-found: error
+
+      - name: Upload candidate ApexCore G-code
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: cand-apex-core-gcode-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/slices/cand_apex_core_orthocad.gcode
+            ${{ runner.temp }}/slices/cand_apex_core_insole2.gcode
+          retention-days: 14
+          if-no-files-found: error

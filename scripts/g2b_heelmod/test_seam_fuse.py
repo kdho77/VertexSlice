@@ -19,6 +19,8 @@ REPO = HERE.parents[1]
 sys.path[:0] = [str(HERE), str(REPO / "validation" / "seam_fuse_gates")]
 
 from postprocess_g2b import (  # noqa: E402
+    FOREFOOT_FILAMENT_AREA,
+    FOREFOOT_FLOW_CAP,
     PRIME,
     RETRACT,
     SLOW_END_F,
@@ -26,8 +28,12 @@ from postprocess_g2b import (  # noqa: E402
     WIPE_FRAC,
     WIPE_MM,
     _belt_split,
+    bead_width,
+    forefoot_cura_bond,
+    forefoot_last_layer,
     seam,
 )
+import check_travel_wall_crossings as crossings  # noqa: E402
 import g3_seam_joint as g3  # noqa: E402
 
 
@@ -249,6 +255,141 @@ class SeamFuse(unittest.TestCase):
         self.assertTrue(landings)
         self.assertAlmostEqual(landings[-1][0], 11.0, places=3)
         self.assertAlmostEqual(landings[-1][1], 0.0, places=3)
+
+
+def _e_for(width: float, length: float) -> float:
+    corner = 0.46 * (1.0 - math.pi / 4.0)
+    return (width - corner) * 0.46 / FOREFOOT_FILAMENT_AREA * length
+
+
+def _loop(typ: str, pts: list[tuple[float, float]], width: float = 1.15) -> list[str]:
+    out = [f";TYPE:{typ}", f"G1 X{pts[0][0]} Y{pts[0][1]} F12720"]
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        length = math.hypot(x1 - x0, y1 - y0)
+        out.append(f"G1 X{x1:.3f} Y{y1:.3f} E{_e_for(width, length):.5f} F1560")
+    return out
+
+
+def _slice(loops: list[tuple[str, list[tuple[float, float]]]]) -> str:
+    # The real belt file has an empty ``;LAYER_CHANGE`` before the first printed
+    # layer. The bond numbers layers the same way the forefoot gates do.
+    lines = ["M83", "G90", ";LAYER_CHANGE", ";LAYER_CHANGE", ";Z:0.46", "G1 X70 Y1 F1560"]
+    for typ, pts in loops:
+        lines.extend(_loop(typ, pts))
+    lines += ["", ";LAYER_CHANGE", ";Z:1.06", ";TYPE:Outer wall", "G1 X10 Y1 E0.10000 F1560"]
+    return "\n".join(lines) + "\n"
+
+
+def _horiz(text: str, layer: int = 2) -> list[tuple[float, float, float, float]]:
+    """Horizontal extrusions in one layer: (y, width, feed, length)."""
+    body = text.split(";LAYER_CHANGE")[layer]
+    x = y = None
+    found = []
+    for line in body.splitlines():
+        if not line.startswith("G1"):
+            continue
+        w = _words(line)
+        if "X" not in w and "Y" not in w:
+            continue
+        nx = float(w["X"]) if "X" in w else x
+        ny = float(w["Y"]) if "Y" in w else y
+        if x is not None and "E" in w and float(w["E"]) > 0:
+            length = math.hypot(nx - x, ny - y)
+            if length > 5 and abs(ny - y) < 1e-6:
+                feed = float(w["F"]) if "F" in w else 0.0
+                found.append((ny, bead_width(float(w["E"]) / length), feed, length))
+        x, y = nx, ny
+    return found
+
+
+class ForefootCuraBond(unittest.TestCase):
+    def test_layer_cutoff(self) -> None:
+        self.assertEqual(forefoot_last_layer(439), 165)
+        self.assertEqual(forefoot_last_layer(90), 31)
+        self.assertIsNone(forefoot_last_layer(10))
+        self.assertIsNone(forefoot_last_layer(250))
+
+    def test_short_file_is_untouched(self) -> None:
+        src = _slice([("Outer wall", [(80, 0.5), (160, 0.5), (160, 2.06), (80, 2.06), (80, 0.5)])])
+        seamed, _counts = seam(src, retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
+        out, stats = forefoot_cura_bond(seamed)
+        self.assertFalse(stats["applied"])
+        self.assertEqual(out, seamed)
+
+    def test_thin_skins_overlap_with_the_outer_edge_fixed(self) -> None:
+        src = _slice([("Outer wall", [(80, 0.5), (160, 0.5), (160, 2.06), (80, 2.06), (80, 0.5)])])
+        seamed, _counts = seam(src, retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
+        out, stats = forefoot_cura_bond(seamed, last_layer=1)
+        self.assertTrue(stats["applied"])
+        self.assertEqual(seamed.split(";LAYER_CHANGE")[3], out.split(";LAYER_CHANGE")[3])
+        rows = _horiz(out)
+        low = [r for r in rows if r[0] < 1.2]
+        high = [r for r in rows if r[0] > 1.2]
+        self.assertTrue(low and high)
+        for y, width, feed, length in low:
+            self.assertAlmostEqual(y - width / 2, 0.5 - 1.15 / 2, delta=0.02)
+            self.assertGreaterEqual(width - (high[0][0] - y), 0.05)
+            self.assertAlmostEqual(width - (high[0][0] - y), 0.45, delta=0.02)
+            if feed:
+                q = (width - 0.46 * (1 - math.pi / 4)) * 0.46 * (feed / 60.0)
+                self.assertLessEqual(q, FOREFOOT_FLOW_CAP + 1e-6)
+        for y, width, _feed, _length in high:
+            self.assertAlmostEqual(y + width / 2, 2.06 + 1.15 / 2, delta=0.02)
+        # Side centres stay on the outline, so the printed side edge does too.
+        body = out.split(";LAYER_CHANGE")[2]
+        x = y = None
+        sides = []
+        for line in body.splitlines():
+            if not line.startswith("G1"):
+                continue
+            w = _words(line)
+            if "X" not in w and "Y" not in w:
+                continue
+            nx = float(w["X"]) if "X" in w else x
+            ny = float(w["Y"]) if "Y" in w else y
+            if x is not None and "E" in w and float(w["E"]) > 0 and abs(nx - x) < 1e-6 and abs(ny - y) > 0.2:
+                sides.append(nx)
+            x, y = nx, ny
+        self.assertTrue(sides)
+        for sx in sides:
+            self.assertTrue(any(abs(sx - edge) < 0.02 for edge in (80.0, 160.0)))
+        report = crossings.analyze(out)
+        for key in ("perimeter_crossings", "surface_crossings", "seam_block_crossings"):
+            self.assertEqual(report["totals"][key], 0)
+        # The seam stays on the loop's own bottom edge.
+        start = None
+        for line in out.split(";LAYER_CHANGE")[2].splitlines():
+            if line.endswith(";seam travel") or " ;seam travel" in line:
+                w = _words(line)
+                if "Y" in w:
+                    start = float(w["Y"])
+        self.assertIsNotNone(start)
+        self.assertAlmostEqual(start, min(r[0] for r in low), delta=0.15)
+
+    def test_thick_outer_overlaps_an_unmoved_inner_wall(self) -> None:
+        inner = [(84, 1.886), (156, 1.886), (156, 3.614), (84, 3.614), (84, 1.886)]
+        src = _slice([
+            ("Outer wall", [(80, 0.5), (160, 0.5), (160, 5.0), (80, 5.0), (80, 0.5)]),
+            ("Inner wall", inner),
+        ])
+        seamed, _counts = seam(src, retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
+        out, _stats = forefoot_cura_bond(seamed, last_layer=1)
+        self.assertEqual(seamed.split(";LAYER_CHANGE")[3], out.split(";LAYER_CHANGE")[3])
+        rows = _horiz(out)
+        plantar = min(rows, key=lambda r: r[0])
+        dorsal = max(rows, key=lambda r: r[0])
+        self.assertAlmostEqual(plantar[0] - plantar[1] / 2, 0.5 - 1.15 / 2, delta=0.02)
+        self.assertAlmostEqual(dorsal[0] + dorsal[1] / 2, 5.0 + 1.15 / 2, delta=0.02)
+        # Inner wall centre lines stay where seam left them.
+        for y in (1.886, 3.614):
+            self.assertTrue(any(abs(r[0] - y) < 1e-3 and abs(r[1] - 1.15) < 0.01 for r in rows))
+        inner_near = 1.886 - 1.15 / 2
+        overlap = (plantar[0] + plantar[1] / 2) - inner_near
+        self.assertGreaterEqual(overlap, 0.15)
+        self.assertAlmostEqual(overlap, 0.23, delta=0.02)
+        report = crossings.analyze(out)
+        for key in ("perimeter_crossings", "surface_crossings", "seam_block_crossings"):
+            self.assertEqual(report["totals"][key], 0)
 
 
 if __name__ == "__main__":
