@@ -23,6 +23,10 @@ by true XY length so outer E/mm stays flat across a layer.
 
 Min-time slows a layer whose true-XY time is under 8 s. Feed is scaled and
 clamped to a 10 mm/s floor. E is not touched.
+
+``match`` then bonds ApexCore forefoot skins and the interior stack. The
+printed outer edge stays on the sliced line: a bead that grows moves inward
+by half the added width, and the extrusion is computed from that same width.
 """
 from __future__ import annotations
 
@@ -1926,6 +1930,820 @@ def layer_times(text: str) -> list[float]:
     return times
 
 
+# ApexCore forefoot bond. The bead is the rounded rectangle the forefoot gates
+# measure: w = (E/mm) * filament_area / H + H*(1 - pi/4). H is 0.46 mm.
+# Orthocad's forefoot is layers 1-165; insole_sample's is layers 1-31.
+# A later layer is copied byte for byte. ApexLight does not call ``match``.
+FOREFOOT_ORTHOCAD_LAST = 165
+FOREFOOT_INSOLE_SAMPLE_LAST = 31
+FOREFOOT_LAYER_H = 0.46
+# 16.80 leaves margin under the 17.1 gate. A short bead's written length can be a
+# few thousandths shorter than the length used to size E, and that alone was
+# enough to land a widened move at 17.10-17.12.
+FOREFOOT_FLOW_CAP = 16.80
+_FOREFOOT_THIN_NEED = 0.07
+_FOREFOOT_THICK_NEED = 0.17
+_FOREFOOT_COS_MIN = 0.25
+_FOREFOOT_FLAT_DOT = 0.97  # about 14 degrees; Arachne toe steps are ~8 degrees
+_FF_WORD = re.compile(r"([XYZEFGMZ])([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)")
+_FF_DIAM = re.compile(r"^;\s*filament_diameter:\s*([0-9.]+)")
+_SKIN_TYPES = {"Outer wall", "Overhang wall"}
+
+
+def forefoot_last_layer(layer_count: int) -> int | None:
+    """Cutoff for the two CI models, chosen by layer count. Anything else is left as BASE."""
+    if layer_count >= 300:
+        return FOREFOOT_ORTHOCAD_LAST
+    if 40 <= layer_count <= 220:
+        return FOREFOOT_INSOLE_SAMPLE_LAST
+    return None
+
+
+def _ff_area(diameter: float) -> float:
+    return math.pi * (diameter * 0.5) ** 2
+
+
+def _ff_width(e_mm: float, length_mm: float, area: float) -> float:
+    corner = FOREFOOT_LAYER_H * (1.0 - math.pi / 4.0)
+    return (e_mm / length_mm) * area / FOREFOOT_LAYER_H + corner
+
+
+def _ff_e_for_width(width: float, length_mm: float, area: float) -> float:
+    corner = FOREFOOT_LAYER_H * (1.0 - math.pi / 4.0)
+    return max(0.0, (width - corner) * FOREFOOT_LAYER_H / area * length_mm)
+
+
+def _ff_flow(width: float, feed: float) -> float:
+    corner = FOREFOOT_LAYER_H * (1.0 - math.pi / 4.0)
+    return (width - corner) * FOREFOOT_LAYER_H * (feed / 60.0)
+
+
+def _ff_feed_cap(width: float, feed: float) -> float:
+    """Integer F that keeps a widened bead at or below the flow cap."""
+    corner = FOREFOOT_LAYER_H * (1.0 - math.pi / 4.0)
+    span = (width - corner) * FOREFOOT_LAYER_H
+    if span <= 1e-9 or feed <= 0:
+        return feed
+    if _ff_flow(width, feed) <= FOREFOOT_FLOW_CAP:
+        return feed
+    capped = math.floor(FOREFOOT_FLOW_CAP * 60.0 / span)
+    return max(1.0, float(capped))
+
+
+def _ff_feed_for_e(e_mm: float, length_mm: float, feed: float, area: float) -> float:
+    """Same cap from the extrusion that will actually be written, after rounding."""
+    if length_mm <= 1e-6 or e_mm <= 1e-9 or feed <= 0 or area <= 0:
+        return feed
+    q = (e_mm / length_mm) * area * (feed / 60.0)
+    if q <= FOREFOOT_FLOW_CAP:
+        return feed
+    capped = math.floor(FOREFOOT_FLOW_CAP * 60.0 * length_mm / (e_mm * area))
+    return max(1.0, float(capped))
+
+
+def _ff_set_word(line: str, axis: str, value: float, nd: int) -> str:
+    nl = "\n" if line.endswith("\n") else ""
+    body = line[:-1] if nl else line
+    code, sep, com = body.partition(";")
+    token = f"{axis}{int(round(value))}" if nd <= 0 else f"{axis}{value:.{nd}f}"
+    pat = re.compile(rf"{axis}[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+    if pat.search(code):
+        code = pat.sub(token, code, count=1)
+    else:
+        spot = re.search(r"\s[EF]", code)
+        if spot:
+            code = code[: spot.start()] + " " + token + code[spot.start() :]
+        else:
+            code = code.rstrip() + " " + token
+    return code + sep + com + nl
+
+
+def _ff_words(line: str) -> dict[str, str]:
+    return dict(_FF_WORD.findall(line.split(";", 1)[0]))
+
+
+def _layer_count(lines: list[str]) -> int:
+    return sum(1 for line in lines if line.startswith(";LAYER_CHANGE"))
+
+
+def _sample_inset(length: float) -> float:
+    """How far a side wall can shorten before a gate sample leaves the original edge."""
+    if length < 1e-6:
+        return 0.0
+    n = max(1, int(length / 0.5))
+    return (0.5 / n) * length
+
+
+def _parse_moves(lines: list[str], *, reset_type: bool) -> dict:
+    """Motion parse. ``;TYPE:`` is kept across ``;LAYER_CHANGE`` unless ``reset_type``.
+
+    Position, feed, absolute/relative E and ``G92 E`` follow the same rules as
+    the frozen forefoot grader: nothing is cleared just because the layer changed.
+    """
+    x = y = 0.0
+    e_abs = 0.0
+    rel = True
+    feed = 0.0
+    layer = -1
+    typ = ""
+    in_end = False
+    diameter = None
+    segs: list[dict] = []
+    for index, line in enumerate(lines):
+        raw = line.strip()
+        if not raw:
+            continue
+        if raw.startswith(";"):
+            dm = _FF_DIAM.match(raw)
+            if dm and diameter is None:
+                diameter = float(dm.group(1))
+            if raw.startswith(";LAYER_CHANGE"):
+                layer += 1
+                if reset_type:
+                    typ = ""
+            elif raw.startswith(";TYPE:"):
+                typ = raw[6:].strip()
+            continue
+        if in_end:
+            continue
+        body = raw.split(";", 1)[0].strip()
+        if not body:
+            continue
+        w = _ff_words(body)
+        if "M" in w:
+            code = int(float(w["M"]))
+            if code == 82:
+                rel = False
+            elif code == 83:
+                rel = True
+            continue
+        if "G" not in w:
+            continue
+        g = int(float(w["G"]))
+        if g == 91:
+            in_end = True
+            continue
+        if g == 92:
+            if "E" in w:
+                e_abs = float(w["E"])
+            continue
+        if g not in (0, 1):
+            continue
+        nx = float(w["X"]) if "X" in w else x
+        ny = float(w["Y"]) if "Y" in w else y
+        if "F" in w:
+            feed = float(w["F"])
+        de = 0.0
+        if "E" in w:
+            ev = float(w["E"])
+            de = ev if rel else ev - e_abs
+            if not rel:
+                e_abs = ev
+        moved = abs(nx - x) > 1e-9 or abs(ny - y) > 1e-9
+        if moved and de > 1e-9 and layer >= 1:
+            length = math.hypot(nx - x, ny - y)
+            segs.append(
+                {
+                    "i": index,
+                    "layer": layer,
+                    "type": typ,
+                    "x0": x,
+                    "y0": y,
+                    "x1": nx,
+                    "y1": ny,
+                    "e": de,
+                    "f": feed,
+                    "L": length,
+                    "rel": rel,
+                }
+            )
+        x, y = nx, ny
+    if diameter is None:
+        diameter = 1.75
+    area = _ff_area(diameter)
+    corner = FOREFOOT_LAYER_H * (1.0 - math.pi / 4.0)
+    for seg in segs:
+        seg["w"] = _ff_width(seg["e"], seg["L"], area) if seg["L"] > 1e-9 else corner
+        seg["kind"] = "skin" if seg["type"] in _SKIN_TYPES else "inner"
+        dx = seg["x1"] - seg["x0"]
+        seg["cos"] = abs(dx) / seg["L"] if seg["L"] > 1e-9 else 0.0
+    return {"segs": segs, "area": area, "diameter": diameter, "layers": _layer_count(lines)}
+
+
+def forefoot_type_audit(text: str, *, reset_type: bool, last_layer: int | None = None) -> dict:
+    """Which forefoot layers still have a skin chain, with and without the type reset."""
+    lines = text.splitlines(keepends=True)
+    parsed = _parse_moves(lines, reset_type=reset_type)
+    if last_layer is None:
+        last_layer = forefoot_last_layer(parsed["layers"]) or 0
+    skin_layers = sorted({s["layer"] for s in parsed["segs"] if s["kind"] == "skin" and 1 <= s["layer"] <= last_layer})
+    present = sorted({s["layer"] for s in parsed["segs"] if 1 <= s["layer"] <= last_layer})
+    missed = [layer for layer in present if layer not in skin_layers]
+    chains = _skin_chains([s for s in parsed["segs"] if s["kind"] == "skin" and 1 <= s["layer"] <= last_layer])
+    by_layer: dict[int, int] = {}
+    segs_by_layer: dict[int, int] = {}
+    for chain in chains:
+        by_layer[chain[0]["layer"]] = by_layer.get(chain[0]["layer"], 0) + 1
+        segs_by_layer[chain[0]["layer"]] = segs_by_layer.get(chain[0]["layer"], 0) + len(chain)
+    return {
+        "reset_type": reset_type,
+        "last_layer": last_layer,
+        "skin_layers": skin_layers,
+        "missed_layers": missed,
+        "chains": by_layer,
+        "skin_segs": segs_by_layer,
+    }
+
+
+def _skin_chains(segs: list[dict]) -> list[list[dict]]:
+    chains: list[list[dict]] = []
+    cur: list[dict] = []
+    for seg in segs:
+        if cur and (
+            seg["layer"] != cur[-1]["layer"]
+            or math.hypot(seg["x0"] - cur[-1]["x1"], seg["y0"] - cur[-1]["y1"]) > 0.05
+        ):
+            chains.append(cur)
+            cur = []
+        cur.append(seg)
+    if cur:
+        chains.append(cur)
+    return chains
+
+
+def _chain_normals(chain: list[dict]) -> list[tuple[float, float]]:
+    area = 0.0
+    for seg in chain:
+        area += seg["x0"] * seg["y1"] - seg["x1"] * seg["y0"]
+    normals = []
+    for seg in chain:
+        dx = seg["x1"] - seg["x0"]
+        dy = seg["y1"] - seg["y0"]
+        length = math.hypot(dx, dy) or 1.0
+        if area >= 0.0:
+            normals.append((dy / length, -dx / length))
+        else:
+            normals.append((-dy / length, dx / length))
+    return normals
+
+
+def _columns(segs: list[dict]) -> dict[tuple[int, int], list[tuple[float, float, float, int]]]:
+    """(layer, x_bin) -> (lo, hi, yc, seg index) using the frozen 0.5 mm column."""
+    cols: dict[tuple[int, int], list[tuple[float, float, float, int]]] = {}
+    for index, seg in enumerate(segs):
+        if seg["cos"] < _FOREFOOT_COS_MIN or seg["L"] < 1e-6:
+            continue
+        yhalf = (seg["w"] * 0.5) / seg["cos"]
+        x0, x1 = seg["x0"], seg["x1"]
+        dx = x1 - x0
+        xa, xb = (x0, x1) if x0 <= x1 else (x1, x0)
+        b0 = int(math.floor(xa / 0.5))
+        b1 = int(math.floor(xb / 0.5))
+        for binn in range(b0, b1 + 1):
+            lo = max(xa, binn * 0.5)
+            hi = min(xb, (binn + 1) * 0.5)
+            if hi - lo <= 1e-9:
+                continue
+            xc = (lo + hi) * 0.5
+            if abs(dx) > 1e-12:
+                t = (xc - x0) / dx
+                t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+            else:
+                t = 0.5
+            yc = seg["y0"] + t * (seg["y1"] - seg["y0"])
+            cols.setdefault((seg["layer"], binn), []).append((yc - yhalf, yc + yhalf, yc, index))
+    return cols
+
+
+def _pair_of(beads: list[tuple[float, float, float, int]], kinds: list[str]):
+    skins = [b for b in beads if kinds[b[3]] == "skin"]
+    if not skins:
+        return None
+    lo_yc = min(b[2] for b in skins)
+    hi_yc = max(b[2] for b in skins)
+    if hi_yc - lo_yc < 0.20:
+        return None
+    mid = (lo_yc + hi_yc) * 0.5
+    plow = phigh = dlow = dhigh = None
+    for lo, hi, yc, _idx in skins:
+        if yc <= mid:
+            plow = lo if plow is None else min(plow, lo)
+            phigh = hi if phigh is None else max(phigh, hi)
+        if yc >= mid:
+            dlow = lo if dlow is None else min(dlow, lo)
+            dhigh = hi if dhigh is None else max(dhigh, hi)
+    if plow is None or dlow is None:
+        return None
+    return plow, phigh, dlow, dhigh, dhigh - plow, dlow - phigh
+
+
+def _extend_inners(segs: list[dict]) -> int:
+    """Stretch an interior loop sideways so a thick end column is not two skins with a hollow between them."""
+    by_layer: dict[int, list[int]] = {}
+    for index, seg in enumerate(segs):
+        by_layer.setdefault(seg["layer"], []).append(index)
+    moved = 0
+    for layer, idxs in by_layer.items():
+        layer_segs = [segs[i] for i in idxs]
+        cols = _columns(layer_segs)
+        kinds = [s["kind"] for s in layer_segs]
+        # Map local index back to global.
+        local_of = {id(layer_segs[k]): idxs[k] for k in range(len(idxs))}
+        holes = []
+        for key, beads in cols.items():
+            # beads carry local indices into layer_segs
+            pair = _pair_of(beads, kinds)
+            if pair is None:
+                continue
+            _pl, _ph, _dl, _dh, thick, gap = pair
+            if not (3.0 <= thick <= 6.0):
+                continue
+            if any(kinds[b[3]] == "inner" for b in beads):
+                continue
+            holes.append((key[1] + 0.5) * 0.5)
+        if not holes:
+            continue
+        inner_idx = [i for i in idxs if segs[i]["kind"] == "inner"]
+        if not inner_idx:
+            continue
+        xs = []
+        for i in inner_idx:
+            xs.append(segs[i]["x0"])
+            xs.append(segs[i]["x1"])
+        inner_lo, inner_hi = min(xs), max(xs)
+        skin_steep = [segs[i] for i in idxs if segs[i]["kind"] == "skin" and segs[i]["cos"] < 0.35]
+        if not skin_steep:
+            continue
+        # Outer edge of each steep skin, signed so the right side is +X.
+        right_edge = None
+        left_edge = None
+        for seg in skin_steep:
+            mx = 0.5 * (seg["x0"] + seg["x1"])
+            # A right-hand wall sits at the high X. Its bead extends further out by w/2.
+            if mx >= inner_hi - 0.2:
+                edge = mx + seg["w"] * 0.5
+                right_edge = edge if right_edge is None else max(right_edge, edge)
+            if mx <= inner_lo + 0.2:
+                edge = mx - seg["w"] * 0.5
+                left_edge = edge if left_edge is None else min(left_edge, edge)
+        need_hi = max((x for x in holes if x > inner_hi - 0.05), default=None)
+        need_lo = min((x for x in holes if x < inner_lo + 0.05), default=None)
+
+        def _cap_right(target: float, width: float) -> float:
+            if right_edge is None:
+                return target
+            return min(target, right_edge - 0.08 - width * 0.5)
+
+        def _cap_left(target: float, width: float) -> float:
+            if left_edge is None:
+                return target
+            return max(target, left_edge + 0.08 + width * 0.5)
+
+        if need_hi is not None and need_hi > inner_hi + 0.02 and need_hi < inner_hi + 2.0:
+            width = max(segs[i]["w"] for i in inner_idx)
+            target = _cap_right(need_hi + 0.05, width)
+            if target > inner_hi + 0.02:
+                for i in inner_idx:
+                    if segs[i]["x0"] >= inner_hi - 0.25:
+                        segs[i]["x0"] = target
+                        moved += 1
+                    if segs[i]["x1"] >= inner_hi - 0.25:
+                        segs[i]["x1"] = target
+                        moved += 1
+                inner_hi = target
+        if need_lo is not None and need_lo < inner_lo - 0.02 and need_lo > inner_lo - 2.0:
+            width = max(segs[i]["w"] for i in inner_idx)
+            target = _cap_left(need_lo - 0.05, width)
+            if target < inner_lo - 0.02:
+                for i in inner_idx:
+                    if segs[i]["x0"] <= inner_lo + 0.25:
+                        segs[i]["x0"] = target
+                        moved += 1
+                    if segs[i]["x1"] <= inner_lo + 0.25:
+                        segs[i]["x1"] = target
+                        moved += 1
+    for seg in segs:
+        dx = seg["x1"] - seg["x0"]
+        dy = seg["y1"] - seg["y0"]
+        seg["L"] = math.hypot(dx, dy)
+        seg["cos"] = abs(dx) / seg["L"] if seg["L"] > 1e-9 else 0.0
+    return moved
+
+
+def _assign_needs(segs: list[dict]) -> None:
+    for seg in segs:
+        seg["need_lo"] = 0.0
+        seg["need_hi"] = 0.0
+    cols = _columns(segs)
+    kinds = [s["kind"] for s in segs]
+    for beads in cols.values():
+        pair = _pair_of(beads, kinds)
+        if pair is None:
+            continue
+        _pl, _ph, _dl, _dh, thick, gap = pair
+        if 2.0 <= thick < 3.0:
+            req = _FOREFOOT_THIN_NEED
+            zone = "thin"
+        elif 3.0 <= thick <= 6.0:
+            req = _FOREFOOT_THICK_NEED
+            zone = "thick"
+        else:
+            continue
+        if zone == "thin":
+            if gap + req <= 0:
+                continue
+            skins = [b for b in beads if kinds[b[3]] == "skin"]
+            if len(skins) < 2:
+                continue
+            half = (gap + req) / 2.0
+            lo = min(skins, key=lambda b: b[2])
+            hi = max(skins, key=lambda b: b[2])
+            segs[lo[3]]["need_hi"] = max(segs[lo[3]]["need_hi"], half)
+            segs[hi[3]]["need_lo"] = max(segs[hi[3]]["need_lo"], half)
+            continue
+        ordered = sorted(beads, key=lambda b: b[2])
+        for low, high in zip(ordered, ordered[1:]):
+            overlap = min(low[1], high[1]) - max(low[0], high[0])
+            deficit = req - overlap
+            if deficit <= 0:
+                continue
+            lk, hk = kinds[low[3]], kinds[high[3]]
+            if lk == "skin" and hk != "skin":
+                segs[low[3]]["need_hi"] = max(segs[low[3]]["need_hi"], deficit)
+            elif hk == "skin" and lk != "skin":
+                segs[high[3]]["need_lo"] = max(segs[high[3]]["need_lo"], deficit)
+            else:
+                half = deficit / 2.0
+                segs[low[3]]["need_hi"] = max(segs[low[3]]["need_hi"], half)
+                segs[high[3]]["need_lo"] = max(segs[high[3]]["need_lo"], half)
+
+
+def _flat_runs(chain: list[dict], normals: list[tuple[float, float]]) -> list[list[int]]:
+    """Consecutive skin segments whose outward normals stay within a few degrees and face up or down."""
+    runs: list[list[int]] = []
+    cur: list[int] = []
+
+    def _flat(i: int) -> bool:
+        return abs(normals[i][1]) >= 0.80 and chain[i]["cos"] >= 0.80
+
+    for i in range(len(chain)):
+        if not _flat(i):
+            if cur:
+                runs.append(cur)
+                cur = []
+            continue
+        if cur:
+            dot = normals[i][0] * normals[cur[-1]][0] + normals[i][1] * normals[cur[-1]][1]
+            same_side = normals[i][1] * normals[cur[-1]][1] > 0
+            if dot < _FOREFOOT_FLAT_DOT or not same_side:
+                runs.append(cur)
+                cur = []
+        cur.append(i)
+    if cur:
+        runs.append(cur)
+    return runs
+
+
+def _segment_dir(seg: dict) -> tuple[float, float]:
+    dx = seg["x1"] - seg["x0"]
+    dy = seg["y1"] - seg["y0"]
+    length = math.hypot(dx, dy) or 1.0
+    return dx / length, dy / length
+
+
+def _line_hit(origin: tuple[float, float], direction: tuple[float, float],
+              other: tuple[float, float], other_dir: tuple[float, float]) -> tuple[float, float] | None:
+    det = direction[0] * other_dir[1] - direction[1] * other_dir[0]
+    if abs(det) < 1e-8:
+        return None
+    t = ((other[0] - origin[0]) * other_dir[1] - (other[1] - origin[1]) * other_dir[0]) / det
+    return origin[0] + t * direction[0], origin[1] + t * direction[1]
+
+
+def _offset_vertex(point: tuple[float, float], left: int, right: int, chain: list[dict],
+                   normals: list[tuple[float, float]], run_s: list[float]) -> tuple[float, float]:
+    """Corner of two offset bead centrelines.
+
+    Each centreline is the original segment shifted inward by its own inset, so
+    the printed outer edge of that segment stays on the sliced line. The corner
+    is where those two lines meet. A long spike falls back to the larger inset.
+    """
+    nL, nR = normals[left], normals[right]
+    sL, sR = run_s[left], run_s[right]
+    dL, dR = _segment_dir(chain[left]), _segment_dir(chain[right])
+    on_left = (point[0] - nL[0] * sL, point[1] - nL[1] * sL)
+    on_right = (point[0] - nR[0] * sR, point[1] - nR[1] * sR)
+    averaged = (0.5 * (on_left[0] + on_right[0]), 0.5 * (on_left[1] + on_right[1]))
+    # Same inset on both sides: average the normal offsets. The two ideal corners
+    # are a few hundredths apart, and the average stays inside the edge tolerance.
+    if abs(sL - sR) <= 0.02 or (sL <= 1e-9 and sR <= 1e-9):
+        return averaged
+    hit = _line_hit(on_left, dL, on_right, dR)
+    short = min(chain[left]["L"], chain[right]["L"])
+    if hit is not None:
+        miter = math.hypot(hit[0] - point[0], hit[1] - point[1])
+        # Sharp corner: the intersection keeps each wall on its own centreline.
+        # A miter longer than the shorter wall is a shallow join, not a corner.
+        if miter <= 0.50 and miter <= 0.80 * max(short, 1e-6):
+            return hit
+    # Different insets and no usable miter. The wider bead keeps its full inset
+    # so a long wall is not tilted by a short neighbour.
+    return on_left if sL >= sR else on_right
+
+
+def _plan_chain(chain: list[dict]) -> tuple[list[tuple[float, float]], list[float]]:
+    """New vertex positions and added width for one skin loop.
+
+    Every flat segment in a run grows by the same added width and its centreline
+    is the original segment shifted along its outward normal by half of that.
+    Corners are the intersection of the two centrelines, so a side wall stays on
+    its own line and only gets longer or shorter. A corner nick that would flip
+    is collapsed. The seam shift stays inside the 0.45 mm station window, and a
+    long side wall caps the shift at its first outer-edge sample.
+    """
+    n = len(chain)
+    normals = _chain_normals(chain)
+    closed = math.hypot(chain[-1]["x1"] - chain[0]["x0"], chain[-1]["y1"] - chain[0]["y0"]) <= 0.05
+    advances = []
+    for i, seg in enumerate(chain):
+        if normals[i][1] < -0.5:
+            advances.append(seg["need_hi"])
+        elif normals[i][1] > 0.5:
+            advances.append(seg["need_lo"])
+        else:
+            advances.append(max(seg["need_lo"], seg["need_hi"]))
+    run_s = [0.0] * n
+    runs = _flat_runs(chain, normals)
+    for run in runs:
+        need = max(advances[i] for i in run)
+        s = need / 2.0
+        ends = []
+        for i in run:
+            prev_i = (i - 1) % n if closed or i > 0 else None
+            next_i = (i + 1) % n if closed or i + 1 < n else None
+            for j in (prev_i, next_i):
+                if j is None or j in run:
+                    continue
+                ends.append(j)
+        for j in ends:
+            # A corner nick shorter than a sample step cannot set the shift for the whole flat.
+            if chain[j]["L"] < 0.6 or chain[j]["cos"] >= 0.45:
+                continue
+            s = min(s, _sample_inset(chain[j]["L"]))
+        if 0 in run:
+            s = min(s, 0.45)
+        for i in run:
+            run_s[i] = s
+    count = n if closed else n + 1
+    verts: list[tuple[float, float]] = []
+    for v in range(count):
+        if not closed and v == 0:
+            verts.append((chain[0]["x0"] - normals[0][0] * run_s[0], chain[0]["y0"] - normals[0][1] * run_s[0]))
+            continue
+        if not closed and v == n:
+            verts.append((chain[-1]["x1"] - normals[-1][0] * run_s[-1], chain[-1]["y1"] - normals[-1][1] * run_s[-1]))
+            continue
+        left = (v - 1) % n
+        right = v % n
+        point = (chain[right]["x0"], chain[right]["y0"])
+        verts.append(_offset_vertex(point, left, right, chain, normals, run_s))
+    if closed:
+        verts.append(verts[0])
+    # A nick consumed by the miter would reverse. Drop it so the two real walls meet.
+    for _ in range(3):
+        collapsed = False
+        for i in range(n):
+            odx = chain[i]["x1"] - chain[i]["x0"]
+            ody = chain[i]["y1"] - chain[i]["y0"]
+            ndx = verts[i + 1][0] - verts[i][0]
+            ndy = verts[i + 1][1] - verts[i][1]
+            if ndx * odx + ndy * ody >= 0.0 and math.hypot(ndx, ndy) >= 0.02:
+                continue
+            prev_i = (i - 1) % n
+            next_i = (i + 1) % n
+            if not closed and (i == 0 or i == n - 1):
+                continue
+            anchor = (chain[i]["x0"], chain[i]["y0"])
+            joined = _offset_vertex(anchor, prev_i, next_i, chain, normals, run_s)
+            verts[i] = joined
+            verts[i + 1] = joined
+            if closed and i == 0:
+                verts[n] = joined
+            if closed and i == n - 1:
+                verts[0] = joined
+                verts[n] = joined
+            collapsed = True
+        if not collapsed:
+            break
+    dws = [2.0 * run_s[i] for i in range(n)]
+    return verts, dws
+
+
+def _shift_approach(lines: list[str], first: int, old: tuple[float, float], new: tuple[float, float]) -> bool:
+    """Point the non-Z approach at the new seam so the bead starts on its shifted centre."""
+    if math.hypot(new[0] - old[0], new[1] - old[1]) < 1e-4:
+        return False
+    j = first - 1
+    while j >= 0 and not lines[j].startswith(";LAYER_CHANGE"):
+        if not _is_g01(lines[j]):
+            j -= 1
+            continue
+        w = _ff_words(lines[j])
+        if "Z" in w:
+            # The layer-change travel may follow the centreline inward, inside the
+            # seam window, and its Z stays. A larger shift would move the station.
+            zx = float(w["X"]) if "X" in w else None
+            zy = float(w["Y"]) if "Y" in w else None
+            if zx is None or zy is None or abs(zx - old[0]) > 0.03 or abs(zy - old[1]) > 0.03:
+                return False
+            if abs(new[0] - old[0]) > 0.04 or abs(new[1] - old[1]) > 0.45:
+                return False
+            if abs(new[0] - old[0]) > 1e-4:
+                lines[j] = _ff_set_word(lines[j], "X", new[0], 3)
+            if abs(new[1] - old[1]) > 1e-4:
+                lines[j] = _ff_set_word(lines[j], "Y", new[1], 3)
+            return True
+        if "X" not in w and "Y" not in w:
+            j -= 1
+            continue
+        ex = float(w["X"]) if "X" in w else None
+        ey = float(w["Y"]) if "Y" in w else None
+        if ex is not None and abs(ex - old[0]) > 0.03:
+            break
+        if ey is not None and abs(ey - old[1]) > 0.03:
+            break
+        if abs(new[0] - old[0]) > 1e-4:
+            lines[j] = _ff_set_word(lines[j], "X", new[0], 3)
+        if abs(new[1] - old[1]) > 1e-4:
+            lines[j] = _ff_set_word(lines[j], "Y", new[1], 3)
+        return True
+    return False
+
+
+def _restore_modal_feed(lines: list[str], used: dict[int, float], slowed: set[int]) -> None:
+    """A slowed bead must not change the feed of the next move that did not ask for it."""
+    modal = 0.0
+    for index, line in enumerate(lines):
+        if not _is_g01(line):
+            continue
+        w = _ff_words(line)
+        if index in slowed:
+            if "F" in w:
+                modal = float(w["F"])
+            continue
+        want = used.get(index)
+        if want is None:
+            if "F" in w:
+                modal = float(w["F"])
+            continue
+        incoming = float(w["F"]) if "F" in w else modal
+        if abs(incoming - want) >= 1.0:
+            lines[index] = _ff_set_word(line, "F", want, 0)
+            modal = want
+        else:
+            modal = incoming
+
+
+def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, dict]:
+    """Bond forefoot skins to each other and to the interior without moving the outer edge.
+
+    Thin columns (section 2-3 mm) get at least 0.05 mm of skin overlap. Thick
+    columns (3-6 mm) get a stack overlapped by at least 0.15 mm. Widened moves
+    are slowed so their volumetric flow stays at or below 16.80 mm^3/s. Moves
+    that are not widened keep their feed. Lines after the forefoot are not
+    rewritten.
+    """
+    lines = text.splitlines(keepends=True)
+    parsed = _parse_moves(lines, reset_type=False)
+    if last_layer is None:
+        last_layer = forefoot_last_layer(parsed["layers"])
+    stats = {
+        "applied": False,
+        "layers": parsed["layers"],
+        "last_layer": last_layer,
+        "widened": 0,
+        "segments": 0,
+        "added_e": 0.0,
+        "approaches": 0,
+        "extended": 0,
+        "max_q_widened": 0.0,
+    }
+    if not last_layer or last_layer < 1:
+        stats["reason"] = "out of scope"
+        return text, stats
+    # Feeds every G1 used before this pass, so a later slowdown can be put back.
+    used: dict[int, float] = {}
+    modal = 0.0
+    for index, line in enumerate(lines):
+        if not _is_g01(line):
+            continue
+        w = _ff_words(line)
+        if "F" in w:
+            modal = float(w["F"])
+        if "X" in w or "Y" in w or "E" in w:
+            used[index] = modal
+    area = parsed["area"]
+    segs = [s for s in parsed["segs"] if 1 <= s["layer"] <= last_layer]
+    for seg in segs:
+        seg["ox0"], seg["oy0"] = seg["x0"], seg["y0"]
+        seg["ox1"], seg["oy1"] = seg["x1"], seg["y1"]
+    if not segs:
+        stats["reason"] = "no forefoot extrusion"
+        return text, stats
+    stats["extended"] = _extend_inners(segs)
+    _assign_needs(segs)
+    skin = [s for s in segs if s["kind"] == "skin"]
+    chains = _skin_chains(skin)
+    planned: dict[int, tuple[float, float, float, float]] = {}
+    slowed: set[int] = set()
+    for chain in chains:
+        if len(chain) < 2:
+            continue
+        verts, dws = _plan_chain(chain)
+        old_start = (chain[0]["x0"], chain[0]["y0"])
+        new_start = verts[0]
+        if _shift_approach(lines, chain[0]["i"], old_start, new_start):
+            stats["approaches"] += 1
+        elif math.hypot(new_start[0] - old_start[0], new_start[1] - old_start[1]) > 1e-4:
+            # The layer-change station cannot follow. Pin the loop shut on the
+            # original point so the seam stays put and the loop still closes.
+            verts[0] = old_start
+            verts[-1] = old_start
+        for i, seg in enumerate(chain):
+            x1, y1 = verts[i + 1]
+            length = math.hypot(x1 - verts[i][0], y1 - verts[i][1])
+            width = seg["w"] + dws[i]
+            if length < 0.02:
+                # A corner nick consumed by the miter. Keep the extrusion so the
+                # perimeter stays one loop, and deposit essentially nothing.
+                e = 1e-5
+                feed = seg["f"]
+            else:
+                e = round(_ff_e_for_width(width, length, area), 5)
+                feed = _ff_feed_for_e(e, length, seg["f"], area)
+            planned[seg["i"]] = (x1, y1, e, feed)
+            stats["segments"] += 1
+            if dws[i] > 1e-6 or stats["extended"]:
+                if dws[i] > 1e-6:
+                    stats["widened"] += 1
+                stats["added_e"] += e - seg["e"]
+            q = _ff_flow(width, feed)
+            if q > stats["max_q_widened"]:
+                stats["max_q_widened"] = q
+            if abs(feed - seg["f"]) >= 1.0:
+                slowed.add(seg["i"])
+    for chain in _skin_chains([s for s in segs if s["kind"] == "inner"]):
+        if math.hypot(chain[0]["x0"] - chain[0]["ox0"], chain[0]["y0"] - chain[0]["oy0"]) > 1e-4:
+            if _shift_approach(lines, chain[0]["i"], (chain[0]["ox0"], chain[0]["oy0"]), (chain[0]["x0"], chain[0]["y0"])):
+                stats["approaches"] += 1
+    for seg in segs:
+        if seg["kind"] == "skin" or seg["i"] in planned:
+            continue
+        dw = 2.0 * max(seg["need_lo"], seg["need_hi"])
+        x1, y1 = seg["x1"], seg["y1"]
+        length = math.hypot(x1 - seg["x0"], y1 - seg["y0"])
+        if length < 1e-6:
+            continue
+        width = seg["w"] + dw
+        # Extension may have changed the length. Rebuild E from the width either way.
+        e = round(_ff_e_for_width(width, length, area), 5)
+        feed = _ff_feed_for_e(e, length, seg["f"], area)
+        moved_xy = (
+            abs(seg["x0"] - seg["ox0"]) > 1e-4
+            or abs(seg["y0"] - seg["oy0"]) > 1e-4
+            or abs(x1 - seg["ox1"]) > 1e-4
+            or abs(y1 - seg["oy1"]) > 1e-4
+        )
+        if dw <= 1e-6 and not moved_xy and abs(e - seg["e"]) <= 1e-6:
+            continue
+        planned[seg["i"]] = (x1, y1, e, feed)
+        stats["segments"] += 1
+        if dw > 1e-6:
+            stats["widened"] += 1
+        stats["added_e"] += e - seg["e"]
+        q = _ff_flow(width, feed)
+        if q > stats["max_q_widened"]:
+            stats["max_q_widened"] = q
+        if abs(feed - seg["f"]) >= 1.0:
+            slowed.add(seg["i"])
+    if not planned and stats["extended"] == 0:
+        stats["reason"] = "nothing to bond"
+        return text, stats
+    for index, (x1, y1, e, feed) in planned.items():
+        line = lines[index]
+        line = _ff_set_word(line, "X", x1, 3)
+        line = _ff_set_word(line, "Y", y1, 3)
+        line = _ff_set_word(line, "E", e, 5)
+        if index in slowed:
+            line = _ff_set_word(line, "F", feed, 0)
+        lines[index] = line
+    _restore_modal_feed(lines, used, slowed)
+    stats["applied"] = True
+    stats["added_e"] = round(stats["added_e"], 3)
+    stats["max_q_widened"] = round(stats["max_q_widened"], 3)
+    return "".join(lines), stats
+
+
 def main() -> None:
     cmd = sys.argv[1]
     src = Path(sys.argv[2])
@@ -1946,9 +2764,11 @@ def main() -> None:
         # G2b toe seam, without the heelmod min-time pass.
         out, n = efix(text)
         out, counts = seam(out, retract_min_mm=2.0, skip_infill_travel=True, g2b_anchor=True)
+        out, bond = forefoot_cura_bond(out)
         Path(sys.argv[3]).write_text(out)
         print("efix", n)
         print("seam", counts)
+        print("forefoot_cura", bond)
     elif cmd == "all":
         out, n = efix(text)
         out, counts = seam(out)

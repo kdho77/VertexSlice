@@ -26,6 +26,9 @@ from postprocess_g2b import (  # noqa: E402
     WIPE_FRAC,
     WIPE_MM,
     _belt_split,
+    _ff_e_for_width,
+    forefoot_cura_bond,
+    forefoot_type_audit,
     seam,
 )
 import g3_seam_joint as g3  # noqa: E402
@@ -249,6 +252,178 @@ class SeamFuse(unittest.TestCase):
         self.assertTrue(landings)
         self.assertAlmostEqual(landings[-1][0], 11.0, places=3)
         self.assertAlmostEqual(landings[-1][1], 0.0, places=3)
+
+
+_FILAMENT_AREA = math.pi * (1.75 * 0.5) ** 2
+
+
+def _forefoot_e(width: float, length: float) -> float:
+    return _ff_e_for_width(width, length, _FILAMENT_AREA)
+
+
+def _g1(x: float, y: float, e: float | None = None, f: float | None = None) -> str:
+    parts = ["G1", f"X{x:.3f}", f"Y{y:.3f}"]
+    if f is not None:
+        parts.append(f"F{f:.0f}")
+    if e is not None:
+        parts.append(f"E{e:.5f}")
+    return " ".join(parts)
+
+
+def _loop(points: list[tuple[float, float, float]], z: float, feature: str | None) -> list[str]:
+    """Closed loop. points are (x, y, width) at each vertex; the last joins the first."""
+    lines = [
+        ";LAYER_CHANGE",
+        f";Z:{z:.5f}",
+        _g1(points[0][0], points[0][1], f=12720) + f" Z{z:.3f}",
+    ]
+    if feature:
+        lines.append(f";TYPE:{feature}")
+    lines.append("G1 F1560")
+    nxt = points[1:] + [points[0]]
+    for (x0, y0, _w0), (x1, y1, w1) in zip(points, nxt):
+        length = math.hypot(x1 - x0, y1 - y0)
+        lines.append(_g1(x1, y1, _forefoot_e(w1, length)))
+    return lines
+
+
+def _program(layers: list[list[str]]) -> str:
+    # A leading marker is layer 0. Forefoot extrusion starts at layer 1, matching
+    # the frozen grader, so every fixture begins with an empty layer change.
+    return "\n".join([
+        "; filament_diameter = 1.75",
+        "M83",
+        "G90",
+        ";LAYER_CHANGE",
+        ";Z:0.00000",
+        *sum(layers, []),
+        "",
+    ])
+
+
+def _extrusions(text: str) -> list[tuple[float, float, float, float, float]]:
+    """(x0, y0, x1, y1, e) for positive extrusions, in order."""
+    x = y = 0.0
+    out = []
+    for line in text.splitlines():
+        if not line.startswith("G1") and not line.startswith("G0"):
+            continue
+        words = {}
+        for tok in line.split(";")[0].split():
+            if tok[0] in "XYZE":
+                words[tok[0]] = float(tok[1:])
+        nx = words.get("X", x)
+        ny = words.get("Y", y)
+        if "E" in words and words["E"] > 1e-6:
+            out.append((x, y, nx, ny, words["E"]))
+        if "X" in words or "Y" in words:
+            x, y = nx, ny
+    return out
+
+
+def _bottom_outer(x0, y0, x1, y1, e) -> float:
+    length = math.hypot(x1 - x0, y1 - y0)
+    width = (e / length) * _FILAMENT_AREA / 0.46 + 0.46 * (1.0 - math.pi / 4.0)
+    return 0.5 * (y0 + y1) - width * 0.5
+
+
+class ForefootBondTests(unittest.TestCase):
+    def test_feature_type_persists_across_layer_change(self) -> None:
+        # ;TYPE: is emitted only when the feature changes, so a later layer with
+        # no comment is still the outer wall. Resetting the type at LAYER_CHANGE
+        # drops that layer.
+        pts = [(100.0, 0.5, 1.146), (120.0, 0.5, 1.146), (120.0, 2.2, 1.146), (100.0, 2.2, 1.146)]
+        text = _program([
+            _loop(pts, 0.46, "Outer wall"),
+            _loop(pts, 0.92, None),
+        ])
+        kept = forefoot_type_audit(text, reset_type=False, last_layer=2)
+        reset = forefoot_type_audit(text, reset_type=True, last_layer=2)
+        self.assertEqual(kept["missed_layers"], [])
+        self.assertIn(2, kept["chains"])
+        self.assertEqual(reset["missed_layers"], [2])
+        _out, stats = forefoot_cura_bond(text, last_layer=2)
+        self.assertTrue(stats["applied"])
+        self.assertGreater(stats["widened"], 0)
+
+    def test_variable_width_join_keeps_the_outer_edge(self) -> None:
+        # Two bottom beads of different width share one outer edge. The centreline
+        # steps inward by half the extra width. The bond may widen them; the
+        # printed outer edge stays on that line and the path stays continuous.
+        outer = 0.05
+        w1, w2 = 1.00, 1.40
+        y1, y2 = outer + w1 * 0.5, outer + w2 * 0.5
+        pts = [
+            (100.0, y1, w1),
+            (112.0, y1, w1),
+            (112.0, y2, w2),
+            (124.0, y2, w2),
+            (124.0, 2.4, 1.146),
+            (100.0, 2.4, 1.146),
+        ]
+        text = _program([_loop(pts, 0.46, "Outer wall")])
+        out, stats = forefoot_cura_bond(text, last_layer=1)
+        self.assertTrue(stats["applied"])
+        moves = _extrusions(out)
+        self.assertGreaterEqual(len(moves), 4)
+        for prev, nxt in zip(moves, moves[1:]):
+            self.assertLess(math.hypot(nxt[0] - prev[2], nxt[1] - prev[3]), 0.05)
+        bottoms = [m for m in moves if abs(m[3] - m[1]) < 0.05 and m[2] > m[0] and m[1] < 1.5]
+        self.assertGreaterEqual(len(bottoms), 2)
+        for move in bottoms:
+            self.assertLess(abs(_bottom_outer(*move) - outer), 0.02)
+
+    def test_disconnected_interior_stack_bonds(self) -> None:
+        # Two skins and two interior beads with air between them. The skins shift
+        # inward, the interior widens about its centre, and the outer edge stays.
+        outer_pts = [
+            (90.0, 0.50, 1.146),
+            (130.0, 0.50, 1.146),
+            (130.0, 3.40, 1.146),
+            (90.0, 3.40, 1.146),
+        ]
+        low = [(95.0, 1.55, 0.80), (125.0, 1.55, 0.80), (125.0, 1.90, 0.80), (95.0, 1.90, 0.80)]
+        high = [(95.0, 2.50, 0.80), (125.0, 2.50, 0.80), (125.0, 2.85, 0.80), (95.0, 2.85, 0.80)]
+        body = [
+            ";LAYER_CHANGE",
+            ";Z:0.46000",
+            _g1(90.0, 0.50, f=12720) + " Z0.460",
+            ";TYPE:Outer wall",
+            "G1 F1560",
+        ]
+        def emit(points):
+            nxt = points[1:] + [points[0]]
+            for (x0, y0, _w0), (x1, y1, w1) in zip(points, nxt):
+                length = math.hypot(x1 - x0, y1 - y0)
+                body.append(_g1(x1, y1, _forefoot_e(w1, length)))
+        emit(outer_pts)
+        body += [";TYPE:Inner wall", _g1(95.0, 1.55, f=12720)]
+        emit(low)
+        body += [_g1(95.0, 2.50, f=12720)]
+        emit(high)
+        text = _program([body])
+        before = _extrusions(text)
+        out, stats = forefoot_cura_bond(text, last_layer=1)
+        self.assertTrue(stats["applied"])
+        after = _extrusions(out)
+        self.assertEqual(len(after), len(before))
+        # Bottom outer edge of the long skin.
+        skin = [m for m in after if abs(m[1] - m[3]) < 0.05 and m[2] - m[0] > 20 and m[1] < 1.2]
+        self.assertEqual(len(skin), 1)
+        self.assertLess(abs(_bottom_outer(*skin[0]) - (0.50 - 1.146 * 0.5)), 0.02)
+        # Middle column: the four horizontal beads overlap their neighbours.
+        mids = sorted(
+            [m for m in after if min(m[0], m[2]) < 110 < max(m[0], m[2]) and abs(m[3] - m[1]) < 0.05],
+            key=lambda m: m[1],
+        )
+        self.assertGreaterEqual(len(mids), 4)
+        edges = []
+        for m in mids:
+            length = abs(m[2] - m[0])
+            width = (m[4] / length) * _FILAMENT_AREA / 0.46 + 0.46 * (1.0 - math.pi / 4.0)
+            edges.append((m[1] - width * 0.5, m[1] + width * 0.5))
+        for lo, hi in zip(edges, edges[1:]):
+            self.assertGreater(lo[1] - hi[0], 0.15)
 
 
 if __name__ == "__main__":
