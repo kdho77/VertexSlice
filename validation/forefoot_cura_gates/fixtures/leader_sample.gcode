@@ -1,0 +1,18 @@
+;Generated with Cura_SteamEngine 5.9.0
+; filament_diameter: 1.75
+M83
+;LAYER:10
+;TYPE:WALL-OUTER
+G1 X10 Y1 E1
+G1 X20 Y1 E1
+;LAYER:60
+;TYPE:WALL-OUTER
+G0 X10 Y6
+G1 X20 Y6 E1
+;LAYER:80
+;TYPE:Outer wall
+G1 X10 Y0.2 E1
+G1 X30 Y0.2 E1
+G1 X30 Y2.4 E1
+G1 X10 Y2.4 E1
+G1 X10 Y0.2 E1

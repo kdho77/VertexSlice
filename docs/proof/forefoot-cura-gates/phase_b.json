@@ -1,0 +1,720 @@
+{
+ "gates": [
+  {
+   "gate": "G1 thin_bond",
+   "model": "orthocad",
+   "stl": "orthocad_sample_top_insole.stl",
+   "forefoot_layers": "1-165",
+   "thin_columns": 15807,
+   "unbonded": 13640,
+   "bonded": 2167,
+   "median_gap_mm": 0.409187,
+   "base_median_gap_mm": 0.409522,
+   "cura_median_gap_mm": -0.45,
+   "overlap_required_mm": 0.05,
+   "examples": [
+    {
+     "layer": 65,
+     "x_bin": 278,
+     "x_mm": 139.25,
+     "overlap_mm": -0.4091
+    },
+    {
+     "layer": 104,
+     "x_bin": 206,
+     "x_mm": 103.25,
+     "overlap_mm": -0.4145
+    },
+    {
+     "layer": 68,
+     "x_bin": 283,
+     "x_mm": 141.75,
+     "overlap_mm": -0.4096
+    },
+    {
+     "layer": 7,
+     "x_bin": 273,
+     "x_mm": 136.75,
+     "overlap_mm": -0.4117
+    },
+    {
+     "layer": 81,
+     "x_bin": 222,
+     "x_mm": 111.25,
+     "overlap_mm": -0.4161
+    },
+    {
+     "layer": 67,
+     "x_bin": 324,
+     "x_mm": 162.25,
+     "overlap_mm": -0.409
+    },
+    {
+     "layer": 70,
+     "x_bin": 329,
+     "x_mm": 164.75,
+     "overlap_mm": -0.4041
+    },
+    {
+     "layer": 42,
+     "x_bin": 267,
+     "x_mm": 133.75,
+     "overlap_mm": -0.4096
+    },
+    {
+     "layer": 83,
+     "x_bin": 268,
+     "x_mm": 134.25,
+     "overlap_mm": -0.4312
+    },
+    {
+     "layer": 60,
+     "x_bin": 284,
+     "x_mm": 142.25,
+     "overlap_mm": -0.4076
+    },
+    {
+     "layer": 32,
+     "x_bin": 222,
+     "x_mm": 111.25,
+     "overlap_mm": -0.411
+    },
+    {
+     "layer": 35,
+     "x_bin": 227,
+     "x_mm": 113.75,
+     "overlap_mm": -0.4108
+    }
+   ],
+   "result": "FAIL",
+   "failures": [
+    "13640 unbonded thin columns (skin overlap < 0.05 mm); 0 required"
+   ]
+  },
+  {
+   "gate": "G2 thick_bond",
+   "model": "orthocad",
+   "stl": "orthocad_sample_top_insole.stl",
+   "forefoot_layers": "1-165",
+   "thick_columns": 8144,
+   "unbonded": 6016,
+   "belt_air_pct": 21.893418,
+   "dorsal_air_pct": 21.132122,
+   "cura_belt_air_pct": 46.0,
+   "cura_dorsal_air_pct": 39.0,
+   "overlap_required_mm": 0.15,
+   "examples": [
+    {
+     "layer": 132,
+     "x_bin": 268,
+     "x_mm": 134.25
+    },
+    {
+     "layer": 151,
+     "x_bin": 281,
+     "x_mm": 140.75
+    },
+    {
+     "layer": 150,
+     "x_bin": 322,
+     "x_mm": 161.25
+    },
+    {
+     "layer": 141,
+     "x_bin": 273,
+     "x_mm": 136.75
+    },
+    {
+     "layer": 153,
+     "x_bin": 327,
+     "x_mm": 163.75
+    },
+    {
+     "layer": 125,
+     "x_bin": 265,
+     "x_mm": 132.75
+    },
+    {
+     "layer": 144,
+     "x_bin": 278,
+     "x_mm": 139.25
+    },
+    {
+     "layer": 138,
+     "x_bin": 204,
+     "x_mm": 102.25
+    },
+    {
+     "layer": 157,
+     "x_bin": 217,
+     "x_mm": 108.75
+    },
+    {
+     "layer": 102,
+     "x_bin": 281,
+     "x_mm": 140.75
+    },
+    {
+     "layer": 162,
+     "x_bin": 332,
+     "x_mm": 166.25
+    },
+    {
+     "layer": 160,
+     "x_bin": 222,
+     "x_mm": 111.25
+    }
+   ],
+   "result": "FAIL",
+   "failures": [
+    "6016 of 8144 columns 3-6 mm are unbonded (need overlap >= 0.15 mm through the stack)"
+   ]
+  },
+  {
+   "gate": "G3 outer_edge",
+   "model": "orthocad",
+   "samples": 97348,
+   "missing_samples": 0,
+   "p99_mm": 0.046595,
+   "max_mm": 1.67904,
+   "p99_limit_mm": 0.02,
+   "max_limit_mm": 0.05,
+   "cand_bead_height_mm": 0.46,
+   "base_bead_height_mm": 0.46,
+   "result": "FAIL",
+   "failures": [
+    "p99 outer-edge deviation 0.04659500003769538 mm > 0.02 mm",
+    "max outer-edge deviation 1.6790401496730334 mm > 0.05 mm"
+   ]
+  },
+  {
+   "gate": "G4 seams",
+   "model": "orthocad",
+   "closed_loops": 160,
+   "base_closed_loops": 165,
+   "closed_off_bottom": 0,
+   "starts_moved": 5,
+   "layer_changes_bad": 0,
+   "examples_off_bottom": [],
+   "examples_moved": [
+    {
+     "unmatched_base_starts": 1,
+     "layer": 1
+    },
+    {
+     "unmatched_base_starts": 1,
+     "layer": 2
+    },
+    {
+     "unmatched_base_starts": 1,
+     "layer": 3
+    },
+    {
+     "unmatched_base_starts": 1,
+     "layer": 4
+    },
+    {
+     "unmatched_base_starts": 1,
+     "layer": 6
+    }
+   ],
+   "examples_layer_change": [],
+   "result": "FAIL",
+   "failures": [
+    "5 closed-loop starts left their BASE station (X within 0.05 mm, Y within 0.50 mm)"
+   ]
+  },
+  {
+   "gate": "G9 filament_outline",
+   "model": "orthocad",
+   "cand_forefoot_mm": 7034.70641,
+   "base_forefoot_mm": 6098.20747,
+   "increase_mm": 936.49894,
+   "increase_pct": 15.356954,
+   "outside_samples": [
+    {
+     "layer": 1,
+     "x": 132.5128,
+     "y": -0.4782,
+     "dist_mm": 0.1689,
+     "line": 74,
+     "type": "Overhang wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 1,
+     "x": 132.9232,
+     "y": -0.3214,
+     "dist_mm": 0.1282,
+     "line": 74,
+     "type": "Overhang wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 1,
+     "x": 133.3336,
+     "y": -0.1646,
+     "dist_mm": 0.0944,
+     "line": 74,
+     "type": "Overhang wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 1,
+     "x": 133.744,
+     "y": -0.0078,
+     "dist_mm": 0.0969,
+     "line": 74,
+     "type": "Overhang wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 1,
+     "x": 134.1544,
+     "y": 0.149,
+     "dist_mm": 0.1767,
+     "line": 74,
+     "type": "Overhang wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 1,
+     "x": 134.1939,
+     "y": 0.272,
+     "dist_mm": 0.1067,
+     "line": 75,
+     "type": "Overhang wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 1,
+     "x": 134.5006,
+     "y": 1.4789,
+     "dist_mm": 0.1492,
+     "line": 77,
+     "type": "Overhang wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 1,
+     "x": 134.3637,
+     "y": 1.557,
+     "dist_mm": 0.0404,
+     "line": 78,
+     "type": "Overhang wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 1,
+     "x": 132.6256,
+     "y": 1.8263,
+     "dist_mm": 0.0278,
+     "line": 81,
+     "type": "Overhang wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 1,
+     "x": 122.6742,
+     "y": 0.7946,
+     "dist_mm": 0.1025,
+     "line": 114,
+     "type": "Overhang wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 1,
+     "x": 123.6695,
+     "y": 0.6374,
+     "dist_mm": 0.0538,
+     "line": 117,
+     "type": "Overhang wall",
+     "why": "outward of the BASE outer edge"
+    },
+    {
+     "layer": 1,
+     "x": 127.4078,
+     "y": 0.0075,
+     "dist_mm": 0.0262,
+     "line": 135,
+     "type": "Outer wall",
+     "why": "outward of the BASE outer edge"
+    }
+   ],
+   "outline_tol_mm": 0.02,
+   "result": "FAIL",
+   "failures": [
+    "12 forefoot bead samples lie outside the BASE outer outline (showing 12)"
+   ]
+  },
+  {
+   "gate": "G6 flow",
+   "model": "orthocad",
+   "moves": 8340,
+   "max_mm3_s": 125.340932,
+   "p95_mm3_s": 25.466776,
+   "median_mm3_s": 15.817108,
+   "over_17_1": 1808,
+   "over_35": 83,
+   "cap_mm3_s": 17.1,
+   "hard_cap_mm3_s": 35.0,
+   "worst": {
+    "q": 125.340932,
+    "layer": 123,
+    "line": 7649,
+    "type": "Inner wall",
+    "speed_mm_s": 212.0
+   },
+   "result": "FAIL",
+   "failures": [
+    "1808 forefoot moves exceed 17.1 mm^3/s (max 125.341)",
+    "83 forefoot moves exceed the 35.0 mm^3/s hard cap"
+   ]
+  },
+  {
+   "gate": "G7 time",
+   "cand_s": 5351.237804,
+   "base_s": 5326.980562,
+   "delta_pct": 0.455366,
+   "limit_pct": 2.0,
+   "cand_footer": "1h 27m 15s",
+   "base_footer": "1h 27m 15s",
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G8 crossings",
+   "crossings_frozen_sha256": "5641f7ec52424040ca11a14090462ab2448b1fc8f3b51695530a18b22d1faf19",
+   "cand": {
+    "perimeter_crossings": 0,
+    "surface_crossings": 0,
+    "seam_block_crossings": 0
+   },
+   "base": {
+    "perimeter_crossings": 0,
+    "surface_crossings": 0,
+    "seam_block_crossings": 0
+   },
+   "cand_skin_interior_travels": 111,
+   "base_skin_interior_travels": 111,
+   "samples": [],
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G1 thin_bond",
+   "model": "insole",
+   "stl": "insole_sample.stl",
+   "forefoot_layers": "1-31",
+   "thin_columns": 178,
+   "unbonded": 178,
+   "bonded": 0,
+   "median_gap_mm": 0.425165,
+   "base_median_gap_mm": 0.425165,
+   "cura_median_gap_mm": -0.45,
+   "overlap_required_mm": 0.05,
+   "examples": [
+    {
+     "layer": 3,
+     "x_bin": 294,
+     "x_mm": 147.25,
+     "overlap_mm": -0.4252
+    },
+    {
+     "layer": 3,
+     "x_bin": 303,
+     "x_mm": 151.75,
+     "overlap_mm": -0.4252
+    },
+    {
+     "layer": 3,
+     "x_bin": 312,
+     "x_mm": 156.25,
+     "overlap_mm": -0.4252
+    },
+    {
+     "layer": 3,
+     "x_bin": 278,
+     "x_mm": 139.25,
+     "overlap_mm": -0.4252
+    },
+    {
+     "layer": 3,
+     "x_bin": 287,
+     "x_mm": 143.75,
+     "overlap_mm": -0.4252
+    },
+    {
+     "layer": 3,
+     "x_bin": 296,
+     "x_mm": 148.25,
+     "overlap_mm": -0.4252
+    },
+    {
+     "layer": 3,
+     "x_bin": 305,
+     "x_mm": 152.75,
+     "overlap_mm": -0.4252
+    },
+    {
+     "layer": 3,
+     "x_bin": 314,
+     "x_mm": 157.25,
+     "overlap_mm": -0.4252
+    },
+    {
+     "layer": 3,
+     "x_bin": 271,
+     "x_mm": 135.75,
+     "overlap_mm": -0.4252
+    },
+    {
+     "layer": 3,
+     "x_bin": 280,
+     "x_mm": 140.25,
+     "overlap_mm": -0.4252
+    },
+    {
+     "layer": 3,
+     "x_bin": 289,
+     "x_mm": 144.75,
+     "overlap_mm": -0.4252
+    },
+    {
+     "layer": 3,
+     "x_bin": 298,
+     "x_mm": 149.25,
+     "overlap_mm": -0.4252
+    }
+   ],
+   "result": "FAIL",
+   "failures": [
+    "178 unbonded thin columns (skin overlap < 0.05 mm); 0 required"
+   ]
+  },
+  {
+   "gate": "G2 thick_bond",
+   "model": "insole",
+   "stl": "insole_sample.stl",
+   "forefoot_layers": "1-31",
+   "thick_columns": 534,
+   "unbonded": 534,
+   "belt_air_pct": 34.456929,
+   "dorsal_air_pct": 34.456929,
+   "cura_belt_air_pct": 46.0,
+   "cura_dorsal_air_pct": 39.0,
+   "overlap_required_mm": 0.15,
+   "examples": [
+    {
+     "layer": 6,
+     "x_bin": 192,
+     "x_mm": 96.25
+    },
+    {
+     "layer": 5,
+     "x_bin": 236,
+     "x_mm": 118.25
+    },
+    {
+     "layer": 6,
+     "x_bin": 201,
+     "x_mm": 100.75
+    },
+    {
+     "layer": 4,
+     "x_bin": 357,
+     "x_mm": 178.75
+    },
+    {
+     "layer": 6,
+     "x_bin": 210,
+     "x_mm": 105.25
+    },
+    {
+     "layer": 4,
+     "x_bin": 366,
+     "x_mm": 183.25
+    },
+    {
+     "layer": 6,
+     "x_bin": 219,
+     "x_mm": 109.75
+    },
+    {
+     "layer": 5,
+     "x_bin": 330,
+     "x_mm": 165.25
+    },
+    {
+     "layer": 4,
+     "x_bin": 222,
+     "x_mm": 111.25
+    },
+    {
+     "layer": 5,
+     "x_bin": 339,
+     "x_mm": 169.75
+    },
+    {
+     "layer": 6,
+     "x_bin": 304,
+     "x_mm": 152.25
+    },
+    {
+     "layer": 4,
+     "x_bin": 231,
+     "x_mm": 115.75
+    }
+   ],
+   "result": "FAIL",
+   "failures": [
+    "534 of 534 columns 3-6 mm are unbonded (need overlap >= 0.15 mm through the stack)"
+   ]
+  },
+  {
+   "gate": "G3 outer_edge",
+   "model": "insole",
+   "samples": 24284,
+   "missing_samples": 0,
+   "p99_mm": 0.000407,
+   "max_mm": 0.008334,
+   "p99_limit_mm": 0.02,
+   "max_limit_mm": 0.05,
+   "cand_bead_height_mm": 0.46,
+   "base_bead_height_mm": 0.46,
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G4 seams",
+   "model": "insole",
+   "closed_loops": 30,
+   "base_closed_loops": 30,
+   "closed_off_bottom": 0,
+   "starts_moved": 0,
+   "layer_changes_bad": 0,
+   "examples_off_bottom": [],
+   "examples_moved": [],
+   "examples_layer_change": [],
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G9 filament_outline",
+   "model": "insole",
+   "cand_forefoot_mm": 3683.64961,
+   "base_forefoot_mm": 3239.67189,
+   "increase_mm": 443.97772,
+   "increase_pct": 13.704404,
+   "outside_samples": [],
+   "outline_tol_mm": 0.02,
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G6 flow",
+   "model": "insole",
+   "moves": 6327,
+   "max_mm3_s": 24.397019,
+   "p95_mm3_s": 12.008707,
+   "median_mm3_s": 11.256009,
+   "over_17_1": 135,
+   "over_35": 0,
+   "cap_mm3_s": 17.1,
+   "hard_cap_mm3_s": 35.0,
+   "worst": {
+    "q": 24.397019,
+    "layer": 6,
+    "line": 293,
+    "type": "Inner wall",
+    "speed_mm_s": 42.0
+   },
+   "result": "FAIL",
+   "failures": [
+    "135 forefoot moves exceed 17.1 mm^3/s (max 24.397)"
+   ]
+  },
+  {
+   "gate": "G7 time",
+   "cand_s": 2044.348848,
+   "base_s": 2044.313456,
+   "delta_pct": 0.001731,
+   "limit_pct": 2.0,
+   "cand_footer": "34m 4s",
+   "base_footer": "34m 4s",
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G8 crossings",
+   "crossings_frozen_sha256": "5641f7ec52424040ca11a14090462ab2448b1fc8f3b51695530a18b22d1faf19",
+   "cand": {
+    "perimeter_crossings": 0,
+    "surface_crossings": 0,
+    "seam_block_crossings": 0
+   },
+   "base": {
+    "perimeter_crossings": 0,
+    "surface_crossings": 0,
+    "seam_block_crossings": 0
+   },
+   "cand_skin_interior_travels": 1,
+   "base_skin_interior_travels": 1,
+   "samples": [],
+   "result": "PASS",
+   "failures": []
+  },
+  {
+   "gate": "G5 outside_scope",
+   "cores": [
+    {
+     "model": "orthocad",
+     "forefoot_last_layer": 165,
+     "post_forefoot_chars": 2611915,
+     "post_forefoot_equal": true,
+     "first_diff_char": null,
+     "process_mcodes_equal": true,
+     "base_sha256": "b58621bce3669580bb9b2e1ef67c7251e8155396c87cbe4098b477b05768b66a",
+     "cand_sha256": "1507fadc97014760c66e688785cd9675bcdef706175c7d05de25f1b9d1a276ae"
+    },
+    {
+     "model": "insole",
+     "forefoot_last_layer": 31,
+     "post_forefoot_chars": 509481,
+     "post_forefoot_equal": true,
+     "first_diff_char": null,
+     "process_mcodes_equal": true,
+     "base_sha256": "c78aecc9c792cd860694bf4dfaee2b495e5e480d607b61c9087d0991d71c5c81",
+     "cand_sha256": "70ff67875d03579386f4b5f93a274059143c18475421fc6fcca83df6d73bf393"
+    }
+   ],
+   "pairs": [
+    {
+     "label": "ApexLight",
+     "equal": true,
+     "first_diff_byte": null,
+     "base_sha256_norm": "db9a72a04c985f0f5135809db64dcb1cd207bc32f0e314f718aa4d2a965a92fe",
+     "cand_sha256_norm": "db9a72a04c985f0f5135809db64dcb1cd207bc32f0e314f718aa4d2a965a92fe"
+    },
+    {
+     "label": "ApexLight",
+     "equal": true,
+     "first_diff_byte": null,
+     "base_sha256_norm": "f6723dfc855385fc17c8f9ebbd7d131b2baac5f346026b3ac1a475abaeedf7aa",
+     "cand_sha256_norm": "f6723dfc855385fc17c8f9ebbd7d131b2baac5f346026b3ac1a475abaeedf7aa"
+    }
+   ],
+   "unchecked_materials": [
+    "ApexForge",
+    "ApexBounce"
+   ],
+   "strict_materials": false,
+   "note": "Unchecked ApexForge/ApexBounce means those files were not in the grade inputs. That is not a pass on Forge or Bounce. BASE CI run 44943125841 uploads ApexCore and ApexLight only.",
+   "result": "PASS",
+   "failures": []
+  }
+ ],
+ "result": "FAIL",
+ "fail_count": 9,
+ "pass_count": 8
+}
