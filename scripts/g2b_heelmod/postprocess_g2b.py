@@ -2494,6 +2494,20 @@ def _plan_chain(chain: list[dict]) -> tuple[list[tuple[float, float]], list[floa
             s = min(s, 0.45)
         for i in run:
             run_s[i] = s
+    # A short corner left at inset 0 stays below the raised plantar wall, and the
+    # seam check then treats that corner as the whole bottom. Give the corner
+    # the neighbouring wall's inset. The corner still moves on its own normal.
+    for i in range(n):
+        if chain[i]["L"] >= 0.30 or normals[i][1] > -0.35:
+            continue
+        neighbors = []
+        if closed or i > 0:
+            neighbors.append((i - 1) % n)
+        if closed or i + 1 < n:
+            neighbors.append((i + 1) % n)
+        for j in neighbors:
+            if run_s[j] > run_s[i]:
+                run_s[i] = run_s[j]
     count = n if closed else n + 1
     verts: list[tuple[float, float]] = []
     for v in range(count):

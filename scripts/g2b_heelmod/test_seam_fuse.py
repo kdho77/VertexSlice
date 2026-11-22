@@ -406,16 +406,22 @@ class ForefootBondTests(unittest.TestCase):
         out, stats = forefoot_cura_bond(text, last_layer=1)
         self.assertTrue(stats["applied"])
         after = _extrusions(out)
-        self.assertEqual(len(after), len(before))
-        # Bottom outer edge of the long skin.
-        skin = [m for m in after if abs(m[1] - m[3]) < 0.05 and m[2] - m[0] > 20 and m[1] < 1.2]
-        self.assertEqual(len(skin), 1)
-        self.assertLess(abs(_bottom_outer(*skin[0]) - (0.50 - 1.146 * 0.5)), 0.02)
-        # Middle column: the four horizontal beads overlap their neighbours.
-        mids = sorted(
-            [m for m in after if min(m[0], m[2]) < 110 < max(m[0], m[2]) and abs(m[3] - m[1]) < 0.05],
-            key=lambda m: m[1],
-        )
+        self.assertGreaterEqual(len(after), len(before))
+        # Bottom outer edge of the long skin. Column pieces stay on that edge.
+        skin = [
+            m for m in after
+            if abs(m[1] - m[3]) < 0.02 and m[2] - m[0] > 0.4 and m[1] < 1.2
+        ]
+        self.assertGreaterEqual(len(skin), 1)
+        self.assertGreater(sum(m[2] - m[0] for m in skin), 20)
+        for move in skin:
+            self.assertLess(abs(_bottom_outer(*move) - (0.50 - 1.146 * 0.5)), 0.02)
+        # A middle column: the horizontal beads overlap their neighbours.
+        def _covers(move: tuple[float, float, float, float, float]) -> bool:
+            lo, hi = sorted((move[0], move[2]))
+            return lo - 1e-6 <= 110.25 <= hi + 1e-6 and abs(move[3] - move[1]) < 0.05
+
+        mids = sorted([m for m in after if _covers(m)], key=lambda m: m[1])
         self.assertGreaterEqual(len(mids), 4)
         edges = []
         for m in mids:
@@ -424,6 +430,35 @@ class ForefootBondTests(unittest.TestCase):
             edges.append((m[1] - width * 0.5, m[1] + width * 0.5))
         for lo, hi in zip(edges, edges[1:]):
             self.assertGreater(lo[1] - hi[0], 0.15)
+
+    def test_short_notch_is_kept_and_its_outer_edge_stays(self) -> None:
+        # A 0.16 mm toe notch between the plantar wall and the side wall. Widening
+        # the long wall must not average the notch away or collapse it.
+        notch = ((180.000, 0.630), (180.148, 0.695))
+        pts = [
+            (100.0, 0.55, 1.10),
+            (notch[0][0], notch[0][1], 1.10),
+            (notch[1][0], notch[1][1], 1.10),
+            (181.6, 2.40, 1.10),
+            (100.0, 1.95, 1.10),
+        ]
+        text = _program([_loop(pts, 0.46, "Outer wall")])
+        out, stats = forefoot_cura_bond(text, last_layer=1)
+        self.assertTrue(stats["applied"])
+        moves = _extrusions(out)
+        notch_len = math.hypot(notch[1][0] - notch[0][0], notch[1][1] - notch[0][1])
+        ndx, ndy = notch[1][0] - notch[0][0], notch[1][1] - notch[0][1]
+        kept = []
+        for m in moves:
+            length = math.hypot(m[2] - m[0], m[3] - m[1])
+            if min(m[0], m[2]) <= 179.0 or length < 0.10:
+                continue
+            dot = ((m[2] - m[0]) * ndx + (m[3] - m[1]) * ndy) / (length * notch_len)
+            if dot > 0.95:
+                kept.append(m)
+        self.assertTrue(kept, "short notch was dropped or flipped")
+        for prev, nxt in zip(moves, moves[1:]):
+            self.assertLess(math.hypot(nxt[0] - prev[2], nxt[1] - prev[3]), 0.05)
 
 
 if __name__ == "__main__":
