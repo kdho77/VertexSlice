@@ -2837,7 +2837,9 @@ def _thick_cura_fill(text: str, stats: dict) -> tuple[str, dict]:
     Cura's thick toe is one outer wall per side and fill pressed about 0.23 mm
     into that wall. The outer wall is not moved. A 2-3 mm section is not
     touched. The bead is sized so its envelope meets both skins, and its feed
-    is held at 16.80 mm^3/s.
+    is held at 16.80 mm^3/s. The fill ends at the toe tip, and the seam travel
+    that leaves from there can cut the outer wall. That travel is walked
+    inside the part. A file with no such travel is returned unchanged.
     """
     lines = text.splitlines(keepends=True)
     parsed = _parse_moves(lines, reset_type=False)
@@ -3034,7 +3036,13 @@ def _thick_cura_fill(text: str, stats: dict) -> tuple[str, dict]:
     stats["applied"] = True
     stats["thick_chains"] = replaced
     stats["thick_orphans"] = sum(len(bins) for bins in uncovered.values())
-    return "".join(out), stats
+    joined = "".join(out)
+    # Same inside-wall walk the seam pass uses. It rewrites a travel only when
+    # that travel cuts the wall and neither end is already on the wall, and it
+    # keeps the travel's own end point, Z, and comment.
+    routed = clear_perimeter_crossings(joined)
+    stats["thick_routes"] = 0 if routed == joined else routed.count("\n") - joined.count("\n")
+    return routed, stats
 
 
 def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, dict]:

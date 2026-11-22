@@ -26,11 +26,13 @@ from postprocess_g2b import (  # noqa: E402
     WIPE_FRAC,
     WIPE_MM,
     _belt_split,
+    _crossing,
     _ff_e_for_width,
     forefoot_cura_bond,
     forefoot_type_audit,
     seam,
 )
+from check_travel_wall_crossings import _Grid  # noqa: E402
 import g3_seam_joint as g3  # noqa: E402
 
 
@@ -428,6 +430,90 @@ class ForefootBondTests(unittest.TestCase):
             if min(1.073, hi) - max(0.50 - 0.573, lo) >= 0.15 and min(3.40 + 0.573, hi) - max(2.827, lo) >= 0.15:
                 covered = True
         self.assertTrue(covered, "fill bead does not reach both skins")
+
+    def test_thick_fill_routes_a_crossing_seam_travel_inside(self) -> None:
+        # The fill leaves the nozzle at the toe tip. The next seam travel cuts
+        # a notch in the outer wall. The walk stays inside and still lands on
+        # the seam point, Z included.
+        outer_pts = [
+            (90.0, 0.50, 1.146),
+            (140.0, 0.50, 1.146),
+            (140.0, 3.40, 1.146),
+            (122.0, 3.40, 1.146),
+            (118.0, 1.70, 1.146),
+            (114.0, 3.40, 1.146),
+            (90.0, 3.40, 1.146),
+        ]
+        low = [(95.0, 1.55, 0.80), (135.0, 1.55, 0.80), (135.0, 1.90, 0.80), (95.0, 1.90, 0.80)]
+        high = [(95.0, 2.50, 0.80), (135.0, 2.50, 0.80), (135.0, 2.85, 0.80), (95.0, 2.85, 0.80)]
+        body = [
+            ";LAYER_CHANGE",
+            ";Z:0.46000",
+            _g1(90.0, 0.50, f=12720) + " Z0.460",
+            ";TYPE:Outer wall",
+            "G1 F1560",
+        ]
+
+        def emit(points):
+            nxt = points[1:] + [points[0]]
+            for (x0, y0, _w0), (x1, y1, w1) in zip(points, nxt):
+                length = math.hypot(x1 - x0, y1 - y0)
+                body.append(_g1(x1, y1, _forefoot_e(w1, length)))
+
+        emit(outer_pts)
+        body += [";TYPE:Inner wall", _g1(95.0, 1.55, f=12720)]
+        emit(low)
+        body += [_g1(95.0, 2.50, f=12720)]
+        emit(high)
+        body += [
+            ";TYPE:Outer wall",
+            "G1 X128.000 Y2.200 F12720",
+            "G1 X100.000 Y2.200 Z0.920 F12720 ;seam travel",
+        ]
+        text = _program([body])
+        out, stats = forefoot_cura_bond(text, last_layer=1)
+        self.assertGreater(stats["thick_routes"], 0)
+        landed = [ln for ln in out.splitlines() if ln.endswith(";seam travel")]
+        self.assertEqual(len(landed), 1)
+        w = _words(landed[0])
+        self.assertEqual(w["X"], "100.000")
+        self.assertEqual(w["Y"], "2.200")
+        self.assertEqual(w["Z"], "0.920")
+        # The straight chord crossed. The emitted pieces do not.
+        edges = []
+        x = y = None
+        typ = ""
+        for line in out.splitlines():
+            if line.startswith(";TYPE:"):
+                typ = line[6:].strip()
+                continue
+            if not line.startswith("G1"):
+                continue
+            words = _words(line)
+            px, py = x, y
+            if "X" in words:
+                x = float(words["X"])
+            if "Y" in words:
+                y = float(words["Y"])
+            if px is None or x is None or ("X" not in words and "Y" not in words):
+                continue
+            if "E" in words and float(words["E"]) > 1e-9 and typ == "Outer wall":
+                edges.append((px, py, x, y))
+        grid = _Grid(edges)
+        sx, sy = 128.0, 2.2
+        self.assertTrue(_crossing(grid, sx, sy, 100.0, 2.2))
+        for line in out.splitlines():
+            if not line.startswith("G1"):
+                continue
+            words = _words(line)
+            if "E" in words and float(words["E"]) > 1e-9:
+                continue
+            if "X" not in words and "Y" not in words:
+                continue
+            nx = float(words["X"]) if "X" in words else sx
+            ny = float(words["Y"]) if "Y" in words else sy
+            self.assertFalse(_crossing(grid, sx, sy, nx, ny), line)
+            sx, sy = nx, ny
 
     def test_corner_join_keeps_both_outer_edges(self) -> None:
         # A thin loop: long plantar wall, vertical side, long dorsal wall.
