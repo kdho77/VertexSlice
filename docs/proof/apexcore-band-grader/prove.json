@@ -1,0 +1,1086 @@
+{
+  "hollow_step_mm": 0.25,
+  "mutations": {
+    "layer_50_deleted_outer_wall": "G1 X144.584 Y0.253 E2.61634 F1200",
+    "layer_50_seam_shifted": true,
+    "layer_160_appended": [
+      ";TYPE:Sparse infill",
+      ";WIDTH:1",
+      "G1 X150.000 Y0.021 F1560",
+      "G1 X160.000 Y0.021 E50.000",
+      "G1 X180.000 Y0.900 E10.000",
+      "G1 X120.000 Y2.000 F9000",
+      "G1 X120.000 Y-2.000"
+    ],
+    "layer_180_deleted_infill": "G1 X146.762 Y3.955 E0.65052"
+  },
+  "identity": {
+    "G2": {
+      "pass": true,
+      "measured": {
+        "diff_count": 0,
+        "non_stamp_diffs": [],
+        "stamp_diffs": []
+      }
+    },
+    "G3": {
+      "pass": true,
+      "measured": {
+        "differing_layers": [],
+        "outside_band": [],
+        "preamble_non_stamp": [],
+        "preamble_stamp": []
+      }
+    },
+    "G4": {
+      "pass": true,
+      "measured": {
+        "layers": [],
+        "removed_or_modified_baseline_lines": 0,
+        "added_extrude_other": 0,
+        "examples": []
+      }
+    },
+    "G5": {
+      "pass": true,
+      "measured": {
+        "baseline_moves": 29197,
+        "candidate_moves": 29197,
+        "mismatched_layers": []
+      }
+    },
+    "G6": {
+      "pass": true,
+      "measured": {
+        "moved_layer_count": 0,
+        "moved_layers": [],
+        "seam_start_classes": {
+          "bottom": 436,
+          "top": 2
+        },
+        "preexisting_top_or_side": [
+          {
+            "layer": 436,
+            "typ": "Outer wall",
+            "x": 130.334,
+            "y": 18.487,
+            "class": "top"
+          },
+          {
+            "layer": 436,
+            "typ": "Outer wall",
+            "x": 145.611,
+            "y": 18.698,
+            "class": "top"
+          }
+        ],
+        "newly_top_or_side": []
+      }
+    },
+    "G7": {
+      "pass": true,
+      "measured": {
+        "added_extrusions_checked": 0,
+        "min_distance_mm": null,
+        "violations": []
+      }
+    },
+    "G8": {
+      "pass": true,
+      "measured": {
+        "samples": 0,
+        "min_thickness_mm": null,
+        "samples_under_3mm": 0,
+        "outside_shell_or_thin": [],
+        "thin_station_mismatches": []
+      }
+    },
+    "G9": {
+      "pass": false,
+      "measured": {
+        "sample_mm": 0.25,
+        "column_rule": "contiguous vertical rays whose shell is >= 3 mm thick, clear air between shell beads is > 1 mm, and no interior extrusion (inner wall or infill) occupies that air; a run counts only if its covered width is > 1 mm; columns = floor(width_mm) per such run",
+        "baseline_forefoot_columns": 296,
+        "candidate_forefoot_columns": 296,
+        "baseline_forefoot_width_mm": 301.0,
+        "candidate_forefoot_width_mm": 301.0,
+        "baseline_above_165_columns": 102,
+        "candidate_above_165_columns": 102,
+        "baseline_above_165_width_mm": 139.0,
+        "candidate_above_165_width_mm": 139.0,
+        "baseline_forefoot_layers": {
+          "156": {
+            "columns": 9,
+            "width_mm": 9.25,
+            "runs": [
+              {
+                "x0": 127.5,
+                "x1": 136.5,
+                "width_mm": 9.25,
+                "columns": 9
+              }
+            ]
+          },
+          "157": {
+            "columns": 14,
+            "width_mm": 14.25,
+            "runs": [
+              {
+                "x0": 125.0,
+                "x1": 139.0,
+                "width_mm": 14.25,
+                "columns": 14
+              }
+            ]
+          },
+          "158": {
+            "columns": 18,
+            "width_mm": 18.25,
+            "runs": [
+              {
+                "x0": 123.0,
+                "x1": 141.0,
+                "width_mm": 18.25,
+                "columns": 18
+              }
+            ]
+          },
+          "159": {
+            "columns": 22,
+            "width_mm": 22.25,
+            "runs": [
+              {
+                "x0": 120.5,
+                "x1": 142.5,
+                "width_mm": 22.25,
+                "columns": 22
+              }
+            ]
+          },
+          "160": {
+            "columns": 26,
+            "width_mm": 26.75,
+            "runs": [
+              {
+                "x0": 117.5,
+                "x1": 144.0,
+                "width_mm": 26.75,
+                "columns": 26
+              }
+            ]
+          },
+          "161": {
+            "columns": 32,
+            "width_mm": 32.75,
+            "runs": [
+              {
+                "x0": 112.75,
+                "x1": 145.25,
+                "width_mm": 32.75,
+                "columns": 32
+              }
+            ]
+          },
+          "162": {
+            "columns": 38,
+            "width_mm": 38.25,
+            "runs": [
+              {
+                "x0": 108.75,
+                "x1": 146.75,
+                "width_mm": 38.25,
+                "columns": 38
+              }
+            ]
+          },
+          "163": {
+            "columns": 43,
+            "width_mm": 43.75,
+            "runs": [
+              {
+                "x0": 104.0,
+                "x1": 147.5,
+                "width_mm": 43.75,
+                "columns": 43
+              }
+            ]
+          },
+          "164": {
+            "columns": 46,
+            "width_mm": 46.75,
+            "runs": [
+              {
+                "x0": 102.5,
+                "x1": 149.0,
+                "width_mm": 46.75,
+                "columns": 46
+              }
+            ]
+          },
+          "165": {
+            "columns": 48,
+            "width_mm": 48.75,
+            "runs": [
+              {
+                "x0": 102.0,
+                "x1": 150.5,
+                "width_mm": 48.75,
+                "columns": 48
+              }
+            ]
+          }
+        },
+        "candidate_forefoot_layers": {
+          "156": {
+            "columns": 9,
+            "width_mm": 9.25,
+            "runs": [
+              {
+                "x0": 127.5,
+                "x1": 136.5,
+                "width_mm": 9.25,
+                "columns": 9
+              }
+            ]
+          },
+          "157": {
+            "columns": 14,
+            "width_mm": 14.25,
+            "runs": [
+              {
+                "x0": 125.0,
+                "x1": 139.0,
+                "width_mm": 14.25,
+                "columns": 14
+              }
+            ]
+          },
+          "158": {
+            "columns": 18,
+            "width_mm": 18.25,
+            "runs": [
+              {
+                "x0": 123.0,
+                "x1": 141.0,
+                "width_mm": 18.25,
+                "columns": 18
+              }
+            ]
+          },
+          "159": {
+            "columns": 22,
+            "width_mm": 22.25,
+            "runs": [
+              {
+                "x0": 120.5,
+                "x1": 142.5,
+                "width_mm": 22.25,
+                "columns": 22
+              }
+            ]
+          },
+          "160": {
+            "columns": 26,
+            "width_mm": 26.75,
+            "runs": [
+              {
+                "x0": 117.5,
+                "x1": 144.0,
+                "width_mm": 26.75,
+                "columns": 26
+              }
+            ]
+          },
+          "161": {
+            "columns": 32,
+            "width_mm": 32.75,
+            "runs": [
+              {
+                "x0": 112.75,
+                "x1": 145.25,
+                "width_mm": 32.75,
+                "columns": 32
+              }
+            ]
+          },
+          "162": {
+            "columns": 38,
+            "width_mm": 38.25,
+            "runs": [
+              {
+                "x0": 108.75,
+                "x1": 146.75,
+                "width_mm": 38.25,
+                "columns": 38
+              }
+            ]
+          },
+          "163": {
+            "columns": 43,
+            "width_mm": 43.75,
+            "runs": [
+              {
+                "x0": 104.0,
+                "x1": 147.5,
+                "width_mm": 43.75,
+                "columns": 43
+              }
+            ]
+          },
+          "164": {
+            "columns": 46,
+            "width_mm": 46.75,
+            "runs": [
+              {
+                "x0": 102.5,
+                "x1": 149.0,
+                "width_mm": 46.75,
+                "columns": 46
+              }
+            ]
+          },
+          "165": {
+            "columns": 48,
+            "width_mm": 48.75,
+            "runs": [
+              {
+                "x0": 102.0,
+                "x1": 150.5,
+                "width_mm": 48.75,
+                "columns": 48
+              }
+            ]
+          }
+        },
+        "above_165_increased": false
+      }
+    },
+    "G10": {
+      "pass": true,
+      "measured": {
+        "baseline_sparse_e_per_mm_min": 0.05762,
+        "baseline_sparse_e_per_mm_max": 0.81814,
+        "baseline_sparse_moves": 28603,
+        "added_e_per_mm_min": null,
+        "added_e_per_mm_max": null,
+        "added_moves_checked": 0,
+        "e_per_mm_violations": [],
+        "e_per_mm_violation_count": 0,
+        "travels_through_outer_wall_count": 0,
+        "travels_through_outer_wall": [],
+        "unretracted_empty_travel_count": 0,
+        "unretracted_empty_travels": []
+      }
+    }
+  },
+  "bad_copy": {
+    "G2": {
+      "pass": false,
+      "measured": {
+        "diff_count": 1,
+        "non_stamp_diffs": [
+          {
+            "kind": "other",
+            "line": 68,
+            "base": "G1 X95.488 Y.004 Z.651 F12720",
+            "cand": "G1 X1.000 Y.004 Z.651 F12720"
+          }
+        ],
+        "stamp_diffs": []
+      }
+    },
+    "G3": {
+      "pass": false,
+      "measured": {
+        "differing_layers": [
+          50,
+          160,
+          180
+        ],
+        "outside_band": [
+          50,
+          180
+        ],
+        "preamble_non_stamp": [],
+        "preamble_stamp": []
+      }
+    },
+    "G4": {
+      "pass": false,
+      "measured": {
+        "layers": [
+          {
+            "layer": 50,
+            "baseline_is_subsequence": false,
+            "added_lines": 1,
+            "removed_or_modified_baseline_lines": 2,
+            "counts": {}
+          },
+          {
+            "layer": 160,
+            "baseline_is_subsequence": true,
+            "added_lines": 7,
+            "removed_or_modified_baseline_lines": 0,
+            "counts": {
+              "comment_type": 1,
+              "comment_width": 1,
+              "travel": 3,
+              "extrude_sparse": 2,
+              "extrude_type:Sparse infill": 2
+            }
+          },
+          {
+            "layer": 180,
+            "baseline_is_subsequence": false,
+            "added_lines": 0,
+            "removed_or_modified_baseline_lines": 1,
+            "counts": {}
+          }
+        ],
+        "removed_or_modified_baseline_lines": 3,
+        "added_extrude_other": 0,
+        "examples": [
+          {
+            "layer": 50,
+            "missing_line_indexes": [
+              18,
+              24
+            ],
+            "sample": [
+              "G1 X134.584 Y0.493 Z33.828 F12720 ;seam travel",
+              "G1 X144.584 Y0.253 E2.61634 F1200"
+            ]
+          },
+          {
+            "layer": 180,
+            "missing_line_indexes": [
+              242
+            ],
+            "sample": [
+              "G1 X146.762 Y3.955 E0.65052"
+            ]
+          }
+        ]
+      }
+    },
+    "G5": {
+      "pass": false,
+      "measured": {
+        "baseline_moves": 29197,
+        "candidate_moves": 29196,
+        "mismatched_layers": [
+          {
+            "layer": 50,
+            "base_moves": 14,
+            "cand_moves": 13
+          }
+        ]
+      }
+    },
+    "G6": {
+      "pass": false,
+      "measured": {
+        "moved_layer_count": 1,
+        "moved_layers": [
+          {
+            "layer": 50,
+            "base": {
+              "z": 34.4785,
+              "travels": [
+                [
+                  "Outer wall",
+                  134.584,
+                  0.493,
+                  33.828
+                ]
+              ],
+              "starts": [
+                [
+                  "Outer wall",
+                  134.584,
+                  0.253
+                ]
+              ]
+            },
+            "cand": {
+              "z": 34.4785,
+              "travels": [
+                [
+                  "Outer wall",
+                  139.584,
+                  0.493,
+                  33.828
+                ]
+              ],
+              "starts": [
+                [
+                  "Outer wall",
+                  139.584,
+                  0.253
+                ]
+              ]
+            }
+          }
+        ],
+        "seam_start_classes": {
+          "bottom": 436,
+          "top": 2
+        },
+        "preexisting_top_or_side": [
+          {
+            "layer": 436,
+            "typ": "Outer wall",
+            "x": 130.334,
+            "y": 18.487,
+            "class": "top"
+          },
+          {
+            "layer": 436,
+            "typ": "Outer wall",
+            "x": 145.611,
+            "y": 18.698,
+            "class": "top"
+          }
+        ],
+        "newly_top_or_side": []
+      }
+    },
+    "G7": {
+      "pass": false,
+      "measured": {
+        "added_extrusions_checked": 2,
+        "min_distance_mm": 0.0,
+        "violations": [
+          {
+            "layer": 160,
+            "distance_mm": 0.0009999999999999974,
+            "crossed": false,
+            "x0": 150.0,
+            "y0": 0.021,
+            "x1": 160.0,
+            "y1": 0.021,
+            "type": "Sparse infill"
+          },
+          {
+            "layer": 160,
+            "distance_mm": 0.0,
+            "crossed": true,
+            "x0": 160.0,
+            "y0": 0.021,
+            "x1": 180.0,
+            "y1": 0.9,
+            "type": "Sparse infill"
+          }
+        ]
+      }
+    },
+    "G8": {
+      "pass": false,
+      "measured": {
+        "samples": 122,
+        "min_thickness_mm": 2.4597,
+        "samples_under_3mm": 26,
+        "outside_shell_or_thin": [
+          {
+            "layer": 160,
+            "x": 150.0,
+            "y": 0.021,
+            "type": "Sparse infill"
+          },
+          {
+            "layer": 160,
+            "x": 160.0,
+            "y": 0.021,
+            "type": "Sparse infill"
+          },
+          {
+            "layer": 160,
+            "x": 150.25,
+            "y": 0.021,
+            "type": "Sparse infill"
+          },
+          {
+            "layer": 160,
+            "x": 150.5,
+            "y": 0.021,
+            "type": "Sparse infill"
+          },
+          {
+            "layer": 160,
+            "x": 150.75,
+            "y": 0.021,
+            "type": "Sparse infill"
+          },
+          {
+            "layer": 160,
+            "x": 151.0,
+            "y": 0.021,
+            "type": "Sparse infill"
+          },
+          {
+            "layer": 160,
+            "x": 151.25,
+            "y": 0.021,
+            "type": "Sparse infill"
+          },
+          {
+            "layer": 160,
+            "x": 151.5,
+            "y": 0.021,
+            "type": "Sparse infill"
+          },
+          {
+            "layer": 160,
+            "x": 151.75,
+            "y": 0.021,
+            "type": "Sparse infill"
+          },
+          {
+            "layer": 160,
+            "x": 152.0,
+            "y": 0.021,
+            "type": "Sparse infill"
+          },
+          {
+            "layer": 160,
+            "x": 152.25,
+            "y": 0.021,
+            "type": "Sparse infill"
+          },
+          {
+            "layer": 160,
+            "x": 152.5,
+            "y": 0.021,
+            "type": "Sparse infill"
+          }
+        ],
+        "thin_station_mismatches": [
+          {
+            "layer": 50,
+            "x": 135.0,
+            "thickness_mm": 2.339
+          },
+          {
+            "layer": 50,
+            "x": 135.5,
+            "thickness_mm": 2.339
+          },
+          {
+            "layer": 50,
+            "x": 136.0,
+            "thickness_mm": 2.339
+          },
+          {
+            "layer": 50,
+            "x": 136.5,
+            "thickness_mm": 2.339
+          },
+          {
+            "layer": 50,
+            "x": 137.0,
+            "thickness_mm": 2.339
+          },
+          {
+            "layer": 50,
+            "x": 137.5,
+            "thickness_mm": 2.339
+          },
+          {
+            "layer": 50,
+            "x": 138.0,
+            "thickness_mm": 2.339
+          },
+          {
+            "layer": 50,
+            "x": 138.5,
+            "thickness_mm": 2.339
+          },
+          {
+            "layer": 50,
+            "x": 139.0,
+            "thickness_mm": 2.339
+          },
+          {
+            "layer": 50,
+            "x": 139.5,
+            "thickness_mm": 2.339
+          },
+          {
+            "layer": 160,
+            "x": 174.0,
+            "thickness_mm": 2.92
+          },
+          {
+            "layer": 160,
+            "x": 174.5,
+            "thickness_mm": 2.836
+          }
+        ]
+      }
+    },
+    "G9": {
+      "pass": false,
+      "measured": {
+        "sample_mm": 0.25,
+        "column_rule": "contiguous vertical rays whose shell is >= 3 mm thick, clear air between shell beads is > 1 mm, and no interior extrusion (inner wall or infill) occupies that air; a run counts only if its covered width is > 1 mm; columns = floor(width_mm) per such run",
+        "baseline_forefoot_columns": 296,
+        "candidate_forefoot_columns": 296,
+        "baseline_forefoot_width_mm": 301.0,
+        "candidate_forefoot_width_mm": 301.0,
+        "baseline_above_165_columns": 102,
+        "candidate_above_165_columns": 102,
+        "baseline_above_165_width_mm": 139.0,
+        "candidate_above_165_width_mm": 139.0,
+        "baseline_forefoot_layers": {
+          "156": {
+            "columns": 9,
+            "width_mm": 9.25,
+            "runs": [
+              {
+                "x0": 127.5,
+                "x1": 136.5,
+                "width_mm": 9.25,
+                "columns": 9
+              }
+            ]
+          },
+          "157": {
+            "columns": 14,
+            "width_mm": 14.25,
+            "runs": [
+              {
+                "x0": 125.0,
+                "x1": 139.0,
+                "width_mm": 14.25,
+                "columns": 14
+              }
+            ]
+          },
+          "158": {
+            "columns": 18,
+            "width_mm": 18.25,
+            "runs": [
+              {
+                "x0": 123.0,
+                "x1": 141.0,
+                "width_mm": 18.25,
+                "columns": 18
+              }
+            ]
+          },
+          "159": {
+            "columns": 22,
+            "width_mm": 22.25,
+            "runs": [
+              {
+                "x0": 120.5,
+                "x1": 142.5,
+                "width_mm": 22.25,
+                "columns": 22
+              }
+            ]
+          },
+          "160": {
+            "columns": 26,
+            "width_mm": 26.75,
+            "runs": [
+              {
+                "x0": 117.5,
+                "x1": 144.0,
+                "width_mm": 26.75,
+                "columns": 26
+              }
+            ]
+          },
+          "161": {
+            "columns": 32,
+            "width_mm": 32.75,
+            "runs": [
+              {
+                "x0": 112.75,
+                "x1": 145.25,
+                "width_mm": 32.75,
+                "columns": 32
+              }
+            ]
+          },
+          "162": {
+            "columns": 38,
+            "width_mm": 38.25,
+            "runs": [
+              {
+                "x0": 108.75,
+                "x1": 146.75,
+                "width_mm": 38.25,
+                "columns": 38
+              }
+            ]
+          },
+          "163": {
+            "columns": 43,
+            "width_mm": 43.75,
+            "runs": [
+              {
+                "x0": 104.0,
+                "x1": 147.5,
+                "width_mm": 43.75,
+                "columns": 43
+              }
+            ]
+          },
+          "164": {
+            "columns": 46,
+            "width_mm": 46.75,
+            "runs": [
+              {
+                "x0": 102.5,
+                "x1": 149.0,
+                "width_mm": 46.75,
+                "columns": 46
+              }
+            ]
+          },
+          "165": {
+            "columns": 48,
+            "width_mm": 48.75,
+            "runs": [
+              {
+                "x0": 102.0,
+                "x1": 150.5,
+                "width_mm": 48.75,
+                "columns": 48
+              }
+            ]
+          }
+        },
+        "candidate_forefoot_layers": {
+          "156": {
+            "columns": 9,
+            "width_mm": 9.25,
+            "runs": [
+              {
+                "x0": 127.5,
+                "x1": 136.5,
+                "width_mm": 9.25,
+                "columns": 9
+              }
+            ]
+          },
+          "157": {
+            "columns": 14,
+            "width_mm": 14.25,
+            "runs": [
+              {
+                "x0": 125.0,
+                "x1": 139.0,
+                "width_mm": 14.25,
+                "columns": 14
+              }
+            ]
+          },
+          "158": {
+            "columns": 18,
+            "width_mm": 18.25,
+            "runs": [
+              {
+                "x0": 123.0,
+                "x1": 141.0,
+                "width_mm": 18.25,
+                "columns": 18
+              }
+            ]
+          },
+          "159": {
+            "columns": 22,
+            "width_mm": 22.25,
+            "runs": [
+              {
+                "x0": 120.5,
+                "x1": 142.5,
+                "width_mm": 22.25,
+                "columns": 22
+              }
+            ]
+          },
+          "160": {
+            "columns": 26,
+            "width_mm": 26.75,
+            "runs": [
+              {
+                "x0": 117.5,
+                "x1": 144.0,
+                "width_mm": 26.75,
+                "columns": 26
+              }
+            ]
+          },
+          "161": {
+            "columns": 32,
+            "width_mm": 32.75,
+            "runs": [
+              {
+                "x0": 112.75,
+                "x1": 145.25,
+                "width_mm": 32.75,
+                "columns": 32
+              }
+            ]
+          },
+          "162": {
+            "columns": 38,
+            "width_mm": 38.25,
+            "runs": [
+              {
+                "x0": 108.75,
+                "x1": 146.75,
+                "width_mm": 38.25,
+                "columns": 38
+              }
+            ]
+          },
+          "163": {
+            "columns": 43,
+            "width_mm": 43.75,
+            "runs": [
+              {
+                "x0": 104.0,
+                "x1": 147.5,
+                "width_mm": 43.75,
+                "columns": 43
+              }
+            ]
+          },
+          "164": {
+            "columns": 46,
+            "width_mm": 46.75,
+            "runs": [
+              {
+                "x0": 102.5,
+                "x1": 149.0,
+                "width_mm": 46.75,
+                "columns": 46
+              }
+            ]
+          },
+          "165": {
+            "columns": 48,
+            "width_mm": 48.75,
+            "runs": [
+              {
+                "x0": 102.0,
+                "x1": 150.5,
+                "width_mm": 48.75,
+                "columns": 48
+              }
+            ]
+          }
+        },
+        "above_165_increased": false
+      }
+    },
+    "G10": {
+      "pass": false,
+      "measured": {
+        "baseline_sparse_e_per_mm_min": 0.05762,
+        "baseline_sparse_e_per_mm_max": 0.81814,
+        "baseline_sparse_moves": 28603,
+        "added_e_per_mm_min": 0.4995177978298503,
+        "added_e_per_mm_max": 5.0,
+        "added_moves_checked": 2,
+        "e_per_mm_violations": [
+          {
+            "layer": 160,
+            "e_per_mm": 5.0,
+            "length_mm": 10.0,
+            "type": "Sparse infill"
+          }
+        ],
+        "e_per_mm_violation_count": 1,
+        "travels_through_outer_wall_count": 2,
+        "travels_through_outer_wall": [
+          {
+            "layer": 160,
+            "x0": 184.0,
+            "y0": 1.414,
+            "x1": 150.0,
+            "y1": 0.021,
+            "length_mm": 34.029,
+            "retracted": false,
+            "side_mm": [
+              -1.392,
+              0.001
+            ]
+          },
+          {
+            "layer": 160,
+            "x0": 120.0,
+            "y0": 2.0,
+            "x1": 120.0,
+            "y1": -2.0,
+            "length_mm": 4.0,
+            "retracted": false,
+            "side_mm": [
+              -1.979,
+              2.021
+            ]
+          }
+        ],
+        "unretracted_empty_travel_count": 1,
+        "unretracted_empty_travels": [
+          {
+            "layer": 160,
+            "length_mm": 60.01,
+            "empty_span_mm": 39.507,
+            "retracted": false
+          }
+        ]
+      }
+    }
+  },
+  "g1_empty_diff": {
+    "gate": "G1",
+    "pass": true,
+    "threshold": "git diff touches only scripts/g2b_heelmod/postprocess_g2b.py and scripts/g2b_heelmod/test_seam_fuse.py",
+    "measured": {
+      "files": [],
+      "extra_files": [],
+      "numstat": []
+    },
+    "command": "git diff --name-only <sha>..<sha>  # empty"
+  },
+  "g1_extra_file": {
+    "gate": "G1",
+    "pass": false,
+    "threshold": "git diff touches only scripts/g2b_heelmod/postprocess_g2b.py and scripts/g2b_heelmod/test_seam_fuse.py",
+    "measured": {
+      "files": [
+        "scripts/g2b_heelmod/postprocess_g2b.py",
+        "scripts/g2b_heelmod/test_seam_fuse.py",
+        "README.md"
+      ],
+      "extra_files": [
+        "README.md"
+      ],
+      "numstat": []
+    },
+    "command": "synthetic name-status with README.md"
+  },
+  "synthetic_empty_shell": {
+    "columns": 20,
+    "width_mm": 20.25,
+    "runs": [
+      {
+        "x0": 0.0,
+        "x1": 20.0,
+        "width_mm": 20.25,
+        "columns": 20
+      }
+    ]
+  },
+  "synthetic_filled_shell": {
+    "columns": 0,
+    "width_mm": 0.0,
+    "runs": []
+  },
+  "problems": []
+}
