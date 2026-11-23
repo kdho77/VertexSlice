@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.requests import Request
 from starlette.responses import Response
 
+from server.job_store import StoredJob, job_store_from_env
 from server.jobs import DEFAULT_RETENTION_S, PreparedSlice, SliceJobQueue
 from server.profile_registry import (
     DEFAULT_MATERIAL_ID,
@@ -231,8 +232,33 @@ def run_prepared_slice(prepared: PreparedSlice) -> tuple[str, dict[str, str]]:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-# One worker for sync and job slices. Job routes return immediately; sync waits.
-slice_queue = SliceJobQueue(run_prepared_slice)
+def build_prepared_slice(stored: StoredJob) -> PreparedSlice:
+    """Rebuild a claimed job on whichever process won the claim.
+
+    The profile is loaded again from the registry. The model bytes, material,
+    overrides, and timeout stored with the job are the ones validation accepted.
+    """
+    profile = get_profile(stored.profile_id, material=stored.material_id)
+    if profile is None:
+        raise RuntimeError(f"Unknown profile_id: {stored.profile_id}")
+    if stored.model_bytes is None:
+        raise RuntimeError("slice job has no model")
+    return PreparedSlice(
+        model_bytes=stored.model_bytes,
+        suffix=stored.suffix,
+        filename=stored.filename,
+        profile_id=stored.profile_id,
+        material_id=stored.material_id,
+        profile=profile,
+        overrides=dict(stored.overrides),
+        belt_insole_place=stored.belt_insole_place,
+        timeout_s=stored.timeout_s,
+    )
+
+
+# One worker thread per process. Job rows sit in the store selected by
+# VERTEXSLICE_JOB_STORE (memory unless redis or postgres is set).
+slice_queue = SliceJobQueue(run_prepared_slice, build_prepared_slice, job_store_from_env())
 
 
 async def _await_slice(item, request: Request) -> str:
@@ -352,7 +378,7 @@ def slice_job_status(job_id: str, _: None = Depends(require_api_key)):
 
 @app.get("/v1/slice/jobs/{job_id}/result", response_class=PlainTextResponse)
 def slice_job_result(job_id: str, _: None = Depends(require_api_key)):
-    view = slice_queue.get(job_id)
+    view = slice_queue.result(job_id)
     if view is None:
         raise HTTPException(status_code=404, detail="unknown or expired job")
     if view.status != "succeeded":

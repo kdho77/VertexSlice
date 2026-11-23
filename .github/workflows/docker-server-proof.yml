@@ -188,7 +188,7 @@ jobs:
           python validation/tests/test_apex_v2_gcode_bookends.py
           python validation/tests/test_first_layer_y.py
           python validation/tests/test_print_direction_tunables.py
-          python -m unittest tests.test_server_full_chain tests.test_golden_gate tests.test_threemf_modifiers tests.test_region_infill tests.test_slice_jobs -v
+          python -m unittest tests.test_server_full_chain tests.test_golden_gate tests.test_threemf_modifiers tests.test_region_infill tests.test_slice_jobs tests.test_job_store -v
 
   # Frozen seam-fuse gates. Additive: the jobs above are unchanged.
   # LIVE is the published server image (main). PRE-29 replaces that image's

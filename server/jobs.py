@@ -1,12 +1,10 @@
-"""Single in-process FIFO queue for /v1/slice and /v1/slice/jobs.
+"""FIFO slice worker for /v1/slice and /v1/slice/jobs.
 
-One worker thread runs the existing slice function off the asyncio event loop.
-Job submissions return as soon as the upload is valid. The synchronous route
-waits on the same queue, so a second slice never starts until the first one
-leaves the worker. Disconnecting a sync client cancels that slice's subprocess
-tree (Linux /proc) and frees the worker for the next item.
-
-Finished jobs stay in memory for at least an hour. A restart drops them.
+One thread per process runs the existing slice function off the asyncio event
+loop. Job rows live in a JobStore. claim is atomic, so several processes can
+share a Redis or Postgres store and still slice each job once. The default
+store is in-memory. Disconnecting a sync client cancels that slice's subprocess
+tree (Linux /proc) and frees this process's worker.
 """
 from __future__ import annotations
 
@@ -14,14 +12,38 @@ import os
 import signal
 import threading
 import time
-from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
 
 from fastapi import HTTPException
 
-DEFAULT_RETENTION_S = 60 * 60
+from server.job_store import (
+    DEFAULT_RETENTION_S,
+    JobStore,
+    JobView,
+    MemoryJobStore,
+    StoredJob,
+    job_store_from_env,
+)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+__all__ = [
+    "DEFAULT_RETENTION_S",
+    "JobView",
+    "PreparedSlice",
+    "RequestCancelled",
+    "SliceJobQueue",
+    "descendant_pids",
+    "error_text",
+    "job_store_from_env",
+    "kill_new_descendants",
+]
+
+_POLL_S = 0.25
 
 
 class RequestCancelled(Exception):
@@ -44,90 +66,23 @@ class PreparedSlice:
 @dataclass(eq=False)
 class WorkItem:
     prepared: PreparedSlice | None
-    job: SliceJob | None = None
+    stored: StoredJob | None = None
+    arrived_at: datetime | None = None
     cancel: threading.Event = None  # type: ignore[assignment]
     done: threading.Event = None  # type: ignore[assignment]
     text: str | None = None
     headers: dict[str, str] | None = None
     error: BaseException | None = None
     killer_started: bool = False
+    stored_done: bool = False
 
     def __post_init__(self) -> None:
         if self.cancel is None:
             self.cancel = threading.Event()
         if self.done is None:
             self.done = threading.Event()
-
-
-@dataclass(eq=False)
-class SliceJob:
-    job_id: str
-    queued_at: datetime
-    position_at_accept: int
-    status: str = "queued"
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    finished_mono: float | None = None
-    error: str | None = None
-    gcode: str | None = None
-    headers: dict[str, str] | None = None
-
-    def mark_running(self) -> None:
-        self.status = "running"
-        self.started_at = _utcnow()
-
-    def mark_finished(self, item: WorkItem) -> None:
-        self.finished_at = _utcnow()
-        self.finished_mono = time.monotonic()
-        if item.error is None:
-            self.status = "succeeded"
-            self.gcode = item.text
-            self.headers = dict(item.headers or {})
-            self.error = None
-            return
-        self.status = "failed"
-        self.error = error_text(item.error)
-        self.gcode = None
-        self.headers = None
-
-
-@dataclass
-class JobView:
-    job_id: str
-    status: str
-    position: int | None
-    queued_at: str
-    started_at: str | None
-    finished_at: str | None
-    elapsed_s: float | None
-    error: str | None
-    gcode: str | None = None
-    headers: dict[str, str] | None = None
-
-    def public(self) -> dict:
-        return {
-            "job_id": self.job_id,
-            "status": self.status,
-            "position": self.position,
-            "queued_at": self.queued_at,
-            "started_at": self.started_at,
-            "finished_at": self.finished_at,
-            "elapsed_s": self.elapsed_s,
-            "error": self.error,
-        }
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _iso(dt: datetime | None) -> str | None:
-    if dt is None:
-        return None
-    text = dt.astimezone(timezone.utc).isoformat()
-    if text.endswith("+00:00"):
-        return text[:-6] + "Z"
-    return text
+        if self.arrived_at is None:
+            self.arrived_at = _utcnow()
 
 
 def error_text(exc: BaseException) -> str:
@@ -190,51 +145,81 @@ def kill_new_descendants(root: int, before: set[int]) -> None:
             pass
 
 
+def stored_from_prepared(prepared: PreparedSlice, job_id: str) -> StoredJob:
+    return StoredJob(
+        job_id=job_id,
+        queued_at=_utcnow(),
+        profile_id=prepared.profile_id,
+        material_id=prepared.material_id,
+        suffix=prepared.suffix,
+        filename=prepared.filename,
+        overrides=dict(prepared.overrides),
+        belt_insole_place=prepared.belt_insole_place,
+        timeout_s=prepared.timeout_s,
+        model_bytes=prepared.model_bytes,
+    )
+
+
 class SliceJobQueue:
-    def __init__(self, runner: Callable[[PreparedSlice], tuple[str, dict[str, str]]]):
+    def __init__(
+        self,
+        runner: Callable[[PreparedSlice], tuple[str, dict[str, str]]],
+        prepare: Callable[[StoredJob], PreparedSlice],
+        store: JobStore | None = None,
+    ):
         self._runner = runner
-        self.retention_s = DEFAULT_RETENTION_S
-        self._jobs: dict[str, SliceJob] = {}
-        self._queue: deque[WorkItem] = deque()
+        self._prepare = prepare
+        self._store = store if store is not None else MemoryJobStore()
+        self._sync: list[WorkItem] = []
         self._current: WorkItem | None = None
         self._current_pids: set[int] | None = None
         self._cv = threading.Condition()
         self._thread: threading.Thread | None = None
         self._started = False
 
+    @property
+    def store(self) -> JobStore:
+        return self._store
+
+    @property
+    def retention_s(self) -> int:
+        return self._store.retention_s
+
+    @retention_s.setter
+    def retention_s(self, value: int) -> None:
+        self._store.retention_s = value
+
     def start(self) -> None:
         with self._cv:
             if self._started:
                 return
+            self._store.add_waiter(self._cv)
             self._thread = threading.Thread(target=self._loop, name="slice-job-worker", daemon=True)
             self._thread.start()
             self._started = True
 
     def submit_sync(self, prepared: PreparedSlice) -> WorkItem:
+        """Queue a slice whose HTTP response stays on this process."""
         self.start()
-        item = WorkItem(prepared=prepared, job=None)
+        item = WorkItem(prepared=prepared, stored=None, arrived_at=_utcnow())
         with self._cv:
-            self._queue.append(item)
+            self._sync.append(item)
             self._cv.notify()
+        self._store.wake()
         return item
 
     def enqueue(self, prepared: PreparedSlice, job_id: str) -> tuple[str, int]:
         """Accept a job. Returns (job_id, position) captured at acceptance.
 
         Position is 1-based and counts this job, every unfinished job ahead of
-        it, and a slice already running (including a synchronous one).
+        it, and a slice already running on this process or recorded in the store.
         """
         self.start()
-        job = SliceJob(job_id=job_id, queued_at=_utcnow(), position_at_accept=1)
-        item = WorkItem(prepared=prepared, job=job)
+        job = stored_from_prepared(prepared, job_id)
         with self._cv:
-            self._purge_locked()
-            self._jobs[job_id] = job
-            self._queue.append(item)
-            position = self._position_locked(job)
-            if position is None:
-                position = 1
-            job.position_at_accept = position
+            local_extra = self._local_extra_locked()
+        position = self._store.enqueue(job, local_extra=local_extra)
+        with self._cv:
             self._cv.notify()
         return job_id, position
 
@@ -242,8 +227,8 @@ class SliceJobQueue:
         """Drop a queued sync slice, or kill the subprocess tree if it is running."""
         item.cancel.set()
         with self._cv:
-            if item in self._queue:
-                self._queue.remove(item)
+            if item in self._sync:
+                self._sync.remove(item)
                 if item.error is None:
                     item.error = RequestCancelled()
                 item.done.set()
@@ -257,43 +242,54 @@ class SliceJobQueue:
 
     def get(self, job_id: str) -> JobView | None:
         with self._cv:
-            self._purge_locked()
-            job = self._jobs.get(job_id)
-            if job is None:
-                return None
-            return self._view_locked(job)
+            local_extra = self._local_extra_locked()
+        return self._store.get(job_id, local_extra=local_extra)
+
+    def result(self, job_id: str) -> JobView | None:
+        with self._cv:
+            local_extra = self._local_extra_locked()
+        return self._store.result(job_id, local_extra=local_extra)
 
     def known_ids(self) -> list[str]:
-        with self._cv:
-            self._purge_locked()
-            return list(self._jobs)
+        return self._store.ids()
 
     def wait_idle(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
         with self._cv:
-            while (self._current is not None or self._queue) and time.monotonic() < deadline:
+            while self._busy_locked() and time.monotonic() < deadline:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
                 self._cv.wait(timeout=remaining)
-            return self._current is None and not self._queue
+            return not self._busy_locked()
 
     def reset_for_tests(self) -> None:
         with self._cv:
-            queued = list(self._queue)
-            self._queue.clear()
+            queued = list(self._sync)
+            self._sync.clear()
             current = self._current
-            self._jobs.clear()
-            self.retention_s = DEFAULT_RETENTION_S
+        self._store.reset()
         for item in queued:
             item.cancel.set()
             if item.error is None:
                 item.error = RequestCancelled()
             item.done.set()
-        if current is not None:
+        if current is not None and not current.done.is_set():
             self.cancel(current)
             current.done.wait(timeout=5)
         self.wait_idle(2)
+
+    def _local_extra_locked(self) -> int:
+        """A sync slice on this process is not a row in the store, so count it here."""
+        current = self._current
+        if current is not None and current.stored is None:
+            return 1
+        return 0
+
+    def _busy_locked(self) -> bool:
+        if self._current is not None or self._sync:
+            return True
+        return self._store.has_pending()
 
     def _arm_killer(self, item: WorkItem, before: set[int]) -> None:
         def _run() -> None:
@@ -306,25 +302,47 @@ class SliceJobQueue:
 
     def _loop(self) -> None:
         while True:
-            item = self._take()
-            if item is None:
-                continue
+            item = None
             try:
+                item = self._take()
+                if item is None:
+                    continue
                 self._execute(item)
             except Exception as exc:
-                item.error = item.error or exc
-                item.done.set()
+                if item is not None:
+                    item.error = item.error or exc
+                    item.done.set()
                 with self._cv:
-                    if self._current is item:
+                    if item is not None and self._current is item:
                         self._current = None
                         self._current_pids = None
                     self._cv.notify_all()
 
     def _take(self) -> WorkItem | None:
+        while True:
+            sync = self._claim_sync_if_due()
+            if sync is not None:
+                return sync
+            claimed = self._store.claim()
+            if claimed is not None:
+                return self._adopt(claimed)
+            with self._cv:
+                if self._sync:
+                    continue
+                self._cv.wait(timeout=_POLL_S)
+
+    def _claim_sync_if_due(self) -> WorkItem | None:
         with self._cv:
-            while not self._queue:
-                self._cv.wait()
-            item = self._queue.popleft()
+            if not self._sync:
+                return None
+            item = self._sync[0]
+        oldest = self._store.oldest_queued_at()
+        if oldest is not None and item.arrived_at is not None and oldest < item.arrived_at:
+            return None
+        with self._cv:
+            if not self._sync or self._sync[0] is not item:
+                return None
+            self._sync.pop(0)
             if item.cancel.is_set():
                 if item.error is None:
                     item.error = RequestCancelled()
@@ -333,9 +351,14 @@ class SliceJobQueue:
                 return None
             self._current = item
             self._current_pids = set(descendant_pids(os.getpid()))
-            if item.job is not None:
-                item.job.mark_running()
             return item
+
+    def _adopt(self, stored: StoredJob) -> WorkItem:
+        item = WorkItem(prepared=None, stored=stored, arrived_at=stored.queued_at)
+        with self._cv:
+            self._current = item
+            self._current_pids = set(descendant_pids(os.getpid()))
+        return item
 
     def _execute(self, item: WorkItem) -> None:
         try:
@@ -344,8 +367,10 @@ class SliceJobQueue:
                 return
             prepared = item.prepared
             if prepared is None:
-                item.error = RequestCancelled()
-                return
+                if item.stored is None:
+                    item.error = RequestCancelled()
+                    return
+                prepared = self._prepare(item.stored)
             text, headers = self._runner(prepared)
             item.text = text
             item.headers = headers
@@ -355,53 +380,39 @@ class SliceJobQueue:
             item.prepared = None
             if item.error is None and item.text is None and not item.cancel.is_set():
                 item.error = RuntimeError("slice produced no gcode")
+            self._finish_stored(item)
             with self._cv:
-                if item.job is not None and not isinstance(item.error, RequestCancelled):
-                    item.job.mark_finished(item)
                 if self._current is item:
                     self._current = None
                     self._current_pids = None
                 self._cv.notify_all()
             item.done.set()
 
-    def _position_locked(self, job: SliceJob) -> int | None:
-        if job.status != "queued":
-            return None
-        ahead = 1 if self._current is not None else 0
-        for item in self._queue:
-            if item.job is job:
-                return ahead + 1
-            ahead += 1
-        return None
-
-    def _elapsed_locked(self, job: SliceJob) -> float | None:
-        if job.started_at is None:
-            return None
-        end = job.finished_at or _utcnow()
-        return round((end - job.started_at).total_seconds(), 3)
-
-    def _view_locked(self, job: SliceJob) -> JobView:
-        return JobView(
-            job_id=job.job_id,
-            status=job.status,
-            position=self._position_locked(job),
-            queued_at=_iso(job.queued_at) or "",
-            started_at=_iso(job.started_at),
-            finished_at=_iso(job.finished_at),
-            elapsed_s=self._elapsed_locked(job),
-            error=job.error,
-            gcode=job.gcode,
-            headers=dict(job.headers) if job.headers is not None else None,
+    def _finish_stored(self, item: WorkItem) -> None:
+        stored = item.stored
+        if stored is None or stored.claim_token is None or item.stored_done:
+            return
+        if isinstance(item.error, RequestCancelled):
+            return
+        item.stored_done = True
+        finished = _utcnow()
+        if item.error is None:
+            self._store.update(
+                stored.job_id,
+                stored.claim_token,
+                status="succeeded",
+                error=None,
+                gcode=item.text,
+                headers=dict(item.headers or {}),
+                finished_at=finished,
+            )
+            return
+        self._store.update(
+            stored.job_id,
+            stored.claim_token,
+            status="failed",
+            error=error_text(item.error),
+            gcode=None,
+            headers=None,
+            finished_at=finished,
         )
-
-    def _purge_locked(self) -> None:
-        now = time.monotonic()
-        expired = [
-            job_id
-            for job_id, job in self._jobs.items()
-            if job.finished_mono is not None and (now - job.finished_mono) >= self.retention_s
-        ]
-        for job_id in expired:
-            job = self._jobs.pop(job_id)
-            job.gcode = None
-            job.headers = None

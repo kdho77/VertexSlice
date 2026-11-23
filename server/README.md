@@ -36,6 +36,10 @@ Set service variables:
 - `VERTEXSLICE_API_KEY` — required in production (clients send `X-API-Key`)
 - `VERTEXSLICE_CORS_ORIGINS` — comma-separated browser origins (OrthoCAD Vercel previews), or `*` for dev
 - `PORT` — provided by Railway
+- `VERTEXSLICE_JOB_STORE` — `memory` (default), `redis`, or `postgres`. See Slice jobs.
+- `VERTEXSLICE_REDIS_URL` — required when the store is `redis` (for example `redis://host:6379/0`)
+- `VERTEXSLICE_JOB_DATABASE_URL` — required when the store is `postgres` (libpq URL)
+- `VERTEXSLICE_JOB_RETENTION_S` — optional finished-job lifetime in seconds. Values below 3600 are raised to 3600.
 
 Health: `GET /health`  
 Slice: `POST /v1/slice` (`multipart/form-data`: `profile_id`, `model` file, optional `wall_loops`, `infill_density`, `print_direction`, `belt_insole_place` default true, optional `material`)
@@ -80,7 +84,9 @@ Auth on every job route is the same `X-API-Key` check as `POST /v1/slice`. Valid
 - `failed`: **409** whose `detail` is the job `error`. A failed job stays available so the client can tell it from expiry.
 - Unknown id, or a job finished more than 60 minutes ago: **404** `{"detail": "unknown or expired job"}`.
 
-Finished jobs are kept in memory for 60 minutes (`SLICE_JOB_RETENTION_S`). A server restart drops them. The client treats **404** on an id it already received as failed and retryable.
+Finished jobs are kept for 60 minutes (`SLICE_JOB_RETENTION_S`, or `VERTEXSLICE_JOB_RETENTION_S` when that is higher). With the default `memory` store a restart drops them. With `redis` or `postgres` a restart of one replica does not drop them; the rows live until the retention window. The client treats **404** on an id it already received as failed and retryable.
+
+The queue is a `JobStore` with `enqueue`, `claim`, `update`, `get`, and `result`. `claim` moves the oldest queued job to `running` in one atomic step (in-memory lock, one Redis `EVAL`, or one `UPDATE ... FOR UPDATE SKIP LOCKED`). Each process still runs one slice thread. A second process calling `claim` gets a different job, or nothing. `POST /v1/slice` stays on the process that accepted it and is not a shared row: its response has to be written on that connection, and a disconnect still kills only that process's slicer subprocess.
 
 If the client drops a synchronous `POST /v1/slice` while that slice is the one on the worker, the server kills that slice's subprocess tree and takes the next item. A slice that already produced G-code still returns that body.
 
@@ -95,7 +101,14 @@ One worker, one slice at a time. Throughput is `3600/S` slices per hour, where `
 
 164s is the last in-repo full slice of `validation/test_models/orthocad_sample_top_insole.stl` on an 8-core box, and >270s is the same ApexLight slice on a GitHub runner (`validation/seam_fuse_gates/slice_all.sh`, recorded in the 2026-11-23 timeout investigation). Both numbers are ApexLight, not ApexCore, and not the Railway service. Placement of that sample is 0.47s and the ApexCore post-process on a 4.5 MB reference is 2.5s, so the long stage is `orca-slicer`. This VM has no `orca-slicer` binary. ApexCore `S` on the production CPU was not measured here, and this change does not call that service.
 
-The 260s process kill still applies to a single slicer invocation. A lone slice with `S` over that cap still fails. Raising the cap, adding a second worker, or resizing the service waits on a measured production `S`. A second worker on a CPU that is already full during one slice makes both slices slower.
+The 260s process kill still applies to a single slicer invocation. A lone slice with `S` over that cap still fails. Raising the cap or resizing the service waits on a measured production `S`. A second slice thread on a CPU that is already full during one slice makes both slices slower.
+
+`memory` is one process's queue. That is the right store for the current single replica, and it is the default, so this service does not need a new database to keep today's behavior. It cannot be shared: a second replica would have its own jobs, and a client that lands on the other replica gets **404** for an id the first replica accepted. At the ApexLight figures above, one replica finishes on the order of 300–500 slices a day (13/hour × 24 at 270s, 22/hour × 24 at 164s), so a day with thousands of slices needs more than one replica once `S` is in that range. Point every replica at the same store:
+
+- `VERTEXSLICE_JOB_STORE=redis` and `VERTEXSLICE_REDIS_URL`, or
+- `VERTEXSLICE_JOB_STORE=postgres` and `VERTEXSLICE_JOB_DATABASE_URL`
+
+The application creates its Redis keys or its `vertexslice_slice_jobs` table on first use. It does not provision Redis, Postgres, or a Railway service. Pick the store that already exists for that deployment; do not add one from this change. Each replica still slices one job at a time. Throughput becomes about `replicas × 3600/S` only when those CPUs are not the same full machine. A claimed job stays `running` if that process dies mid-slice; the client should treat a job that never finishes as failed and submit again. There is no automatic reclaim, because reclaiming a live slice would run it twice.
 
 Measured on this 4-vCPU VM on 2026-11-23, production calls 0, slicer patched so the worker blocks inside the slice call:
 
