@@ -26,11 +26,13 @@ from postprocess_g2b import (  # noqa: E402
     WIPE_FRAC,
     WIPE_MM,
     _belt_split,
+    _chain_normals,
     _columns,
     _crossing,
     _ff_e_for_width,
     _pair_of,
     _parse_moves,
+    _skin_chains,
     forefoot_cura_bond,
     forefoot_last_layer,
     forefoot_type_audit,
@@ -596,6 +598,8 @@ class ForefootBondTests(unittest.TestCase):
         # A 2.4 mm section is the thin solid bond. A 5 mm section is infill.
         # The section height is the existing forefoot loop, scaled into this file.
         self.assertEqual(forefoot_last_layer(250), 250)
+        self.assertEqual(forefoot_last_layer(95), 95)
+        self.assertEqual(forefoot_last_layer(400), 400)
         thin = _loop(
             [(100.0, 0.55, 1.10), (140.0, 0.55, 1.10), (140.0, 2.35, 1.10), (100.0, 2.35, 1.10)],
             0.46,
@@ -660,6 +664,101 @@ class ForefootBondTests(unittest.TestCase):
         self.assertTrue(thick_infill)
         self.assertTrue(all(covered > 0.02 for covered in thick_infill))
         self.assertFalse(any(abs(m[1] - 1.80) < 0.01 and abs(m[3] - 1.80) < 0.01 for m in _extrusions(out)))
+
+    def test_heel_outer_edge_stays_on_the_sliced_line(self) -> None:
+        # The heel chamfer, parser layer 180 of a 300-layer file, so it is past
+        # the shipped forefoot (layers 166 and up). The corner join used to slide
+        # the wall's ends apart and leave the printed rim up to 0.44 mm outside
+        # the sliced line. The bond still closes the 2-3 mm section. The rim must
+        # not move more than 0.05 mm outside that line. The loop is the sliced
+        # sample's own wall, not a patient file.
+        pts = [
+            (147.099, 0.027, 1.04), (157.098, 0.028, 1.04), (179.934, 0.032, 1.04),
+            (180.516, 0.077, 1.041), (180.853, 0.287, 1.04), (181.236, 0.701, 1.039),
+            (184.73, 5.856, 1.04), (184.69, 5.893, 1.035), (184.391, 5.919, 1.042),
+            (182.874, 5.193, 1.04), (181.336, 4.639, 1.04), (179.629, 4.157, 1.04),
+            (177.355, 3.775, 1.04), (175.525, 3.644, 1.04), (174.029, 3.578, 1.04),
+            (172.72, 3.583, 1.04), (170.88, 3.647, 1.041), (169.166, 3.759, 1.04),
+            (167.649, 3.896, 1.04), (164.996, 4.216, 1.04), (161.93, 4.691, 1.04),
+            (153.857, 6.06, 1.04), (151.008, 6.492, 1.04), (149.501, 6.708, 1.04),
+            (146.506, 7.094, 1.04), (143.374, 7.433, 1.04), (141.59, 7.587, 1.04),
+            (136.851, 7.928, 1.04), (122.209, 8.684, 1.04), (120.278, 8.761, 1.04),
+            (113.798, 9.095, 1.04), (111.791, 9.227, 1.04), (102.77, 9.947, 1.04),
+            (101.266, 10.084, 1.04), (97.958, 10.475, 1.04), (104.54, 6.058, 1.04),
+            (112.228, 0.768, 1.04), (112.996, 0.329, 1.04), (113.747, 0.077, 1.04),
+            (114.263, 0.021, 1.04), (137.099, 0.025, 1.04),
+        ]
+        layers = []
+        for index in range(1, 300):
+            if index == 180:
+                layers.append(_loop(pts, 180 * 0.46, "Outer wall"))
+            else:
+                layers.append([";LAYER_CHANGE", f";Z:{index * 0.46:.5f}"])
+        text = _program(layers)
+        self.assertEqual(text.count(";LAYER_CHANGE"), 300)
+        out, stats = forefoot_cura_bond(text)
+        self.assertTrue(stats["applied"])
+
+        def rim_edges(gcode: str) -> list[tuple[float, float, float, float, float, float]]:
+            parsed = _parse_moves(gcode.splitlines(keepends=True), reset_type=False)
+            segs = [s for s in parsed["segs"] if s["layer"] == 180 and s["kind"] == "skin"]
+            edges = []
+            for chain in _skin_chains(segs):
+                for seg, normal in zip(chain, _chain_normals(chain)):
+                    half = seg["w"] * 0.5
+                    edges.append((
+                        seg["x0"] + normal[0] * half, seg["y0"] + normal[1] * half,
+                        seg["x1"] + normal[0] * half, seg["y1"] + normal[1] * half,
+                        normal[0], normal[1],
+                    ))
+            return edges
+
+        src = rim_edges(text)
+        dst = rim_edges(out)
+        self.assertTrue(src and dst)
+        worst = 0.0
+        for x0, y0, x1, y1, _nx, _ny in dst:
+            length = math.hypot(x1 - x0, y1 - y0)
+            steps = max(1, int(max(length, 1e-9) / 0.40))
+            for k in range(steps):
+                t = (k + 0.5) / steps
+                px = x0 + (x1 - x0) * t
+                py = y0 + (y1 - y0) * t
+                nearest = 1e9
+                signed = 0.0
+                for sx0, sy0, sx1, sy1, ox, oy in src:
+                    dx, dy = sx1 - sx0, sy1 - sy0
+                    span = dx * dx + dy * dy
+                    if span < 1e-12:
+                        dist = math.hypot(px - sx0, py - sy0)
+                        qx, qy = sx0, sy0
+                    else:
+                        u = ((px - sx0) * dx + (py - sy0) * dy) / span
+                        u = 0.0 if u < 0.0 else (1.0 if u > 1.0 else u)
+                        qx, qy = sx0 + u * dx, sy0 + u * dy
+                        dist = math.hypot(px - qx, py - qy)
+                    if dist < nearest:
+                        nearest = dist
+                        signed = (px - qx) * ox + (py - qy) * oy
+                # Positive is past the sliced line. A join that stays inside
+                # the part is not the outer edge moving.
+                worst = max(worst, signed)
+        self.assertLessEqual(worst, 0.05, worst)
+        parsed = _parse_moves(out.splitlines(keepends=True), reset_type=False)
+        cols = _columns(parsed["segs"])
+        kinds = [seg["kind"] for seg in parsed["segs"]]
+        gaps = []
+        for key, beads in cols.items():
+            if key[0] != 180:
+                continue
+            pair = _pair_of(beads, kinds)
+            if pair is None:
+                continue
+            thick_mm, gap = pair[4], pair[5]
+            if 2.0 <= thick_mm < 3.0:
+                gaps.append(gap)
+        self.assertTrue(gaps)
+        self.assertTrue(all(gap <= 0.0 for gap in gaps), gaps)
 
     def test_corner_join_keeps_both_outer_edges(self) -> None:
         # A thin loop: long plantar wall, vertical side, long dorsal wall.

@@ -1932,8 +1932,8 @@ def layer_times(text: str) -> list[float]:
 
 # ApexCore forefoot bond. The bead is the rounded rectangle the forefoot gates
 # measure: w = (E/mm) * filament_area / H + H*(1 - pi/4). H is 0.46 mm.
-# Orthocad's forefoot is layers 1-165; insole_sample's is layers 1-31.
-# A later layer is copied byte for byte. ApexLight does not call ``match``.
+# Under 3 mm the two skins bond. 3 mm or more is one outer wall and sparse
+# infill. Thickness picks which, on every layer. ApexLight does not call ``match``.
 FOREFOOT_ORTHOCAD_LAST = 165
 FOREFOOT_INSOLE_SAMPLE_LAST = 31
 FOREFOOT_LAYER_H = 0.46
@@ -1965,20 +1965,27 @@ _SKIN_TYPES = {"Outer wall", "Overhang wall"}
 
 
 def forefoot_last_layer(layer_count: int) -> int | None:
-    """Where a section of 3 mm or more gets infill instead of an inner wall.
+    """Every layer. Thickness, not the layer count, picks solid or infill.
 
-    Thickness picks solid or infill. On the two CI models the slicer already
-    wrote its own infill after the forefoot, and that infill is left as it is:
-    orthocad after layer 165, the insole sample after layer 31. A file the old
-    layer-count rule skipped (221-299 layers) is not skipped.
+    Under 3 mm is the solid bond. 3 mm or more is sparse infill. A file is not
+    skipped because of how many layers it has.
+    """
+    if layer_count > 0:
+        return layer_count
+    return None
+
+
+def _shipped_skin_last(layer_count: int) -> int:
+    """Thin-bond skin already written on the two CI models. Does not choose infill.
+
+    The rim hold leaves these layers byte-identical. Orthocad is 165, the
+    insole sample is 31. A file of any other length has no such skin.
     """
     if layer_count >= 300:
         return FOREFOOT_ORTHOCAD_LAST
     if 40 <= layer_count <= 220:
         return FOREFOOT_INSOLE_SAMPLE_LAST
-    if layer_count > 0:
-        return layer_count
-    return None
+    return 0
 
 
 def _ff_area(diameter: float) -> float:
@@ -2375,6 +2382,153 @@ def _rim_fit(p: tuple[float, float], q: tuple[float, float], ccw: bool,
     # The ray leaves the centre along the outward normal and stops at the first
     # sliced edge, so the far skin is never the one that sets the width.
     return (0.0, best_t * 2.0)
+
+
+def _signed_outside(px: float, py: float,
+                    edges: list[tuple[float, float, float, float, float, float]]) -> float:
+    """Signed distance to the nearest sliced rim. Positive is outside that rim."""
+    best = 1e9
+    signed = 0.0
+    for x0, y0, x1, y1, ox, oy in edges:
+        dx, dy = x1 - x0, y1 - y0
+        span = dx * dx + dy * dy
+        if span < 1e-12:
+            qx, qy = x0, y0
+        else:
+            t = ((px - x0) * dx + (py - y0) * dy) / span
+            if t < 0.0:
+                t = 0.0
+            elif t > 1.0:
+                t = 1.0
+            qx = x0 + t * dx
+            qy = y0 + t * dy
+        dist = math.hypot(px - qx, py - qy)
+        if dist < best:
+            best = dist
+            signed = (px - qx) * ox + (py - qy) * oy
+    return signed
+
+
+def _rim_excess(x0: float, y0: float, x1: float, y1: float, nx: float, ny: float, half: float,
+                edges: list[tuple[float, float, float, float, float, float]]) -> float:
+    """How far one side of a bead sits outside the sliced rim, in mm."""
+    dx, dy = x1 - x0, y1 - y0
+    length = math.hypot(dx, dy)
+    if length < 1e-9:
+        return max(0.0, _signed_outside(x0 + nx * half, y0 + ny * half, edges))
+    worst = 0.0
+    steps = max(1, int(length / 0.40))
+    for k in range(steps):
+        t = (k + 0.5) / steps
+        cx = x0 + dx * t
+        cy = y0 + dy * t
+        worst = max(worst, _signed_outside(cx + nx * half, cy + ny * half, edges))
+    return worst
+
+
+def _bead_outside(x0: float, y0: float, x1: float, y1: float, width: float,
+                  edges: list[tuple[float, float, float, float, float, float]]) -> float:
+    dx, dy = x1 - x0, y1 - y0
+    length = math.hypot(dx, dy)
+    if length < 1e-9 or not edges:
+        return 0.0
+    nx, ny = dy / length, -dx / length
+    half = width * 0.5
+    return max(
+        _rim_excess(x0, y0, x1, y1, nx, ny, half, edges),
+        _rim_excess(x0, y0, x1, y1, -nx, -ny, half, edges),
+    )
+
+
+def _hold_outer_line(chain: list[dict], plan: dict) -> None:
+    """Pull a widened bead back so its printed rim stays on its own sliced edge.
+
+    The corner join can slide the two ends of a wall in opposite directions.
+    The width still grows, and the outer rim leaves that wall's sliced line.
+    Shift the centreline until the outward rim is back on the line. The added
+    width stays on the inside, so the bond is not undone. The seam station
+    (the loop start) is not moved.
+    """
+    edges = plan["edges"]
+    normals = plan["normals"]
+    if not edges:
+        return
+    for i, seg in enumerate(chain):
+        own = [edges[i]]
+        for _step in range(4):
+            x0, y0 = plan["starts"][i]
+            x1, y1 = plan["ends"][i]
+            length = math.hypot(x1 - x0, y1 - y0)
+            if length < 0.02:
+                break
+            nx, ny = normals[i]
+            half = (seg["w"] + plan["dws"][i]) * 0.5
+            excess = _rim_excess(x0, y0, x1, y1, nx, ny, half, own)
+            if excess <= 0.02:
+                break
+            # The loop start is the seam. Drop the added width instead of sliding it.
+            if i == 0:
+                plan["dws"][i] = max(0.0, plan["dws"][i] - 2.0 * excess)
+                continue
+            step = min(excess, 0.60)
+            plan["starts"][i] = (x0 - nx * step, y0 - ny * step)
+            plan["ends"][i] = (x1 - nx * step, y1 - ny * step)
+    # Two centrelines that cross leave a chord between their ends. That chord's
+    # rim sits inside the corner, off the sliced line. Trim both walls to the
+    # crossing so the loop stays one bead and the rim stays on the line.
+    n = len(chain)
+    for i in range(n):
+        j = (i + 1) % n
+        if j == 0 or plan["conn_w"][i] is not None:
+            continue
+        ax, ay = plan["starts"][i]
+        bx, by = plan["ends"][i]
+        cx, cy = plan["starts"][j]
+        dx, dy = plan["ends"][j]
+        ex, ey = bx - ax, by - ay
+        fx, fy = dx - cx, dy - cy
+        den = ex * fy - ey * fx
+        if abs(den) < 1e-8:
+            continue
+        t = ((cx - ax) * fy - (cy - ay) * fx) / den
+        u = ((cx - ax) * ey - (cy - ay) * ex) / den
+        if not (0.02 < t < 1.05 and -0.05 < u < 0.98):
+            continue
+        pt = (ax + t * ex, ay + t * ey)
+        wi = chain[i]["w"] + plan["dws"][i]
+        wj = chain[j]["w"] + plan["dws"][j]
+        if _bead_outside(ax, ay, pt[0], pt[1], wi, edges) > 0.05:
+            continue
+        if _bead_outside(pt[0], pt[1], dx, dy, wj, edges) > 0.05:
+            continue
+        plan["ends"][i] = pt
+        plan["starts"][j] = pt
+
+
+def _join_inside(p: tuple[float, float], q: tuple[float, float], width: float,
+                 edges: list[tuple[float, float, float, float, float, float]]) -> float | None:
+    """Shrink a corner join until both rims are inside the sliced edge."""
+    if not edges:
+        return width
+    for _step in range(6):
+        excess = _bead_outside(p[0], p[1], q[0], q[1], width, edges)
+        if excess <= 0.02:
+            return width
+        width -= 2.0 * excess
+        if width < 0.20:
+            return None
+    if _bead_outside(p[0], p[1], q[0], q[1], width, edges) <= 0.02:
+        return width
+    return None
+
+
+def _width_on_line(fit: tuple[float, float] | None, p: tuple[float, float], q: tuple[float, float],
+                   edges: list[tuple[float, float, float, float, float, float]], hold: bool) -> float | None:
+    if fit is None:
+        return None
+    if not hold:
+        return fit[1]
+    return _join_inside(p, q, fit[1], edges)
 
 
 def _plan_chain(chain: list[dict]) -> dict:
@@ -2876,6 +3030,30 @@ def _open_y_at(bounds: tuple[float, float, float, float], x: float, x0: float, s
     return lo + t * (hi - lo)
 
 
+def _open_travel(cx: float, cy: float, tx: float, ty: float, grid, nl: str) -> tuple[list[str], float, float]:
+    """Travel to the next infill point without crossing a solid surface.
+
+    A straight move that crosses internal solid infill is two legs, horizontal
+    then vertical or the other way, when that pair stays clear. The straight
+    move is kept when it does not cross, so an earlier layer is unchanged.
+    """
+    def crosses(ax: float, ay: float, bx: float, by: float) -> bool:
+        return grid is not None and _crossing(grid, ax, ay, bx, by)
+
+    if not crosses(cx, cy, tx, ty):
+        return [f"G1 X{tx:.3f} Y{ty:.3f} F30000{nl}"], tx, ty
+    for vx, vy in ((tx, cy), (cx, ty)):
+        if math.hypot(vx - cx, vy - cy) < 1e-4 or math.hypot(tx - vx, ty - vy) < 1e-4:
+            continue
+        if crosses(cx, cy, vx, vy) or crosses(vx, vy, tx, ty):
+            continue
+        return [
+            f"G1 X{vx:.3f} Y{vy:.3f} F30000{nl}",
+            f"G1 X{tx:.3f} Y{ty:.3f} F30000{nl}",
+        ], tx, ty
+    return [f"G1 X{tx:.3f} Y{ty:.3f} F30000{nl}"], tx, ty
+
+
 def _open_run_lines(
     run: list[int],
     hollow: dict,
@@ -2884,6 +3062,7 @@ def _open_run_lines(
     nl: str,
     cx: float,
     cy: float,
+    grid=None,
 ) -> tuple[list[str], float, float]:
     """Sparse lines across one contiguous hollow. Travels stay inside the gap."""
     n = _open_lane_count(hollow[(layer, run[0])])
@@ -2908,15 +3087,15 @@ def _open_run_lines(
     sx, sy = lanes[0][0]
     if math.hypot(sx - cx, sy - cy) > 1e-4:
         # A travel, not an extrusion: a short bead here would sit on the outer wall.
-        out.append(f"G1 X{sx:.3f} Y{sy:.3f} F30000{nl}")
-        cx, cy = sx, sy
+        part, cx, cy = _open_travel(cx, cy, sx, sy, grid, nl)
+        out.extend(part)
     for lane, seq in enumerate(lanes):
         if lane:
             # Travel inside the gap. Extruding the turn would fill that column solid.
             tx, ty = seq[0]
             if math.hypot(tx - cx, ty - cy) > 1e-4:
-                out.append(f"G1 X{tx:.3f} Y{ty:.3f} F30000{nl}")
-                cx, cy = tx, ty
+                part, cx, cy = _open_travel(cx, cy, tx, ty, grid, nl)
+                out.extend(part)
         for x, y in seq:
             line, cx, cy = _thick_ex(x, y, cx, cy, _OPEN_WIDTH, area, nl)
             if line:
@@ -2971,6 +3150,12 @@ def _open_band(text: str, last: int, allow: set | None = None) -> tuple[str, int
         n = _open_lane_count(hollow[(layer, binn)])
         by_layer.setdefault(layer, {}).setdefault(n, []).append(binn)
     inserts: dict[int, list[str]] = {}
+    from check_travel_wall_crossings import _Grid
+    surf_edges: dict[int, list[tuple[float, float, float, float]]] = {}
+    for seg in segs:
+        if seg["type"] in {"Top surface", "Internal solid infill", "Bottom surface"}:
+            surf_edges.setdefault(seg["layer"], []).append((seg["x0"], seg["y0"], seg["x1"], seg["y1"]))
+    surf_grids = {layer: _Grid(edges) for layer, edges in surf_edges.items()}
     changes = [i for i, line in enumerate(lines) if line.startswith(";LAYER_CHANGE")]
     for layer, groups in by_layer.items():
         at = changes[layer + 1] if layer + 1 < len(changes) else len(lines)
@@ -3005,7 +3190,7 @@ def _open_band(text: str, last: int, allow: set | None = None) -> tuple[str, int
             left = run[0] * 0.5
             right = (run[-1] + 1) * 0.5
             ordered = run if abs(cx - left) <= abs(cx - right) else list(reversed(run))
-            part, cx, cy = _open_run_lines(ordered, hollow, layer, area, nl, cx, cy)
+            part, cx, cy = _open_run_lines(ordered, hollow, layer, area, nl, cx, cy, surf_grids.get(layer))
             block.extend(part)
         if typ:
             block.append(f";TYPE:{typ}{nl}")
@@ -3212,8 +3397,10 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
     widened bead keeps its feed unless that would push it over 16.80 mm^3/s,
     in which case the feed drops to the cap. A section of 3 mm or more loses
     its inner wall and gets sparse infill about 1.11 mm wide at about 26%,
-    pressed about 0.23 mm into the outer wall. Under 3 mm is bonded on every
-    layer. The slicer's own infill after the forefoot is left as it is.
+    pressed about 0.23 mm into the outer wall. Under 3 mm is the solid bond
+    on every layer. Thickness picks solid or infill, on every layer. A bond
+    past the skin already shipped on the two CI models keeps its printed rim
+    on the sliced line.
     """
     lines = text.splitlines(keepends=True)
     parsed = _parse_moves(lines, reset_type=False)
@@ -3244,9 +3431,9 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
         if "X" in w or "Y" in w or "E" in w:
             used[index] = modal
     area = parsed["area"]
-    # Infill membership is fixed here, before the thin bond moves any centreline,
-    # and only inside the zone whose infill this pass owns. Under 3 mm is bonded
-    # on every layer, including past that zone.
+    # Infill membership is the section before the thin bond moves a centreline.
+    # Under 3 mm is the solid bond. 3 mm or more is infill. Both apply on every
+    # layer. The rim hold below does not change that choice.
     zone = [s for s in parsed["segs"] if 1 <= s["layer"] <= last_layer]
     zone_cols = _columns(zone)
     zone_kinds = [seg["kind"] for seg in zone]
@@ -3259,6 +3446,7 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
             pre_infill.add(key)
     stats["pre_infill"] = pre_infill
     stats["pre_thick"] = pre_infill
+    shipped_skin = _shipped_skin_last(parsed["layers"])
     segs = [s for s in parsed["segs"] if s["layer"] >= 1]
     for seg in segs:
         seg["ox0"], seg["oy0"] = seg["x0"], seg["y0"]
@@ -3303,6 +3491,9 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
         if len(chain) < 2:
             continue
         plan = _plan_chain(chain)
+        hold = shipped_skin > 0 and chain[0]["layer"] > shipped_skin
+        if hold:
+            _hold_outer_line(chain, plan)
         starts = plan["starts"]
         ends = plan["ends"]
         dws = plan["dws"]
@@ -3332,7 +3523,9 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
             start = starts[i]
             if lead_at is not None and i == 0:
                 fit = _rim_fit(old_start, lead_at, plan["ccw"], plan["edges"], normals[0])
-                lead_w = fit[1] if fit is not None else seg["w"] + dws[i]
+                lead_w = _width_on_line(fit, old_start, lead_at, plan["edges"], hold)
+                if lead_w is None:
+                    lead_w = seg["w"] + dws[i]
                 e, feed, _lead_len = _bead(old_start[0], old_start[1], lead_at[0], lead_at[1], lead_w, seg["f"], 0.0)
                 planned[seg["i"]] = (lead_at[0], lead_at[1], e, feed)
                 final_feed[seg["i"]] = feed
@@ -3377,8 +3570,9 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
                         if math.hypot(end_pt[0] - cursor[0], end_pt[1] - cursor[1]) < 0.02:
                             continue
                         trial_fit = _rim_fit(cursor, end_pt, plan["ccw"], plan["edges"], normals[i])
-                        if trial_fit is not None:
-                            fitted = trial_fit
+                        trial_w = _width_on_line(trial_fit, cursor, end_pt, plan["edges"], hold)
+                        if trial_w is not None:
+                            fitted = (0.0, trial_w)
                             fitted_end = end_pt
                             keep = trial
                             break
@@ -3404,27 +3598,35 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
                     _note(width, feed, seg["e"], e, dws[i] > 1e-6)
                     if abs(feed - seg["f"]) >= 1.0:
                         slowed.add(seg["i"])
-            cw = conn_w[i]
-            if cw is None:
-                continue
             j = (i + 1) % len(chain)
             if not plan["closed"] and j == 0:
                 continue
             cx, cy = starts[j]
             anchor = ends[i]
-            if math.hypot(cx - anchor[0], cy - anchor[1]) < 1e-4:
+            gap = math.hypot(cx - anchor[0], cy - anchor[1])
+            # No connector means the next extrusion starts at this end and
+            # bridges the gap. Past the shipped skin that bridge is the bead
+            # that leaves the sliced line, so close it with its own join.
+            if conn_w[i] is None and not (hold and gap > 0.02):
+                continue
+            if gap < 1e-4:
                 continue
             ref = _blend_normal(normals[i], normals[j])
             fit = _rim_fit(anchor, (cx, cy), plan["ccw"], plan["edges"], ref)
-            if fit is None:
+            if fit is None and hold:
+                # The join is longer than one sample. The next wall would
+                # bridge it, and that bridge is what leaves the sliced line.
+                fit = (0.0, seg["w"] + dws[i])
+            join_w = _width_on_line(fit, anchor, (cx, cy), plan["edges"], hold)
+            if join_w is None:
                 # The planned width belonged to these endpoints. A pin can move
                 # the seam after that, and the old width would miss the edge.
                 continue
-            ce, cf, _clen = _bead(anchor[0], anchor[1], cx, cy, fit[1], seg["f"], 0.0)
+            ce, cf, _clen = _bead(anchor[0], anchor[1], cx, cy, join_w, seg["f"], 0.0)
             inserts.setdefault(seg["i"], []).append(
                 f"G1 X{cx:.3f} Y{cy:.3f} E{ce:.5f} F{cf:.0f}{nl}"
             )
-            _note(fit[1], cf, 0.0, ce, True)
+            _note(join_w, cf, 0.0, ce, True)
     layer_of = {seg["i"]: seg["layer"] for seg in segs}
     stats["thin_layers_after"] = sorted({layer_of[i] for i in planned if layer_of.get(i, 0) > last_layer})
     if not planned:
