@@ -25,6 +25,9 @@ from postprocess_g2b import (  # noqa: E402
     SLOW_END_MM,
     WIPE_FRAC,
     WIPE_MM,
+    _band_crosses_wall,
+    _band_tip_paths,
+    _band_travel,
     _belt_split,
     _crossing,
     _ff_e_for_width,
@@ -645,6 +648,32 @@ class ForefootBondTests(unittest.TestCase):
                 self.assertLess(float(words["X"]), 161.0)
             self.assertEqual(_last_type(got), _last_type(exp))
         self.assertEqual(_synthetic_hollow_columns(new), 0)
+
+    def test_band_tip_and_travel_stay_inside_the_wall(self) -> None:
+        # The centerline infill stops at x=128. The shell stadium still leaves
+        # a gap wider than 1 mm past that, and the tip line has to cover it.
+        beads = [
+            (100.0, 0.0, 130.0, 0.0, True, 1.0),
+            (130.0, 0.0, 130.0, 8.0, True, 1.0),
+            (130.0, 8.0, 100.0, 8.0, True, 1.0),
+            (100.0, 8.0, 100.0, 0.0, True, 1.0),
+        ]
+        tips = _band_tip_paths(beads, [[(100.5, 4.0), (128.0, 4.0)]])
+        xs = [point[0] for path in tips for point in path]
+        self.assertTrue(xs)
+        self.assertGreater(max(xs), 129.0)
+        self.assertTrue(all(128.0 < x < 130.0 and 1.0 < y < 7.0 for path in tips for x, y in path))
+        # One end is 0.05 mm past the centerline (inside the bead) and the
+        # other is 0.9 mm beyond it. The chord has to be nicked, not left straight.
+        wall = [(0.0, 0.0, 10.0, 0.0)]
+        nicked = _band_travel(5.0, 0.05, 5.0, -0.9, wall, None)
+        self.assertEqual(nicked[0], (5.0, 0.05))
+        self.assertEqual(nicked[-1], (5.0, -0.9))
+        self.assertGreater(len(nicked), 2)
+        for start, dest in zip(nicked, nicked[1:]):
+            self.assertFalse(_band_crosses_wall(start[0], start[1], dest[0], dest[1], wall))
+        shallow = _band_travel(5.0, 0.05, 5.0, -0.10, wall, None)
+        self.assertEqual(shallow, [(5.0, 0.05), (5.0, -0.10)])
 
 
 def _last_type(part: str) -> str | None:

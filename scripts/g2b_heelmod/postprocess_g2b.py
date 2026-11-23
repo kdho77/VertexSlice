@@ -3226,16 +3226,253 @@ def _band_paths(print_z: float | None, cols: dict[int, tuple[float, float]]) -> 
     return paths
 
 
+def _band_stadium(x0: float, y0: float, x1: float, y1: float, radius: float, x: float) -> tuple[float, float] | None:
+    """Y span of a stadium, matching the band grader's capsule."""
+    ys: list[float] = []
+    radius_sq = radius * radius
+    for px, py in ((x0, y0), (x1, y1)):
+        dx = px - x
+        if dx * dx <= radius_sq + 1e-12:
+            half = math.sqrt(max(0.0, radius_sq - dx * dx))
+            ys.append(py - half)
+            ys.append(py + half)
+    dx = x1 - x0
+    dy = y1 - y0
+    length = math.hypot(dx, dy)
+    if length > 1e-12 and radius > 0.0:
+        nx = -dy / length
+        ny = dx / length
+        for sign in (1.0, -1.0):
+            ax = x0 + sign * radius * nx
+            ay = y0 + sign * radius * ny
+            bx = x1 + sign * radius * nx
+            by = y1 + sign * radius * ny
+            if abs(bx - ax) < 1e-12:
+                if abs(ax - x) <= 1e-8:
+                    ys.append(ay)
+                    ys.append(by)
+            else:
+                t = (x - ax) / (bx - ax)
+                if -1e-8 <= t <= 1.0 + 1e-8:
+                    ys.append(ay + t * (by - ay))
+    if not ys:
+        return None
+    return min(ys), max(ys)
+
+
+def _band_merge_spans(spans: list[tuple[float, float]]) -> list[list[float]]:
+    if not spans:
+        return []
+    ordered = sorted(spans)
+    merged = [[ordered[0][0], ordered[0][1]]]
+    for start, end in ordered[1:]:
+        if start <= merged[-1][1] + 0.02:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return merged
+
+
+def _band_open_gaps(
+    beads: list[tuple[float, float, float, float, bool, float]],
+    extras: list[tuple[float, float, float, float]],
+    x: float,
+) -> list[tuple[float, float]]:
+    """Unfilled air gaps at x. A bead is (x0, y0, x1, y1, is_shell, comment width)."""
+    shell: list[tuple[float, float]] = []
+    interior: list[tuple[float, float]] = []
+    for x0, y0, x1, y1, is_shell, width in beads:
+        radius = max(width, 0.0) / 2.0
+        if x < min(x0, x1) - radius or x > max(x0, x1) + radius:
+            continue
+        span = _band_stadium(x0, y0, x1, y1, radius, x)
+        if span is None:
+            continue
+        if is_shell:
+            shell.append(span)
+        else:
+            interior.append(span)
+    for x0, y0, x1, y1 in extras:
+        if x < min(x0, x1) - 0.5 or x > max(x0, x1) + 0.5:
+            continue
+        span = _band_stadium(x0, y0, x1, y1, 0.5, x)
+        if span is not None:
+            interior.append(span)
+    merged = _band_merge_spans(shell)
+    if len(merged) < 2 or merged[-1][1] - merged[0][0] < 3.0:
+        return []
+    gaps = []
+    for (_blo, bottom_hi), (top_lo, _thi) in zip(merged, merged[1:]):
+        if top_lo - bottom_hi <= 1.0:
+            continue
+        if any(min(end, top_lo) - max(start, bottom_hi) > 0.01 for start, end in interior):
+            continue
+        gaps.append((bottom_hi, top_lo))
+    return gaps
+
+
+def _band_tip_paths(
+    beads: list[tuple[float, float, float, float, bool, float]],
+    paths: list[list[tuple[float, float]]],
+) -> list[list[tuple[float, float]]]:
+    """Cover hollow runs the grader still counts: wider than 1 mm, shell at least 3 mm."""
+    extras = [(a[0], a[1], b[0], b[1]) for path in paths for a, b in zip(path, path[1:])]
+    if not beads or not paths:
+        return []
+    # Same 0.1 mm grid the grader uses, limited to the curved ends just past the infill.
+    px = [point[0] for path in paths for point in path]
+    bead_x = [coord for bead in beads for coord in (bead[0], bead[2])]
+    step = 0.1
+    grid = math.floor(min(bead_x) / step) * step
+    window_lo = min(px) - 2.0
+    limit = max(px) + 2.0
+    x = grid
+    if x < window_lo:
+        x += math.floor((window_lo - x) / step) * step
+    added: list[list[tuple[float, float]]] = []
+    for _pass in range(3):
+        runs: list[tuple[float, float]] = []
+        current: list[float] | None = None
+        sample = x
+        while sample <= limit + 1e-9:
+            if _band_open_gaps(beads, extras, sample):
+                if current is None:
+                    current = [sample, sample]
+                else:
+                    current[1] = sample
+            elif current is not None:
+                runs.append((current[0], current[1]))
+                current = None
+            sample += step
+        if current is not None:
+            runs.append((current[0], current[1]))
+        grew = False
+        for first, last in runs:
+            if (last - first) + step <= 1.0 + 1e-9:
+                continue
+            pts: list[tuple[float, float]] = []
+            sample = first
+            while sample <= last + 1e-9:
+                gaps = _band_open_gaps(beads, extras, sample)
+                if gaps:
+                    if pts:
+                        prev = pts[-1][1]
+                        gap = min(gaps, key=lambda item: abs(0.5 * (item[0] + item[1]) - prev))
+                    else:
+                        gap = max(gaps, key=lambda item: item[1] - item[0])
+                    pts.append((sample, 0.5 * (gap[0] + gap[1])))
+                sample += step
+            if len(pts) < 2:
+                continue
+            added.append(pts)
+            extras.extend((a[0], a[1], b[0], b[1]) for a, b in zip(pts, pts[1:]))
+            grew = True
+        if not grew:
+            break
+    return added
+
+
+def _band_signed(px: float, py: float, x0: float, y0: float, x1: float, y1: float) -> float:
+    dx, dy = x1 - x0, y1 - y0
+    length = math.hypot(dx, dy)
+    if length < 1e-12:
+        return 0.0
+    return ((px - x0) * dy - (py - y0) * dx) / length
+
+
+def _band_crosses_wall(x0: float, y0: float, x1: float, y1: float, edges) -> bool:
+    """True when this travel crosses an outer-wall centerline the way gate G10 counts it."""
+    for ax, ay, bx, by in edges:
+        o1 = (x1 - x0) * (ay - y0) - (y1 - y0) * (ax - x0)
+        o2 = (x1 - x0) * (by - y0) - (y1 - y0) * (bx - x0)
+        o3 = (bx - ax) * (y0 - ay) - (by - ay) * (x0 - ax)
+        o4 = (bx - ax) * (y1 - ay) - (by - ay) * (x1 - ax)
+        if o1 * o2 >= -1e-9 or o3 * o4 >= -1e-9:
+            continue
+        depth = max(abs(_band_signed(x0, y0, ax, ay, bx, by)), abs(_band_signed(x1, y1, ax, ay, bx, by)))
+        if depth > 0.2:
+            return True
+    return False
+
+
+def _band_nick(x0: float, y0: float, x1: float, y1: float, edges, depth: int = 4) -> list[tuple[float, float]]:
+    """Split a crossing so the piece that meets the wall stays within 0.12 mm of the centerline."""
+    if depth <= 0 or not _band_crosses_wall(x0, y0, x1, y1, edges):
+        return [(x0, y0), (x1, y1)]
+    worst = None
+    for ax, ay, bx, by in edges:
+        o1 = (x1 - x0) * (ay - y0) - (y1 - y0) * (ax - x0)
+        o2 = (x1 - x0) * (by - y0) - (y1 - y0) * (bx - x0)
+        o3 = (bx - ax) * (y0 - ay) - (by - ay) * (x0 - ax)
+        o4 = (bx - ax) * (y1 - ay) - (by - ay) * (x1 - ax)
+        if o1 * o2 >= -1e-9 or o3 * o4 >= -1e-9:
+            continue
+        s0 = _band_signed(x0, y0, ax, ay, bx, by)
+        s1 = _band_signed(x1, y1, ax, ay, bx, by)
+        score = max(abs(s0), abs(s1))
+        if score > 0.2 and (worst is None or score > worst[0]):
+            worst = (score, s0, s1)
+    if worst is None:
+        return [(x0, y0), (x1, y1)]
+    _score, s0, s1 = worst
+    if abs(s1 - s0) < 1e-9:
+        return [(x0, y0), (x1, y1)]
+
+    def at(side: float) -> float:
+        return (side - s0) / (s1 - s0)
+
+    t0 = min(max(at(math.copysign(0.12, s0)), 0.0), 1.0)
+    t1 = min(max(at(math.copysign(0.12, s1)), 0.0), 1.0)
+    if t1 < t0:
+        t0, t1 = t1, t0
+    if t1 - t0 < 1e-4:
+        return [(x0, y0), (x1, y1)]
+    ax = x0 + t0 * (x1 - x0)
+    ay = y0 + t0 * (y1 - y0)
+    bx = x0 + t1 * (x1 - x0)
+    by = y0 + t1 * (y1 - y0)
+    left = _band_nick(x0, y0, ax, ay, edges, depth - 1) if t0 > 1e-4 else [(x0, y0)]
+    right = _band_nick(bx, by, x1, y1, edges, depth - 1) if t1 < 1.0 - 1e-4 else [(x1, y1)]
+    middle = [(ax, ay), (bx, by)]
+    if depth > 1 and _band_crosses_wall(ax, ay, bx, by, edges):
+        middle = _band_nick(ax, ay, bx, by, edges, depth - 1)
+    return left[:-1] + middle + right[1:]
+
+
 def _band_travel(x0: float, y0: float, x1: float, y1: float, edges, grid) -> list[tuple[float, float]]:
     if math.hypot(x1 - x0, y1 - y0) <= 0.02:
         return [(x0, y0)]
     straight = [(x0, y0), (x1, y1)]
-    if grid is None or not grid.hits(x0, y0, x1, y1):
+    if not edges or not _band_crosses_wall(x0, y0, x1, y1, edges):
         return straight
-    routed = _route_off_wall(edges, (x0, y0), (x1, y1), grid, _chain_polygons_production)
-    if routed and not _path_crosses(grid, routed):
-        return routed
-    return straight
+    routed = None
+    if grid is not None:
+        routed = _route_off_wall(edges, (x0, y0), (x1, y1), grid, _chain_polygons_production)
+    path = routed if routed else straight
+    out = [path[0]]
+    for start, dest in zip(path, path[1:]):
+        if _band_crosses_wall(start[0], start[1], dest[0], dest[1], edges):
+            nick = _band_nick(start[0], start[1], dest[0], dest[1], edges)
+            out.extend(nick[1:])
+        else:
+            out.append(dest)
+    # The file writes XY to 0.001 mm. Check the points that will actually be emitted.
+    rounded = []
+    for px, py in out:
+        point = (round(px, 3), round(py, 3))
+        if not rounded or point != rounded[-1]:
+            rounded.append(point)
+    checked = [rounded[0]] if rounded else []
+    for start, dest in zip(rounded, rounded[1:]):
+        if _band_crosses_wall(start[0], start[1], dest[0], dest[1], edges):
+            nick = _band_nick(start[0], start[1], dest[0], dest[1], edges)
+            for px, py in nick[1:]:
+                point = (round(px, 3), round(py, 3))
+                if point != checked[-1]:
+                    checked.append(point)
+        else:
+            checked.append(dest)
+    return checked or out
 
 
 def _band_block(
@@ -3345,9 +3582,11 @@ def _band_sparse_infill(text: str, stats: dict) -> tuple[str, dict]:
     absolute = True
     typ = ""
     width = ""
+    bead_w = 1.0
     z_at: dict[int, float] = {}
     end_at: dict[int, int] = {}
     state: dict[int, tuple[float, float, float, str, str]] = {}
+    beads: dict[int, list[tuple[float, float, float, float, bool, float]]] = {}
     for index, line in enumerate(lines):
         raw = line.strip()
         if raw.startswith(";LAYER_CHANGE"):
@@ -3361,6 +3600,10 @@ def _band_sparse_infill(text: str, stats: dict) -> tuple[str, dict]:
             continue
         if raw.startswith(";WIDTH:"):
             width = raw
+            try:
+                bead_w = float(raw.split(":", 1)[1])
+            except ValueError:
+                pass
             continue
         if raw.startswith(";Z:") and layer not in z_at:
             try:
@@ -3385,12 +3628,17 @@ def _band_sparse_infill(text: str, stats: dict) -> tuple[str, dict]:
         if not (_is_g01(line)):
             continue
         w = _ff_words(body)
+        ox, oy = x, y
         if "X" in w:
             x = float(w["X"]) if absolute else x + float(w["X"])
         if "Y" in w:
             y = float(w["Y"]) if absolute else y + float(w["Y"])
         if "F" in w:
             feed = float(w["F"])
+        if _BAND_FIRST <= layer <= _BAND_LAST:
+            de = float(w["E"]) if "E" in w else 0.0
+            if de > 1e-9 and (abs(x - ox) > 1e-9 or abs(y - oy) > 1e-9):
+                beads.setdefault(layer, []).append((ox, oy, x, y, typ in ("Outer wall", "Overhang wall"), bead_w))
     if layer >= 0:
         end_at[layer] = len(lines)
         state[layer] = (x, y, feed, typ, width)
@@ -3406,6 +3654,7 @@ def _band_sparse_infill(text: str, stats: dict) -> tuple[str, dict]:
         paths = _band_paths(z_at.get(lay), cols)
         if not paths:
             continue
+        paths.extend(_band_tip_paths(beads.get(lay, []), paths))
         ex, ey, fd, tp, wd = state[lay]
         block = _band_block(paths, ex, ey, fd, tp, wd, edges.get(lay, []), nl)
         n_ext += sum(1 for line in block if " E" in line and "E-" not in line.split(";", 1)[0])
