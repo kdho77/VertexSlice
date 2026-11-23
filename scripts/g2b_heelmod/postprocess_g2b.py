@@ -2831,6 +2831,599 @@ def _thick_position_needed(lines: list[str], last_index: int) -> bool:
     return False
 
 
+# Printed ApexCore file (cb0569eb): the only hollow is orthocad layers 156-165.
+# Sections under 3 mm, and every line outside that band, stay as that file wrote them.
+_BAND_FIRST = 156
+_BAND_LAST = 165
+_BAND_BIN = 0.25
+_BAND_E_PER_MM = 0.18
+_BAND_FEED = 1560
+# G-code shift that puts this generator on the file's ';TYPE:Sparse infill' waves.
+_BAND_SHIFT = (7.33, 8.24)
+
+
+def _band_y_at(x0: float, y0: float, x1: float, y1: float, x: float) -> float | None:
+    if abs(x1 - x0) < 1e-12:
+        return None
+    if x < min(x0, x1) - 1e-9 or x > max(x0, x1) + 1e-9:
+        return None
+    t = (x - x0) / (x1 - x0)
+    t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+    return y0 + t * (y1 - y0)
+
+
+def _band_merge(spans: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    if not spans:
+        return []
+    spans = sorted(spans)
+    out = [list(spans[0])]
+    for a, b in spans[1:]:
+        if a <= out[-1][1] + 1e-9:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return [(a, b) for a, b in out]
+
+
+def _band_capsule(x0: float, y0: float, x1: float, y1: float, radius: float, x: float) -> list[tuple[float, float]]:
+    """Y span of a stadium of ``radius`` around the segment, cut by the line x=const."""
+    dx, dy = x1 - x0, y1 - y0
+    length2 = dx * dx + dy * dy
+    spans: list[tuple[float, float]] = []
+
+    def add(a: float, b: float) -> None:
+        if b < a:
+            a, b = b, a
+        if b - a > 1e-12:
+            spans.append((a, b))
+
+    if length2 < 1e-18:
+        if abs(x - x0) <= radius:
+            half = math.sqrt(max(0.0, radius * radius - (x - x0) ** 2))
+            add(y0 - half, y0 + half)
+        return _band_merge(spans)
+    length = math.sqrt(length2)
+    if abs(dx) > 1e-12:
+        c = dy * (x - x0)
+        y_a = y0 + (c - radius * length) / dx
+        y_b = y0 + (c + radius * length) / dx
+        lo, hi = (y_a, y_b) if y_a <= y_b else (y_b, y_a)
+        if abs(dy) > 1e-12:
+            t0 = y0 + (0.0 - (x - x0) * dx) / dy
+            t1 = y0 + (length2 - (x - x0) * dx) / dy
+            clo, chi = (t0, t1) if t0 <= t1 else (t1, t0)
+            lo, hi = max(lo, clo), min(hi, chi)
+        else:
+            foot = (x - x0) * dx / length2
+            if not (0.0 <= foot <= 1.0):
+                lo, hi = 1.0, 0.0
+        if hi > lo:
+            add(lo, hi)
+    elif abs(x - x0) <= radius:
+        half = math.sqrt(max(0.0, radius * radius - (x - x0) ** 2))
+        add(min(y0, y1) - half, max(y0, y1) + half)
+        return _band_merge(spans)
+    for ex, ey, end in ((x0, y0, 0), (x1, y1, 1)):
+        if abs(x - ex) > radius:
+            continue
+        half = math.sqrt(max(0.0, radius * radius - (x - ex) ** 2))
+        if end == 0:
+            bound = -(x - x0) * dx
+        else:
+            bound = length2 - (x - x0) * dx
+        if abs(dy) < 1e-12:
+            if end == 0 and bound < -1e-9:
+                continue
+            if end == 1 and bound > 1e-9:
+                continue
+            add(ey - half, ey + half)
+            continue
+        limit = y0 + bound / dy
+        if (end == 0 and dy > 0) or (end == 1 and dy < 0):
+            add(ey - half, min(ey + half, limit))
+        else:
+            add(max(ey - half, limit), ey + half)
+    return _band_merge(spans)
+
+
+def _band_hollow_map(segs: list[dict]) -> dict[int, dict[int, tuple[float, float]]]:
+    """Empty >=3 mm columns in layers 156-165.
+
+    A column is hollow when the two outer skins are at least 3 mm apart
+    outer-edge to outer-edge, the air between the inner faces is over 1 mm,
+    and no non-skin extrusion overlaps that air. Same count (1071) as the
+    printed file. The value is (inner plantar face, inner dorsal face).
+    """
+    by: dict[int, list[dict]] = {}
+    for seg in segs:
+        if _BAND_FIRST <= seg["layer"] <= _BAND_LAST:
+            by.setdefault(seg["layer"], []).append(seg)
+    found: dict[int, dict[int, tuple[float, float]]] = {}
+    for layer, group in by.items():
+        skin = [s for s in group if s["kind"] == "skin"]
+        other = [s for s in group if s["kind"] != "skin"]
+        if not skin:
+            continue
+        xs = [v for s in skin for v in (s["x0"], s["x1"])]
+        b0 = int(math.floor((min(xs) - 2.0) / _BAND_BIN))
+        b1 = int(math.floor((max(xs) + 2.0) / _BAND_BIN))
+        cols: dict[int, tuple[float, float]] = {}
+        for binn in range(b0, b1 + 1):
+            x = (binn + 0.5) * _BAND_BIN
+            hits = []
+            for seg in skin:
+                y = _band_y_at(seg["x0"], seg["y0"], seg["x1"], seg["y1"], x)
+                if y is None:
+                    continue
+                radius = seg["w"] * 0.5
+                hits.append((y - radius, y + radius, y))
+            if len(hits) < 2:
+                continue
+            lo_y = min(h[2] for h in hits)
+            hi_y = max(h[2] for h in hits)
+            if hi_y - lo_y < 0.20:
+                continue
+            mid = 0.5 * (lo_y + hi_y)
+            plow = phigh = dlow = dhigh = None
+            for lo, hi, yc in hits:
+                if yc <= mid:
+                    plow = lo if plow is None else min(plow, lo)
+                    phigh = hi if phigh is None else max(phigh, hi)
+                if yc >= mid:
+                    dlow = lo if dlow is None else min(dlow, lo)
+                    dhigh = hi if dhigh is None else max(dhigh, hi)
+            if None in (plow, phigh, dlow, dhigh):
+                continue
+            if (dhigh - plow) < 3.0 or (dlow - phigh) <= 1.0:
+                continue
+            covered = False
+            for seg in other:
+                for lo, hi in _band_capsule(seg["x0"], seg["y0"], seg["x1"], seg["y1"], seg["w"] * 0.5, x):
+                    if min(hi, dlow) - max(lo, phigh) > 0.02:
+                        covered = True
+                        break
+                if covered:
+                    break
+            if not covered:
+                cols[binn] = (phigh, dlow)
+        if cols:
+            found[layer] = cols
+    return found
+
+
+def _band_wave_y(x: float, z_sin: float, z_cos: float, vertical: bool, flip: bool) -> float:
+    if vertical:
+        phase = (math.pi if z_cos < 0.0 else 0.0) + math.pi
+        a = math.sin(x + phase)
+        b = -z_cos
+        res = z_sin * math.cos(x + phase + (math.pi if flip else 0.0))
+        r = math.sqrt(a * a + b * b) or 1.0
+        return math.asin(a / r) + math.asin(max(-1.0, min(1.0, res / r))) + math.pi
+    phase = math.pi if z_sin < 0.0 else 0.0
+    a = math.cos(x + phase)
+    b = -z_sin
+    res = z_cos * math.sin(x + phase + (0.0 if flip else math.pi))
+    r = math.sqrt(a * a + b * b) or 1.0
+    return math.asin(a / r) + math.asin(max(-1.0, min(1.0, res / r))) + 0.5 * math.pi
+
+
+def _band_one_period(width: float, z_cos: float, z_sin: float, vertical: bool, flip: bool, tol: float) -> list[list[float]]:
+    limit = min(2.0 * math.pi, width)
+    pts = []
+    x = 0.0
+    while x < limit - 1e-9:
+        pts.append([x, _band_wave_y(x, z_sin, z_cos, vertical, flip)])
+        x += math.pi / 2.0
+    pts.append([limit, _band_wave_y(limit, z_sin, z_cos, vertical, flip)])
+    while True:
+        size = len(pts)
+        extra = []
+        for i in range(1, size):
+            left, right = pts[i - 1], pts[i]
+            mx = 0.5 * (left[0] + right[0])
+            my = _band_wave_y(mx, z_sin, z_cos, vertical, flip)
+            cross = (mx - left[0]) * (my - right[1]) - (my - left[1]) * (mx - right[0])
+            if abs(cross) > tol * tol:
+                extra.append([mx, my])
+        if not extra:
+            break
+        pts.extend(extra)
+        pts.sort()
+    return pts
+
+
+def _band_make_wave(one: list[list[float]], width: float, height: float, offset: float, z_cos: float, z_sin: float, vertical: bool, flip: bool) -> list[tuple[float, float]]:
+    pts = [p[:] for p in one]
+    period = pts[-1][0]
+    if abs(width - period) > 1e-9:
+        pts.pop()
+        n = len(pts)
+        while pts[-1][0] < width - 1e-9:
+            i = len(pts) - n
+            pts.append([pts[i][0] + period, pts[i][1]])
+        pts.append([width, _band_wave_y(width, z_sin, z_cos, vertical, flip)])
+    out = []
+    for px, py in pts:
+        py += offset
+        if py < 0.0:
+            py = 0.0
+        elif py > height:
+            py = height
+        if vertical:
+            px, py = py, px
+        out.append((px, py))
+    return out
+
+
+def _band_gyroid(print_z: float) -> list[list[tuple[float, float]]]:
+    """Sparse gyroid in gcode mm, matched to the file's existing waves.
+
+    Virtual box, +45 deg into the pattern frame, period-aligned origin, then
+    back by -45 deg and the belt Y scale. The shift is the one that lands on
+    the printed file's sparse infill.
+    """
+    spacing = 1.0 - FOREFOOT_LAYER_H * (1.0 - math.pi / 4.0)
+    pitch = spacing / (0.26 * 2.44)
+    period = 2.0 * math.pi * pitch
+    c = math.cos(math.pi / 4.0)
+    s = math.sin(math.pi / 4.0)
+    corners = [(90.0, -5.0), (190.0, -5.0), (190.0, 25.0), (90.0, 25.0)]
+    rot = [(c * x - s * y, s * x + c * y) for x, y in corners]
+    minx = min(p[0] for p in rot)
+    miny = min(p[1] for p in rot)
+    maxx = max(p[0] for p in rot)
+    maxy = max(p[1] for p in rot)
+    ox = math.floor(minx / period) * period
+    oy = math.floor(miny / period) * period
+    width = math.ceil((maxx - ox) / pitch) + 1.0
+    height = math.ceil((maxy - oy) / pitch) + 1.0
+    z = print_z / pitch
+    z_sin, z_cos = math.sin(z), math.cos(z)
+    vertical = abs(z_sin) <= abs(z_cos)
+    lower, upper = 0.0, height
+    flip = True
+    ww, hh = width, height
+    if vertical:
+        flip = False
+        lower, upper = -math.pi, width - math.pi / 2.0
+        ww, hh = height, width
+    tol = min(spacing / 2.0, 0.2) / pitch
+    odd = _band_one_period(ww, z_cos, z_sin, vertical, flip, tol)
+    flip = not flip
+    even = _band_one_period(ww, z_cos, z_sin, vertical, flip, tol)
+    waves = []
+    y0 = lower
+    while y0 < upper + 1e-9:
+        waves.append(_band_make_wave(odd, ww, hh, y0, z_cos, z_sin, vertical, flip))
+        y0 += math.pi
+        if y0 < upper + 1e-9:
+            waves.append(_band_make_wave(even, ww, hh, y0, z_cos, z_sin, vertical, flip))
+            y0 += math.pi
+    out = []
+    sx, sy = _BAND_SHIFT
+    for wave in waves:
+        pts = []
+        for px, py in wave:
+            x = ox + px * pitch
+            y = oy + py * pitch
+            xr = c * x + s * y
+            yr = (-s * x + c * y) * math.sqrt(2.0)
+            pts.append((xr + sx, yr + sy))
+        out.append(pts)
+    return out
+
+
+def _band_clip(x0: float, y0: float, x1: float, y1: float, xmin: float, xmax: float, ymin: float, ymax: float):
+    dx, dy = x1 - x0, y1 - y0
+    u0, u1 = 0.0, 1.0
+    for p, q in ((-dx, x0 - xmin), (dx, xmax - x0), (-dy, y0 - ymin), (dy, ymax - y0)):
+        if abs(p) < 1e-15:
+            if q < 0.0:
+                return None
+            continue
+        t = q / p
+        if p < 0.0:
+            if t > u1:
+                return None
+            if t > u0:
+                u0 = t
+        else:
+            if t < u0:
+                return None
+            if t < u1:
+                u1 = t
+    if u1 - u0 < 1e-8:
+        return None
+    return u0, u1
+
+
+def _band_window(phigh: float, dlow: float) -> tuple[float, float]:
+    lo, hi = phigh + 0.20, dlow - 0.20
+    if hi - lo >= 0.20:
+        return lo, hi
+    mid = 0.5 * (phigh + dlow)
+    return mid - 0.05, mid + 0.05
+
+
+def _band_paths(print_z: float | None, cols: dict[int, tuple[float, float]]) -> list[list[tuple[float, float]]]:
+    """Gyroid pieces inside the empty columns, then a connector through any column still missed."""
+    paths: list[list[tuple[float, float]]] = []
+    if print_z is not None and cols:
+        xs = [b * _BAND_BIN for b in cols]
+        xe = [(b + 1) * _BAND_BIN for b in cols]
+        minx, maxx = min(xs) - 1.0, max(xe) + 1.0
+        miny = min(g[0] for g in cols.values()) - 1.0
+        maxy = max(g[1] for g in cols.values()) + 1.0
+        current: list[tuple[float, float]] | None = None
+        for wave in _band_gyroid(print_z):
+            for (x0, y0), (x1, y1) in zip(wave, wave[1:]):
+                if max(x0, x1) < minx or min(x0, x1) > maxx or max(y0, y1) < miny or min(y0, y1) > maxy:
+                    if current and len(current) >= 2:
+                        paths.append(current)
+                    current = None
+                    continue
+                b0 = int(math.floor(min(x0, x1) / _BAND_BIN))
+                b1 = int(math.floor(max(x0, x1) / _BAND_BIN))
+                pieces = []
+                for binn in range(b0, b1 + 1):
+                    gap = cols.get(binn)
+                    if gap is None:
+                        continue
+                    ylo, yhi = _band_window(*gap)
+                    clipped = _band_clip(x0, y0, x1, y1, binn * _BAND_BIN, (binn + 1) * _BAND_BIN, ylo, yhi)
+                    if clipped is not None:
+                        pieces.append(clipped)
+                pieces.sort()
+                if not pieces:
+                    if current and len(current) >= 2:
+                        paths.append(current)
+                    current = None
+                    continue
+                for u0, u1 in pieces:
+                    ax, ay = x0 + u0 * (x1 - x0), y0 + u0 * (y1 - y0)
+                    bx, by = x0 + u1 * (x1 - x0), y0 + u1 * (y1 - y0)
+                    if math.hypot(bx - ax, by - ay) < 0.02:
+                        continue
+                    if current and math.hypot(current[-1][0] - ax, current[-1][1] - ay) <= 0.05:
+                        current.append((bx, by))
+                    else:
+                        if current and len(current) >= 2:
+                            paths.append(current)
+                        current = [(ax, ay), (bx, by)]
+            if current and len(current) >= 2:
+                paths.append(current)
+            current = None
+    paths = [p for p in paths if sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(p, p[1:])) >= 0.20]
+
+    def covers(poly: list[tuple[float, float]], binn: int, gap: tuple[float, float]) -> bool:
+        x = (binn + 0.5) * _BAND_BIN
+        ylo, yhi = gap
+        for (x0, y0), (x1, y1) in zip(poly, poly[1:]):
+            y = _band_y_at(x0, y0, x1, y1, x)
+            if y is not None and ylo < y < yhi:
+                return True
+        return False
+
+    missed = [b for b, gap in cols.items() if not any(covers(p, b, gap) for p in paths)]
+    missed.sort()
+    run: list[int] = []
+    runs: list[list[int]] = []
+    for binn in missed:
+        if run and binn != run[-1] + 1:
+            runs.append(run)
+            run = []
+        run.append(binn)
+    if run:
+        runs.append(run)
+    for run in runs:
+        pts = []
+        for binn in run:
+            phigh, dlow = cols[binn]
+            pts.append(((binn + 0.5) * _BAND_BIN, 0.5 * (phigh + dlow)))
+        y0, y1 = pts[0][1], pts[-1][1]
+        pts = [(run[0] * _BAND_BIN + 0.02, y0), *pts, ((run[-1] + 1) * _BAND_BIN - 0.02, y1)]
+        paths.append(pts)
+    return paths
+
+
+def _band_travel(x0: float, y0: float, x1: float, y1: float, edges, grid) -> list[tuple[float, float]]:
+    if math.hypot(x1 - x0, y1 - y0) <= 0.02:
+        return [(x0, y0)]
+    straight = [(x0, y0), (x1, y1)]
+    if grid is None or not grid.hits(x0, y0, x1, y1):
+        return straight
+    routed = _route_off_wall(edges, (x0, y0), (x1, y1), grid, _chain_polygons_production)
+    if routed and not _path_crosses(grid, routed):
+        return routed
+    return straight
+
+
+def _band_block(
+    paths: list[list[tuple[float, float]]],
+    end_x: float,
+    end_y: float,
+    feed: float,
+    typ: str,
+    width: str,
+    edges,
+    nl: str,
+) -> list[str]:
+    """Added sparse-infill moves. The nozzle is put back on (end_x, end_y), primed."""
+    from check_travel_wall_crossings import _Grid
+
+    grid = _Grid(edges) if edges else None
+    pending = [list(p) for p in paths if len(p) >= 2]
+    cx, cy = end_x, end_y
+    ordered = []
+    while pending:
+        best_i = 0
+        best_d = 1e18
+        flip = False
+        for i, path in enumerate(pending):
+            d0 = math.hypot(path[0][0] - cx, path[0][1] - cy)
+            d1 = math.hypot(path[-1][0] - cx, path[-1][1] - cy)
+            if d0 < best_d:
+                best_i, best_d, flip = i, d0, False
+            if d1 < best_d:
+                best_i, best_d, flip = i, d1, True
+        path = pending.pop(best_i)
+        if flip:
+            path.reverse()
+        ordered.append(path)
+        cx, cy = path[-1]
+    out = [f";TYPE:Sparse infill{nl}", f";WIDTH:1{nl}"]
+    cx, cy = end_x, end_y
+
+    def travel(dest: tuple[float, float]) -> None:
+        nonlocal cx, cy
+        path = _band_travel(cx, cy, dest[0], dest[1], edges, grid)
+        length = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(path, path[1:]))
+        if length <= 0.02:
+            cx, cy = dest
+            return
+        if length > 2.0:
+            out.append(f"G1 E-{RETRACT:.1f} F{RETRACT_F:.0f}{nl}")
+        for px, py in path[1:]:
+            out.append(f"G1 X{_fmt(px, 3)} Y{_fmt(py, 3)} F{TRAVEL_F:.0f}{nl}")
+        if length > 2.0:
+            out.append(f"G1 E{PRIME:.2f} F{RETRACT_F:.0f}{nl}")
+        cx, cy = path[-1]
+
+    for path in ordered:
+        travel(path[0])
+        first = True
+        for (x0, y0), (x1, y1) in zip(path, path[1:]):
+            # The travel may have stopped a few microns off the start.
+            if first and math.hypot(x0 - cx, y0 - cy) > 0.05:
+                travel((x0, y0))
+            length = math.hypot(x1 - x0, y1 - y0)
+            if length < 0.02:
+                continue
+            e = _BAND_E_PER_MM * length
+            line = f"G1 X{_fmt(x1, 3)} Y{_fmt(y1, 3)} E{e:.5f}"
+            if first:
+                line += f" F{_BAND_FEED:.0f}"
+                first = False
+            out.append(line + nl)
+            cx, cy = x1, y1
+    travel((end_x, end_y))
+    if feed > 0.0:
+        out.append(f"G1 F{feed:.0f}{nl}")
+    if typ:
+        out.append(f";TYPE:{typ}{nl}")
+    if width:
+        out.append(width + nl)
+    return out
+
+
+def _band_sparse_infill(text: str, stats: dict) -> tuple[str, dict]:
+    """Add the file's sparse infill into empty >=3 mm sections of layers 156-165.
+
+    Every existing line is copied unchanged. Nothing is inserted outside that
+    band, and a file whose forefoot ends before layer 165 is returned as-is.
+    """
+    last = stats.get("last_layer")
+    if last is None or last < _BAND_LAST:
+        return text, stats
+    if text.count(";LAYER_CHANGE") < _BAND_LAST + 1:
+        return text, stats
+    lines = text.splitlines(keepends=True)
+    parsed = _parse_moves(lines, reset_type=False)
+    hollow = _band_hollow_map(parsed["segs"])
+    if not hollow:
+        return text, stats
+    nl = "\n"
+    for line in lines:
+        if line.endswith("\r\n"):
+            nl = "\r\n"
+            break
+        if line.endswith("\n"):
+            break
+    layer = -1
+    x = y = 0.0
+    feed = 0.0
+    absolute = True
+    typ = ""
+    width = ""
+    z_at: dict[int, float] = {}
+    end_at: dict[int, int] = {}
+    state: dict[int, tuple[float, float, float, str, str]] = {}
+    for index, line in enumerate(lines):
+        raw = line.strip()
+        if raw.startswith(";LAYER_CHANGE"):
+            if layer >= 0:
+                end_at[layer] = index
+                state[layer] = (x, y, feed, typ, width)
+            layer += 1
+            continue
+        if raw.startswith(";TYPE:"):
+            typ = raw[6:].strip()
+            continue
+        if raw.startswith(";WIDTH:"):
+            width = raw
+            continue
+        if raw.startswith(";Z:") and layer not in z_at:
+            try:
+                z_at[layer] = float(raw[3:])
+            except ValueError:
+                pass
+            continue
+        body = raw.split(";", 1)[0].strip()
+        if body.startswith("G90"):
+            absolute = True
+            continue
+        if body.startswith("G91"):
+            absolute = False
+            continue
+        if body.startswith("G92"):
+            w = _ff_words(body)
+            if "X" in w:
+                x = float(w["X"])
+            if "Y" in w:
+                y = float(w["Y"])
+            continue
+        if not (_is_g01(line)):
+            continue
+        w = _ff_words(body)
+        if "X" in w:
+            x = float(w["X"]) if absolute else x + float(w["X"])
+        if "Y" in w:
+            y = float(w["Y"]) if absolute else y + float(w["Y"])
+        if "F" in w:
+            feed = float(w["F"])
+    if layer >= 0:
+        end_at[layer] = len(lines)
+        state[layer] = (x, y, feed, typ, width)
+    edges: dict[int, list[tuple[float, float, float, float]]] = {}
+    for seg in parsed["segs"]:
+        if seg["kind"] == "skin":
+            edges.setdefault(seg["layer"], []).append((seg["x0"], seg["y0"], seg["x1"], seg["y1"]))
+    blocks: dict[int, list[str]] = {}
+    n_ext = 0
+    for lay, cols in hollow.items():
+        if lay not in state:
+            continue
+        paths = _band_paths(z_at.get(lay), cols)
+        if not paths:
+            continue
+        ex, ey, fd, tp, wd = state[lay]
+        block = _band_block(paths, ex, ey, fd, tp, wd, edges.get(lay, []), nl)
+        n_ext += sum(1 for line in block if " E" in line and "E-" not in line.split(";", 1)[0])
+        blocks[end_at[lay]] = block
+    if not blocks:
+        return text, stats
+    out: list[str] = []
+    for index, line in enumerate(lines):
+        if index in blocks:
+            out.extend(blocks[index])
+        out.append(line)
+    if len(lines) in blocks:
+        out.extend(blocks[len(lines)])
+    stats["band_layers"] = len(blocks)
+    stats["band_extrusions"] = n_ext
+    return "".join(out), stats
+
+
 def _thick_cura_fill(text: str, stats: dict) -> tuple[str, dict]:
     """Replace the inner wall in a 3-6 mm forefoot with one fill bead.
 
@@ -3265,7 +3858,7 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
             _note(fit[1], cf, 0.0, ce, True)
     if not planned:
         stats["reason"] = "nothing to bond"
-        return _thick_cura_fill(text, stats)
+        return _band_sparse_infill(*_thick_cura_fill(text, stats))
     for index, (x1, y1, e, feed) in planned.items():
         line = lines[index]
         line = _ff_set_word(line, "X", x1, 3)
@@ -3294,7 +3887,7 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
     stats["applied"] = True
     stats["added_e"] = round(stats["added_e"], 3)
     stats["max_q_widened"] = round(stats["max_q_widened"], 3)
-    return _thick_cura_fill("".join(lines), stats)
+    return _band_sparse_infill(*_thick_cura_fill("".join(lines), stats))
 
 
 def main() -> None:

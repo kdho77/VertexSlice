@@ -589,6 +589,114 @@ class ForefootBondTests(unittest.TestCase):
         for prev, nxt in zip(moves, moves[1:]):
             self.assertLess(math.hypot(nxt[0] - prev[2], nxt[1] - prev[3]), 0.05)
 
+    def test_band_sparse_infill_fills_the_hollow_and_keeps_other_layers(self) -> None:
+        # Layers 156-165 hold one empty section thicker than 3 mm, plus a
+        # thinner loop that must stay solid. Every other layer is a marker.
+        bodies = []
+        for i in range(1, 301):
+            z = i * 0.65
+            if 156 <= i <= 165:
+                thick = _loop(
+                    [(100.0, 0.40, 1.0), (160.0, 0.40, 1.0), (160.0, 8.40, 1.0), (100.0, 8.40, 1.0)],
+                    z,
+                    "Outer wall",
+                )
+                thin = _loop(
+                    [(170.0, 0.40, 1.0), (190.0, 0.40, 1.0), (190.0, 2.20, 1.0), (170.0, 2.20, 1.0)],
+                    z,
+                    "Outer wall",
+                )
+                bodies.append(thick + thin[2:])
+            else:
+                bodies.append([";LAYER_CHANGE", f";Z:{z:.5f}", f";keep {i}"])
+        text = _program(bodies)
+        new, _stats = forefoot_cura_bond(text)
+        old = _printed_bond()(text)[0]
+        new_parts = new.split(";LAYER_CHANGE")
+        old_parts = old.split(";LAYER_CHANGE")
+        self.assertEqual(len(new_parts), len(old_parts))
+        for index, (got, exp) in enumerate(zip(new_parts, old_parts)):
+            layer = index - 1
+            if layer < 156 or layer > 165:
+                self.assertEqual(got, exp, f"layer {layer} changed")
+                continue
+            exp_lines = exp.splitlines()
+            got_lines = got.splitlines()
+            cursor = 0
+            added = []
+            for line in exp_lines:
+                while cursor < len(got_lines) and got_lines[cursor] != line:
+                    added.append(got_lines[cursor])
+                    cursor += 1
+                self.assertLess(cursor, len(got_lines), f"layer {layer} lost {line!r}")
+                cursor += 1
+            added.extend(got_lines[cursor:])
+            self.assertTrue(any(line.startswith(";TYPE:Sparse infill") for line in added))
+            feature = ""
+            for line in added:
+                if line.startswith(";TYPE:"):
+                    feature = line[6:].strip()
+                    continue
+                words = _words(line)
+                if "X" not in words or "E" not in words or float(words["E"]) <= 0.0:
+                    continue
+                self.assertEqual(feature, "Sparse infill")
+                self.assertGreater(float(words["X"]), 99.0)
+                self.assertLess(float(words["X"]), 161.0)
+            self.assertEqual(_last_type(got), _last_type(exp))
+        self.assertEqual(_synthetic_hollow_columns(new), 0)
+
+
+def _last_type(part: str) -> str | None:
+    found = None
+    for line in part.splitlines():
+        if line.startswith(";TYPE:"):
+            found = line
+    return found
+
+
+def _printed_bond():
+    """cb0569eb's forefoot bond, the file Kendon printed."""
+    import importlib.util
+    import subprocess
+    import tempfile
+
+    src = subprocess.check_output(
+        ["git", "show", "cb0569eb19d9502841d73d30f1e4d93bc64bb07d:scripts/g2b_heelmod/postprocess_g2b.py"],
+        cwd=REPO,
+    )
+    path = Path(tempfile.mkdtemp()) / "postprocess_g2b_cb0569.py"
+    path.write_bytes(src)
+    spec = importlib.util.spec_from_file_location("postprocess_g2b_cb0569", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.forefoot_cura_bond
+
+
+def _synthetic_hollow_columns(text: str) -> int:
+    """Per band layer, columns of the thick loop with no extrusion in the gap."""
+    hollow = 0
+    # split keeps the preamble in front, so part i+1 is layer i.
+    for part in text.split(";LAYER_CHANGE")[157:167]:
+        moves = _extrusions(part)
+        x = 100.125
+        while x < 160.0:
+            hit = False
+            for x0, y0, x1, y1, _e in moves:
+                if abs(x1 - x0) < 1e-9:
+                    continue
+                if x < min(x0, x1) - 1e-9 or x > max(x0, x1) + 1e-9:
+                    continue
+                t = (x - x0) / (x1 - x0)
+                y = y0 + t * (y1 - y0)
+                if 1.0 < y < 7.8:
+                    hit = True
+                    break
+            if not hit:
+                hollow += 1
+            x += 0.25
+    return hollow
+
 
 if __name__ == "__main__":
     unittest.main()
