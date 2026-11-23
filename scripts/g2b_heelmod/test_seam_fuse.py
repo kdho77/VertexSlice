@@ -32,6 +32,7 @@ from postprocess_g2b import (  # noqa: E402
     _pair_of,
     _parse_moves,
     forefoot_cura_bond,
+    forefoot_last_layer,
     forefoot_type_audit,
     seam,
 )
@@ -450,22 +451,20 @@ class ForefootBondTests(unittest.TestCase):
         self.assertEqual(outer_after, outer_before)
         # The old inner-wall centreline at y=1.55 is gone.
         self.assertFalse(any(abs(m[1] - 1.55) < 0.01 and abs(m[3] - 1.55) < 0.01 for m in after))
+        # The gap is infill, about 1.11 mm, not a bead that fills the 4 mm section.
         corner = 0.46 * (1.0 - math.pi / 4.0)
-        covered = False
+        widths = []
         for x0, y0, x1, y1, e in after:
             length = math.hypot(x1 - x0, y1 - y0)
             if length < 0.4 or abs(x1 - x0) / length < 0.25:
                 continue
             if max(x0, x1) < 100.0 or min(x0, x1) > 120.0:
                 continue
-            width = (e / length) * _FILAMENT_AREA / 0.46 + corner
-            yc = 0.5 * (y0 + y1)
-            half = (width * 0.5) / (abs(x1 - x0) / length)
-            lo, hi = yc - half, yc + half
-            # Plantar skin inner edge is 1.073, dorsal inner edge is 2.827.
-            if min(1.073, hi) - max(0.50 - 0.573, lo) >= 0.15 and min(3.40 + 0.573, hi) - max(2.827, lo) >= 0.15:
-                covered = True
-        self.assertTrue(covered, "fill bead does not reach both skins")
+            if min(y0, y1) < 0.6 or max(y0, y1) > 3.2:
+                continue
+            widths.append((e / length) * _FILAMENT_AREA / 0.46 + corner)
+        self.assertTrue(widths, "3-6 mm section has no infill")
+        self.assertTrue(all(0.9 <= w <= 1.4 for w in widths), widths)
 
     def test_thick_fill_routes_a_crossing_seam_travel_inside(self) -> None:
         # The fill leaves the nozzle at the toe tip. The next seam travel cuts
@@ -591,6 +590,76 @@ class ForefootBondTests(unittest.TestCase):
             self.assertGreater(covered, 0.02, "over-6 mm column has no extrusion between the walls")
             self.assertLess(covered, gap * 0.60, "over-6 mm column was filled solid")
         self.assertTrue(any(reach >= 0.15 for _key, _gap, _covered, reach in hollow))
+
+    def test_thickness_picks_solid_or_infill_on_a_skipped_layer_count(self) -> None:
+        # 250 layers used to be left untouched (the old rule skipped 221-299).
+        # A 2.4 mm section is the thin solid bond. A 5 mm section is infill.
+        # The section height is the existing forefoot loop, scaled into this file.
+        self.assertEqual(forefoot_last_layer(250), 250)
+        thin = _loop(
+            [(100.0, 0.55, 1.10), (140.0, 0.55, 1.10), (140.0, 2.35, 1.10), (100.0, 2.35, 1.10)],
+            0.46,
+            "Outer wall",
+        )
+        thick = [
+            ";LAYER_CHANGE",
+            ";Z:18.40000",
+            _g1(90.0, 0.50, f=12720) + " Z18.400",
+            ";TYPE:Outer wall",
+            "G1 F1560",
+        ]
+        outer = [(90.0, 0.50, 1.146), (140.0, 0.50, 1.146), (140.0, 4.20, 1.146), (90.0, 4.20, 1.146)]
+        inner = [(95.0, 1.80, 0.80), (135.0, 1.80, 0.80), (135.0, 2.20, 0.80), (95.0, 2.20, 0.80)]
+
+        def emit(points, into):
+            nxt = points[1:] + [points[0]]
+            for (x0, y0, _w0), (x1, y1, w1) in zip(points, nxt):
+                length = math.hypot(x1 - x0, y1 - y0)
+                into.append(_g1(x1, y1, _forefoot_e(w1, length)))
+
+        emit(outer, thick)
+        thick += [";TYPE:Inner wall", _g1(95.0, 1.80, f=12720)]
+        emit(inner, thick)
+        layers = []
+        for index in range(1, 250):
+            if index == 10:
+                layers.append(thin)
+            elif index == 40:
+                layers.append(thick)
+            else:
+                layers.append([";LAYER_CHANGE", f";Z:{index * 0.46:.5f}"])
+        text = _program(layers)
+        self.assertEqual(text.count(";LAYER_CHANGE"), 250)
+        out, stats = forefoot_cura_bond(text)
+        self.assertNotEqual(stats.get("reason"), "out of scope")
+        self.assertGreater(stats.get("open_bins", 0), 0)
+        # The thin layer's two skins now overlap. The thick layer's inner wall is
+        # gone and the gap has an infill line rather than a solid span.
+        lines = out.splitlines(keepends=True)
+        parsed = _parse_moves(lines, reset_type=False)
+        cols = _columns(parsed["segs"])
+        kinds = [seg["kind"] for seg in parsed["segs"]]
+        thin_gaps = []
+        thick_infill = []
+        for key, beads in cols.items():
+            pair = _pair_of(beads, kinds)
+            if pair is None:
+                continue
+            _pl, phigh, dlow, _dh, thick_mm, gap = pair
+            if key[0] == 10 and thick_mm < 3.0:
+                thin_gaps.append(gap)
+            if key[0] == 40 and thick_mm >= 3.0:
+                covered = 0.0
+                for lo, hi, _yc, idx in beads:
+                    if kinds[idx] == "skin":
+                        continue
+                    covered = max(covered, min(hi, dlow) - max(lo, phigh))
+                thick_infill.append(covered)
+        self.assertTrue(thin_gaps)
+        self.assertTrue(all(gap <= 0.0 for gap in thin_gaps), thin_gaps)
+        self.assertTrue(thick_infill)
+        self.assertTrue(all(covered > 0.02 for covered in thick_infill))
+        self.assertFalse(any(abs(m[1] - 1.80) < 0.01 and abs(m[3] - 1.80) < 0.01 for m in _extrusions(out)))
 
     def test_corner_join_keeps_both_outer_edges(self) -> None:
         # A thin loop: long plantar wall, vertical side, long dorsal wall.

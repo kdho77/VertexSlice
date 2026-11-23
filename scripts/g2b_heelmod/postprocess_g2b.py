@@ -1952,10 +1952,11 @@ _FOREFOOT_THICK_PRESS = 0.23
 _FOREFOOT_THICK_LO = 2.95
 _FOREFOOT_THICK_HI = 7.5
 _FOREFOOT_COS_MIN = 0.25
-# The over-6 mm band is sparse infill, not the solid 3-6 mm bead. A 1.05 mm
-# line at 26% is one line every 4.04 mm, which is main's gyroid density.
-# The line is pressed the same 0.23 mm into the outer wall as the thick bead.
-_OPEN_WIDTH = 1.05
+# Cura's sparse infill in the reference is one gyroid line about 1.11 mm wide.
+# At 26% that is one line every 4.27 mm. The line is pressed 0.23 mm into the
+# outer wall where it meets the skin. A section of 3 mm or more gets this,
+# including the old solid 3-6 mm bead.
+_OPEN_WIDTH = 1.11
 _OPEN_DENSITY = 0.26
 _OPEN_PERIOD = 9.0
 _FF_WORD = re.compile(r"([XYZEFGMZ])([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)")
@@ -1964,11 +1965,19 @@ _SKIN_TYPES = {"Outer wall", "Overhang wall"}
 
 
 def forefoot_last_layer(layer_count: int) -> int | None:
-    """Cutoff for the two CI models, chosen by layer count. Anything else is left as BASE."""
+    """Where a section of 3 mm or more gets infill instead of an inner wall.
+
+    Thickness picks solid or infill. On the two CI models the slicer already
+    wrote its own infill after the forefoot, and that infill is left as it is:
+    orthocad after layer 165, the insole sample after layer 31. A file the old
+    layer-count rule skipped (221-299 layers) is not skipped.
+    """
     if layer_count >= 300:
         return FOREFOOT_ORTHOCAD_LAST
     if 40 <= layer_count <= 220:
         return FOREFOOT_INSOLE_SAMPLE_LAST
+    if layer_count > 0:
+        return layer_count
     return None
 
 
@@ -2915,14 +2924,14 @@ def _open_run_lines(
     return out, cx, cy
 
 
-def _open_band(text: str, last: int) -> tuple[str, int]:
-    """Fill an enclosed forefoot column thicker than 6 mm that has no extrusion in the gap.
+def _open_band(text: str, last: int, allow: set | None = None) -> tuple[str, int]:
+    """Fill an enclosed column of 3 mm or more that has no extrusion in the gap.
 
-    The 3-6 mm pass drops a whole inner wall once any part of it is in that band,
-    and the part of the wall that was over 6 mm is left empty. Cura fills that
-    space with sparse infill about 1 mm wide. The lines are pressed about 0.23 mm
-    into the outer wall and are not a solid span of the gap. A file with no such
-    column is returned unchanged.
+    Cura's thick section is one outer wall and sparse infill about 1.11 mm wide
+    at about 26%. The lines are pressed about 0.23 mm into the outer wall and
+    are not a solid span of the gap. ``allow`` is the columns whose section was
+    already 3 mm or more before the thin bond. A file with no such column is
+    returned unchanged.
     """
     if last < 1:
         return text, 0
@@ -2942,7 +2951,9 @@ def _open_band(text: str, last: int) -> tuple[str, int]:
         if pair is None:
             continue
         plow, phigh, dlow, dhigh, thick, gap = pair
-        if thick <= 6.0 or gap <= 0.0:
+        if allow is not None and key not in allow:
+            continue
+        if thick < 3.0 or gap <= 0.0:
             continue
         covered = False
         for lo, hi, _yc, idx in beads:
@@ -3015,7 +3026,7 @@ def _open_band(text: str, last: int) -> tuple[str, int]:
 def _finish_open(base: str, original: str, stats: dict) -> tuple[str, dict]:
     """Add the over-6 mm sparse band, then walk any new wall-crossing travel inside."""
     last = stats.get("last_layer") or 0
-    banded, nopen = _open_band(base, int(last))
+    banded, nopen = _open_band(base, int(last), stats.get("pre_infill"))
     stats["open_bins"] = nopen
     if nopen == 0 and base == original:
         return original, stats
@@ -3027,16 +3038,13 @@ def _finish_open(base: str, original: str, stats: dict) -> tuple[str, dict]:
 
 
 def _thick_cura_fill(text: str, stats: dict) -> tuple[str, dict]:
-    """Replace the inner wall in a 3-6 mm forefoot with one fill bead.
+    """Drop the inner wall where the section was 3 mm or more, then fill the gap.
 
-    Cura's thick toe is one outer wall per side and fill pressed about 0.23 mm
-    into that wall. The outer wall is not moved. A 2-3 mm section is not
-    touched. The bead is sized so its envelope meets both skins, and its feed
-    is held at 16.80 mm^3/s. A column thicker than 6 mm that this pass leaves
-    empty gets sparse infill, about 1 mm wide at about 26%, pressed the same
-    0.23 mm into the outer wall. The seam travel that leaves the toe can cut
-    the outer wall. That travel is walked inside the part. A file with no
-    such travel is returned unchanged.
+    Cura's thick section is one outer wall and sparse infill about 1.11 mm wide
+    at about 26%, pressed about 0.23 mm into the outer wall. The outer wall is
+    not moved. Under 3 mm is left to the thin bond. The lines stay at or under
+    16.80 mm^3/s. A seam travel that cuts the outer wall is walked inside the
+    part.
     """
     lines = text.splitlines(keepends=True)
     parsed = _parse_moves(lines, reset_type=False)
@@ -3055,18 +3063,15 @@ def _thick_cura_fill(text: str, stats: dict) -> tuple[str, dict]:
         if pair is None:
             continue
         plow, phigh, dlow, dhigh, thick, _gap = pair
-        # Membership comes from the section before the thin bond. A 2-3 mm loop
-        # that the thin bond widens can read a little over 3 mm afterwards, and
-        # that loop stays as the thin bond left it. The three columns the thin
-        # bond pushed just under 3 mm, and the steep beads the gate still grades
-        # from the baseline, are already in that pre-thin set.
-        pre = stats.get("pre_thick")
+        # Membership is the section before the thin bond. A loop under 3 mm stays
+        # the thin bond even if the widened skins read a little over 3 mm after.
+        pre = stats.get("pre_infill")
+        if pre is None:
+            pre = stats.get("pre_thick")
         if pre is not None:
-            if key not in pre or not (_FOREFOOT_THICK_LO <= thick <= _FOREFOOT_THICK_HI):
+            if key not in pre:
                 continue
-        elif not (3.0 <= thick <= 6.0):
-            continue
-        if _thick_bonded(beads, plow, phigh, dlow, dhigh):
+        elif thick < 3.0:
             continue
         failing[key] = (plow, phigh, dlow, dhigh)
     stats["thick_bins"] = len(failing)
@@ -3157,51 +3162,9 @@ def _thick_cura_fill(text: str, stats: dict) -> tuple[str, dict]:
             else:
                 flush()
         flush()
+    # The inner wall comes out. The sparse lines are added by _open_band, one
+    # about-1.11 mm line at about 26%, not a bead that fills the whole gap.
     inserts: dict[int, list[str]] = {}
-    changes = [i for i, line in enumerate(lines) if line.startswith(";LAYER_CHANGE")]
-    for layer, bins in fail_bins.items():
-        if not bins:
-            continue
-        # Before the next layer when there is one, otherwise after the last line.
-        at = changes[layer + 1] if layer + 1 < len(changes) else len(lines)
-        nl = "\n" if at >= len(lines) or lines[at].endswith("\n") else ""
-        px, py, typ = 0.0, 0.0, ""
-        for i, line in enumerate(lines):
-            if i >= at:
-                break
-            raw = line.strip()
-            if raw.startswith(";TYPE:"):
-                typ = raw[6:].strip()
-                continue
-            if not _is_g01(line):
-                continue
-            words = _ff_words(line)
-            if "X" in words:
-                px = float(words["X"])
-            if "Y" in words:
-                py = float(words["Y"])
-        runs = _thick_runs(sorted(bins), True)
-        left = runs[0][0] * 0.5
-        right = (runs[-1][-1] + 1) * 0.5
-        # Finish toward the end this layer already stops at, so the approach is one travel.
-        if abs(px - right) > abs(px - left):
-            runs = [list(reversed(run)) for run in reversed(runs)]
-        block = [f";TYPE:Sparse infill{nl}"]
-        # Travel onto the bead. A short extrusion from the layer-end point sits
-        # on the outer wall, and the outer-edge check would count it as the skin.
-        first = runs[0]
-        increasing = len(first) < 2 or first[1] > first[0]
-        flo, fhi = _thick_span(failing[(layer, first[0])])
-        x0 = first[0] * 0.5 if increasing else (first[0] + 1) * 0.5
-        y0 = 0.5 * (flo + fhi)
-        block.append(f"G1 X{x0:.3f} Y{y0:.3f} F30000{nl}")
-        cx, cy = x0, y0
-        for run in runs:
-            part, cx, cy = _thick_run_lines(run, failing, layer, area, nl, cx, cy)
-            block.extend(part)
-        if typ:
-            block.append(f";TYPE:{typ}{nl}")
-        inserts[at] = block
     if not repl and not drop and not inserts:
         return _finish_open(text, text, stats)
     out: list[str] = []
@@ -3247,11 +3210,10 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
     width, so the printed outer edge stays. At a corner the two offsets meet
     through a short connector whose outer rim stays on the sliced edge. A
     widened bead keeps its feed unless that would push it over 16.80 mm^3/s,
-    in which case the feed drops to the cap.     A 3-6 mm section loses its inner
-    wall and gains one fill bead pressed about 0.23 mm into each outer wall.
-    A section over 6 mm that loses that wall gets sparse infill, about 1 mm
-    wide, pressed the same 0.23 mm into the outer wall. Lines after the
-    forefoot are not rewritten.
+    in which case the feed drops to the cap. A section of 3 mm or more loses
+    its inner wall and gets sparse infill about 1.11 mm wide at about 26%,
+    pressed about 0.23 mm into the outer wall. Under 3 mm is bonded on every
+    layer. The slicer's own infill after the forefoot is left as it is.
     """
     lines = text.splitlines(keepends=True)
     parsed = _parse_moves(lines, reset_type=False)
@@ -3282,18 +3244,22 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
         if "X" in w or "Y" in w or "E" in w:
             used[index] = modal
     area = parsed["area"]
-    segs = [s for s in parsed["segs"] if 1 <= s["layer"] <= last_layer]
-    # Thick membership is fixed here, before the thin bond moves any centreline.
-    pre_cols = _columns(segs)
-    pre_kinds = [seg["kind"] for seg in segs]
-    pre_thick: set[tuple[int, int]] = set()
-    for key, beads in pre_cols.items():
-        pair = _pair_of(beads, pre_kinds)
+    # Infill membership is fixed here, before the thin bond moves any centreline,
+    # and only inside the zone whose infill this pass owns. Under 3 mm is bonded
+    # on every layer, including past that zone.
+    zone = [s for s in parsed["segs"] if 1 <= s["layer"] <= last_layer]
+    zone_cols = _columns(zone)
+    zone_kinds = [seg["kind"] for seg in zone]
+    pre_infill: set[tuple[int, int]] = set()
+    for key, beads in zone_cols.items():
+        pair = _pair_of(beads, zone_kinds)
         if pair is None:
             continue
-        if 3.0 <= pair[4] <= 6.0:
-            pre_thick.add(key)
-    stats["pre_thick"] = pre_thick
+        if pair[4] >= 3.0:
+            pre_infill.add(key)
+    stats["pre_infill"] = pre_infill
+    stats["pre_thick"] = pre_infill
+    segs = [s for s in parsed["segs"] if s["layer"] >= 1]
     for seg in segs:
         seg["ox0"], seg["oy0"] = seg["x0"], seg["y0"]
         seg["ox1"], seg["oy1"] = seg["x1"], seg["y1"]
@@ -3459,6 +3425,8 @@ def forefoot_cura_bond(text: str, last_layer: int | None = None) -> tuple[str, d
                 f"G1 X{cx:.3f} Y{cy:.3f} E{ce:.5f} F{cf:.0f}{nl}"
             )
             _note(fit[1], cf, 0.0, ce, True)
+    layer_of = {seg["i"]: seg["layer"] for seg in segs}
+    stats["thin_layers_after"] = sorted({layer_of[i] for i in planned if layer_of.get(i, 0) > last_layer})
     if not planned:
         stats["reason"] = "nothing to bond"
         return _thick_cura_fill(text, stats)
