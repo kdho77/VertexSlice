@@ -1,0 +1,650 @@
+{
+ "synthetic_ok": true,
+ "synthetic": [
+  {
+   "check": "hollow left on an empty >=3 mm section",
+   "expect": "FAIL",
+   "result": "FAIL",
+   "ok": true,
+   "failures": [
+    "forefoot hollow 240 on layers <= 165 (0.46 mm window); 0 required"
+   ],
+   "detail": {
+    "column_mm": 0.25,
+    "section_min_mm": 3.0,
+    "air_min_mm": 1.0,
+    "bead_height_mm": 0.46,
+    "forefoot_last_046": 165,
+    "physical_last": 165,
+    "forefoot_165": 240,
+    "physical_count": 240,
+    "above_165": 0,
+    "total": 240,
+    "max_air_mm": 3.5,
+    "gate": "H hollow",
+    "path": "/tmp/ahg_proof_on33mrav/hollow.gcode",
+    "result": "FAIL"
+   }
+  },
+  {
+   "check": "G1 unbonded thin section",
+   "expect": "FAIL",
+   "result": "FAIL",
+   "ok": true,
+   "failures": [
+    "120 unbonded thin columns (skin overlap < 0.05 mm); 0 required"
+   ],
+   "detail": {
+    "gate": "G1 thin_bond",
+    "model": "orthocad",
+    "forefoot_layers": "1-165",
+    "thin_columns": 120,
+    "unbonded": 120,
+    "bonded": 0,
+    "median_gap_mm": 1.0,
+    "overlap_required_mm": 0.05,
+    "result": "FAIL"
+   }
+  },
+  {
+   "check": "G2 unbonded thick section",
+   "expect": "FAIL",
+   "result": "FAIL",
+   "ok": true,
+   "failures": [
+    "120 of 120 columns 3-6 mm are unbonded (need overlap >= 0.15 mm through the stack)"
+   ],
+   "detail": {
+    "gate": "G2 thick_bond",
+    "model": "orthocad",
+    "forefoot_layers": "1-165",
+    "thick_columns": 120,
+    "unbonded": 120,
+    "belt_air_pct": 100.0,
+    "dorsal_air_pct": 100.0,
+    "overlap_required_mm": 0.15,
+    "result": "FAIL"
+   }
+  },
+  {
+   "check": "filled section clears hollow",
+   "expect": "PASS",
+   "result": "PASS",
+   "ok": true,
+   "failures": [],
+   "detail": {
+    "column_mm": 0.25,
+    "section_min_mm": 3.0,
+    "air_min_mm": 1.0,
+    "bead_height_mm": 0.46,
+    "forefoot_last_046": 165,
+    "physical_last": 165,
+    "forefoot_165": 0,
+    "physical_count": 0,
+    "above_165": 0,
+    "total": 0,
+    "max_air_mm": 0.0,
+    "gate": "H hollow",
+    "path": "/tmp/ahg_proof_on33mrav/filled.gcode",
+    "result": "PASS"
+   }
+  },
+  {
+   "check": "outer walls identical to themselves",
+   "expect": "PASS",
+   "result": "PASS",
+   "ok": true,
+   "failures": [],
+   "detail": {
+    "gate": "S surface_lock",
+    "wall_segments_base": 8,
+    "wall_segments_cand": 8,
+    "walls_missing": 0,
+    "walls_added": 0,
+    "seams_base": 2,
+    "seams_cand": 2,
+    "seams_missing": 0,
+    "seams_added": 0,
+    "seams_off_bottom": 0,
+    "layer_changes_moved": 0,
+    "layer_changes_off_bottom": 0,
+    "result": "PASS"
+   }
+  },
+  {
+   "check": "seam moved to the dorsal edge",
+   "expect": "FAIL",
+   "result": "FAIL",
+   "ok": true,
+   "failures": [
+    "outer-wall/skin paths differ from live: 4 live segments missing, 4 candidate segments added",
+    "seam starts differ from live: 1 missing, 1 added",
+    "1 closed seam starts are off the plantar face (>0.15 mm from that loop's bottom)",
+    "1 layer-change placements differ from live",
+    "1 layer changes are off the plantar face (>0.55 mm from the bottom edge)"
+   ],
+   "detail": {
+    "gate": "S surface_lock",
+    "wall_segments_base": 8,
+    "wall_segments_cand": 8,
+    "walls_missing": 4,
+    "walls_added": 4,
+    "seams_base": 2,
+    "seams_cand": 2,
+    "seams_missing": 1,
+    "seams_added": 1,
+    "seams_off_bottom": 1,
+    "layer_changes_moved": 1,
+    "layer_changes_off_bottom": 1,
+    "result": "FAIL"
+   }
+  },
+  {
+   "check": "layer change moved off the bottom",
+   "expect": "FAIL",
+   "result": "FAIL",
+   "ok": true,
+   "failures": [
+    "1 layer-change placements differ from live",
+    "1 layer changes are off the plantar face (>0.55 mm from the bottom edge)"
+   ],
+   "detail": {
+    "gate": "S surface_lock",
+    "wall_segments_base": 8,
+    "wall_segments_cand": 8,
+    "walls_missing": 0,
+    "walls_added": 0,
+    "seams_base": 2,
+    "seams_cand": 2,
+    "seams_missing": 0,
+    "seams_added": 0,
+    "seams_off_bottom": 0,
+    "layer_changes_moved": 1,
+    "layer_changes_off_bottom": 1,
+    "result": "FAIL"
+   }
+  },
+  {
+   "check": "outer-wall path altered",
+   "expect": "FAIL",
+   "result": "FAIL",
+   "ok": true,
+   "failures": [
+    "outer-wall/skin paths differ from live: 2 live segments missing, 2 candidate segments added"
+   ],
+   "detail": {
+    "gate": "S surface_lock",
+    "wall_segments_base": 8,
+    "wall_segments_cand": 8,
+    "walls_missing": 2,
+    "walls_added": 2,
+    "seams_base": 2,
+    "seams_cand": 2,
+    "seams_missing": 0,
+    "seams_added": 0,
+    "seams_off_bottom": 0,
+    "layer_changes_moved": 0,
+    "layer_changes_off_bottom": 0,
+    "result": "FAIL"
+   }
+  },
+  {
+   "check": "filament self",
+   "expect": "PASS",
+   "result": "PASS",
+   "ok": true,
+   "failures": [],
+   "detail": {
+    "gate": "F filament_delta",
+    "live_filament_mm": "100.00",
+    "live_filament_g": "0.30",
+    "cand_filament_mm": "100.00",
+    "cand_filament_g": "0.30",
+    "increase_mm": 0.0,
+    "removed_extrusions": 0,
+    "added_extrusions": 0,
+    "added_bad_type": 0,
+    "added_outside_hollow": 0,
+    "outside_outline_samples": 0,
+    "outline_tol_mm": 0.02,
+    "result": "PASS"
+   }
+  },
+  {
+   "check": "extrusion outside the live outline",
+   "expect": "FAIL",
+   "result": "FAIL",
+   "ok": true,
+   "failures": [
+    "12 forefoot samples lie more than 0.02 mm outside the live outer outline",
+    "1 added infill/solid extrusions are outside a previously hollow >=3 mm section"
+   ],
+   "detail": {
+    "gate": "F filament_delta",
+    "live_filament_mm": "100.00",
+    "live_filament_g": "0.30",
+    "cand_filament_mm": "110.00",
+    "cand_filament_g": "0.33",
+    "increase_mm": 10.0,
+    "removed_extrusions": 0,
+    "added_extrusions": 1,
+    "added_bad_type": 0,
+    "added_outside_hollow": 1,
+    "outside_outline_samples": 12,
+    "outline_tol_mm": 0.02,
+    "result": "FAIL"
+   }
+  },
+  {
+   "check": "slice time 158 s",
+   "expect": "PASS",
+   "result": "PASS",
+   "ok": true,
+   "failures": [],
+   "detail": {
+    "gate": "T slice_time",
+    "slice_seconds": 158.672,
+    "cap_seconds": 260.0,
+    "result": "PASS"
+   }
+  },
+  {
+   "check": "slice time 176 s",
+   "expect": "PASS",
+   "result": "PASS",
+   "ok": true,
+   "failures": [],
+   "detail": {
+    "gate": "T slice_time",
+    "slice_seconds": 176.059,
+    "cap_seconds": 260.0,
+    "result": "PASS"
+   }
+  },
+  {
+   "check": "slice time 261 s",
+   "expect": "FAIL",
+   "result": "FAIL",
+   "ok": true,
+   "failures": [
+    "slice time 261.000 s is worse than 260 s"
+   ],
+   "detail": {
+    "gate": "T slice_time",
+    "slice_seconds": 261.0,
+    "cap_seconds": 260.0,
+    "result": "FAIL"
+   }
+  },
+  {
+   "check": "slice time missing",
+   "expect": "FAIL",
+   "result": "FAIL",
+   "ok": true,
+   "failures": [
+    "slice time was not supplied \u2014 fail closed"
+   ],
+   "detail": {
+    "gate": "T slice_time",
+    "slice_seconds": null,
+    "cap_seconds": 260.0,
+    "result": "FAIL"
+   }
+  },
+  {
+   "check": "ApexCore identical to itself",
+   "expect": "PASS",
+   "result": "PASS",
+   "ok": true,
+   "failures": [],
+   "detail": {
+    "gate": "C apexcore_identity",
+    "stamp_lines_live": 1,
+    "stamp_lines_cand": 1,
+    "live_sha256_norm": "56424e79eb3f561558b34718d3eb490a3d7d251fc7bf4ae32e09f3561b5c326b",
+    "cand_sha256_norm": "56424e79eb3f561558b34718d3eb490a3d7d251fc7bf4ae32e09f3561b5c326b",
+    "equal": true,
+    "first_diff_byte": null,
+    "result": "PASS"
+   }
+  },
+  {
+   "check": "ApexCore stamp-only change",
+   "expect": "PASS",
+   "result": "PASS",
+   "ok": true,
+   "failures": [],
+   "detail": {
+    "gate": "C apexcore_identity",
+    "stamp_lines_live": 1,
+    "stamp_lines_cand": 1,
+    "live_sha256_norm": "56424e79eb3f561558b34718d3eb490a3d7d251fc7bf4ae32e09f3561b5c326b",
+    "cand_sha256_norm": "56424e79eb3f561558b34718d3eb490a3d7d251fc7bf4ae32e09f3561b5c326b",
+    "equal": true,
+    "first_diff_byte": null,
+    "result": "PASS"
+   }
+  },
+  {
+   "check": "ApexCore motion byte changed",
+   "expect": "FAIL",
+   "result": "FAIL",
+   "ok": true,
+   "failures": [
+    "ApexCore differs from live at byte 197 after the stamp strip"
+   ],
+   "detail": {
+    "gate": "C apexcore_identity",
+    "stamp_lines_live": 1,
+    "stamp_lines_cand": 1,
+    "live_sha256_norm": "56424e79eb3f561558b34718d3eb490a3d7d251fc7bf4ae32e09f3561b5c326b",
+    "cand_sha256_norm": "1e91c715c7d8f1b50249a0b24b15b5f4dc54dddd2714cf9c2aa199285839a65e",
+    "equal": false,
+    "first_diff_byte": 197,
+    "result": "FAIL"
+   }
+  },
+  {
+   "check": "added fill keeps the outer wall",
+   "expect": "PASS",
+   "result": "PASS",
+   "ok": true,
+   "failures": [],
+   "detail": {
+    "gate": "S surface_lock",
+    "wall_segments_base": 8,
+    "wall_segments_cand": 8,
+    "walls_missing": 0,
+    "walls_added": 0,
+    "seams_base": 2,
+    "seams_cand": 2,
+    "seams_missing": 0,
+    "seams_added": 0,
+    "seams_off_bottom": 0,
+    "layer_changes_moved": 0,
+    "layer_changes_off_bottom": 0,
+    "result": "PASS"
+   }
+  }
+ ],
+ "live_ok": true,
+ "live": [
+  {
+   "check": "live ApexLight hollow is not 0",
+   "expect": "FAIL",
+   "result": "FAIL",
+   "ok": true,
+   "failures": [
+    "forefoot hollow 1387 on layers <= 165 (0.46 mm window); 0 required"
+   ],
+   "detail": {
+    "column_mm": 0.25,
+    "section_min_mm": 3.0,
+    "air_min_mm": 1.0,
+    "bead_height_mm": 0.46,
+    "forefoot_last_046": 165,
+    "physical_last": 165,
+    "forefoot_165": 1387,
+    "physical_count": 1387,
+    "above_165": 4296,
+    "total": 5683,
+    "max_air_mm": 11.633227,
+    "gate": "H hollow",
+    "path": "/tmp/live_slices/live_apex_light_orthocad.gcode",
+    "result": "FAIL"
+   }
+  },
+  {
+   "check": "live ApexLight G1 unbonded",
+   "expect": "FAIL",
+   "result": "FAIL",
+   "ok": true,
+   "failures": [
+    "14377 unbonded thin columns (skin overlap < 0.05 mm); 0 required"
+   ],
+   "detail": {
+    "gate": "G1 thin_bond",
+    "model": "orthocad",
+    "forefoot_layers": "1-165",
+    "thin_columns": 14813,
+    "unbonded": 14377,
+    "bonded": 436,
+    "median_gap_mm": 0.340156,
+    "overlap_required_mm": 0.05,
+    "result": "FAIL"
+   }
+  },
+  {
+   "check": "live ApexLight G2 unbonded",
+   "expect": "FAIL",
+   "result": "FAIL",
+   "ok": true,
+   "failures": [
+    "8648 of 9003 columns 3-6 mm are unbonded (need overlap >= 0.15 mm through the stack)"
+   ],
+   "detail": {
+    "gate": "G2 thick_bond",
+    "model": "orthocad",
+    "forefoot_layers": "1-165",
+    "thick_columns": 9003,
+    "unbonded": 8648,
+    "belt_air_pct": 91.81384,
+    "dorsal_air_pct": 82.38365,
+    "overlap_required_mm": 0.15,
+    "result": "FAIL"
+   }
+  },
+  {
+   "check": "live ApexLight walls identical to themselves",
+   "expect": "PASS",
+   "result": "PASS",
+   "ok": true,
+   "failures": [],
+   "detail": {
+    "gate": "S surface_lock",
+    "wall_segments_base": 30774,
+    "wall_segments_cand": 30774,
+    "walls_missing": 0,
+    "walls_added": 0,
+    "seams_base": 436,
+    "seams_cand": 436,
+    "seams_missing": 0,
+    "seams_added": 0,
+    "seams_off_bottom": 0,
+    "layer_changes_moved": 0,
+    "layer_changes_off_bottom": 0,
+    "result": "PASS"
+   }
+  },
+  {
+   "check": "live ApexLight filament self",
+   "expect": "PASS",
+   "result": "PASS",
+   "ok": true,
+   "failures": [],
+   "detail": {
+    "gate": "F filament_delta",
+    "live_filament_mm": "26227.75",
+    "live_filament_g": "75.70",
+    "cand_filament_mm": "26227.75",
+    "cand_filament_g": "75.70",
+    "increase_mm": 0.0,
+    "removed_extrusions": 0,
+    "added_extrusions": 0,
+    "added_bad_type": 0,
+    "added_outside_hollow": 0,
+    "outside_outline_samples": 0,
+    "outline_tol_mm": 0.02,
+    "result": "PASS"
+   }
+  },
+  {
+   "check": "live slice time under 260 s",
+   "expect": "PASS",
+   "result": "PASS",
+   "ok": true,
+   "failures": [],
+   "detail": {
+    "gate": "T slice_time",
+    "slice_seconds": 158.672,
+    "cap_seconds": 260.0,
+    "result": "PASS"
+   }
+  },
+  {
+   "check": "ApexCore identical to itself",
+   "expect": "PASS",
+   "result": "PASS",
+   "ok": true,
+   "failures": [],
+   "detail": {
+    "gate": "C apexcore_identity",
+    "stamp_lines_live": 1,
+    "stamp_lines_cand": 1,
+    "live_sha256_norm": "0557d875933ce16a24151b2e4c6e88275528d44ce7b5b1b19cdd6bf6e12d7107",
+    "cand_sha256_norm": "0557d875933ce16a24151b2e4c6e88275528d44ce7b5b1b19cdd6bf6e12d7107",
+    "equal": true,
+    "first_diff_byte": null,
+    "result": "PASS"
+   }
+  },
+  {
+   "check": "locked live readings",
+   "ok": true,
+   "locks": [
+    {
+     "lock": "G1 unbonded",
+     "got": 14377,
+     "expect": 14377,
+     "ok": true
+    },
+    {
+     "lock": "G1 columns",
+     "got": 14813,
+     "expect": 14813,
+     "ok": true
+    },
+    {
+     "lock": "G2 unbonded",
+     "got": 8648,
+     "expect": 8648,
+     "ok": true
+    },
+    {
+     "lock": "G2 columns",
+     "got": 9003,
+     "expect": 9003,
+     "ok": true
+    },
+    {
+     "lock": "G2 belt air pct",
+     "got": 91.8,
+     "expect": 91.8,
+     "ok": true
+    },
+    {
+     "lock": "G2 dorsal air pct",
+     "got": 82.4,
+     "expect": 82.4,
+     "ok": true
+    },
+    {
+     "lock": "ApexLight max air mm",
+     "got": 11.633,
+     "expect": 11.633,
+     "ok": true
+    },
+    {
+     "lock": "ApexLight forefoot hollow",
+     "got": 1387,
+     "expect": 1387,
+     "ok": true
+    },
+    {
+     "lock": "ApexLight total hollow",
+     "got": 5683,
+     "expect": 5683,
+     "ok": true
+    },
+    {
+     "lock": "ApexLight physical last",
+     "got": 165,
+     "expect": 165,
+     "ok": true
+    },
+    {
+     "lock": "ApexCore forefoot hollow",
+     "got": 0,
+     "expect": 0,
+     "ok": true
+    }
+   ],
+   "apexlight_hollow": {
+    "forefoot_165": 1387,
+    "physical_count": 1387,
+    "physical_last": 165,
+    "total": 5683,
+    "max_air_mm": 11.633227,
+    "above_165": 4296
+   },
+   "apexcore_hollow": {
+    "forefoot_165": 0,
+    "physical_count": 0,
+    "total": 878,
+    "max_air_mm": 2.020265,
+    "above_165": 878
+   },
+   "filament": {
+    "live_filament_mm": "26227.75",
+    "live_filament_g": "75.70",
+    "result": "PASS"
+   }
+  }
+ ],
+ "live_bad": [
+  {
+   "check": "bad change of a live ApexCore byte",
+   "expect": "FAIL",
+   "result": "FAIL",
+   "ok": true,
+   "failures": [
+    "ApexCore differs from live at byte 1339 after the stamp strip"
+   ],
+   "detail": {
+    "gate": "C apexcore_identity",
+    "stamp_lines_live": 1,
+    "stamp_lines_cand": 1,
+    "live_sha256_norm": "0557d875933ce16a24151b2e4c6e88275528d44ce7b5b1b19cdd6bf6e12d7107",
+    "cand_sha256_norm": "24e51092a6f55cb04f02b7e220c259ae16694da4e72643f53bd96a6317978bfb",
+    "equal": false,
+    "first_diff_byte": 1339,
+    "result": "FAIL"
+   }
+  },
+  {
+   "check": "bad change of a live outer-wall path",
+   "expect": "FAIL",
+   "result": "FAIL",
+   "ok": true,
+   "failures": [
+    "outer-wall/skin paths differ from live: 2 live segments missing, 2 candidate segments added"
+   ],
+   "detail": {
+    "gate": "S surface_lock",
+    "wall_segments_base": 30774,
+    "wall_segments_cand": 30774,
+    "walls_missing": 2,
+    "walls_added": 2,
+    "seams_base": 436,
+    "seams_cand": 436,
+    "seams_missing": 0,
+    "seams_added": 0,
+    "seams_off_bottom": 0,
+    "layer_changes_moved": 0,
+    "layer_changes_off_bottom": 0,
+    "result": "FAIL"
+   }
+  }
+ ],
+ "result": "PASS"
+}
