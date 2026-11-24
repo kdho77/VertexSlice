@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rigid STL transforms for belt placement (rotate + translate only, never scale)."""
+"""Belt STL placement: Z rotation, X mirror (cancel Orca det −1), then translate. Never scale."""
 from __future__ import annotations
 
 import struct
@@ -53,7 +53,9 @@ def prepare_belt_stl(
     - length / toe-first advance → model +Y (maps to gcode Z along belt)
     - thickness → model +Z
 
-    Applies Z rotation, places Y/Z min at 0, centers X at ``x_center_mm`` (Cura ref ≈140 on 250 mm bed).
+    Applies Z rotation, then mirrors model X and reverses triangle winding (Orca's belt
+    transform has det −1), then places Y/Z min at 0 and centers X at ``x_center_mm``
+    (Cura ref ≈140 on 250 mm bed).
     Raises ValueError if across-belt width exceeds ``bed_width_x_mm``.
     """
     tris = _read_triangles(src)
@@ -70,6 +72,21 @@ def prepare_belt_stl(
             ys.append(yr)
             zs.append(z)
         rotated.append(tuple(new_tri))
+
+    # Orca belt trafo reflects model X (det −1). Mirror after Rz and before X
+    # centring, and reverse winding so normals stay outward.
+    mirrored: list[tuple[tuple[float, float, float], ...]] = []
+    xs = []
+    ys = []
+    zs = []
+    for tri in rotated:
+        new_tri = tuple((-x, y, z) for x, y, z in reversed(tri))
+        mirrored.append(new_tri)
+        for x, y, z in new_tri:
+            xs.append(x)
+            ys.append(y)
+            zs.append(z)
+    rotated = mirrored
 
     min_x, min_y, min_z = min(xs), min(ys), min(zs)
     max_x, max_y, max_z = max(xs), max(ys), max(zs)
@@ -101,6 +118,7 @@ def prepare_belt_stl(
     meta = {
         "preprocessed_stl": str(out),
         "rotation_z_deg": int(rotate_z_deg),
+        "mirror_x": True,
         "oriented_x_across_belt_mm": round(x_extent, 3),
         "oriented_y_along_belt_mm": round(y_extent, 3),
         "oriented_z_mm": round(max(zs2) - min(zs2), 3),
