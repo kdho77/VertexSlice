@@ -162,6 +162,29 @@ jobs:
           fi
           exit "$status"
 
+      - name: ApexForge and ApexBounce forefoot hollow band
+        run: |
+          mkdir -p "${{ runner.temp }}/forefoot-gcode"
+          docker run --rm \
+            -v "${{ github.workspace }}:/src:ro" \
+            -v "${{ runner.temp }}/forefoot-gcode:/out" \
+            -e ORCA_SLICER_BIN=/app/bin/orca-slicer \
+            -e FOREFOOT_GCODE_DIR=/out \
+            -e QT_QPA_PLATFORM=offscreen \
+            -e LIBGL_ALWAYS_SOFTWARE=1 \
+            -e PYTHONPATH=/src \
+            -w /src \
+            vertexslice-server:proof \
+            python3 -m unittest tests.test_forefoot_hollow_band -v
+
+      - name: Upload ApexForge and ApexBounce forefoot G-code
+        uses: actions/upload-artifact@v5
+        with:
+          name: forefoot-hollow-band-${{ github.sha }}
+          path: ${{ runner.temp }}/forefoot-gcode
+          retention-days: 14
+          if-no-files-found: error
+
   validation_unit:
     name: Validation scripts (no binary)
     runs-on: ubuntu-latest
