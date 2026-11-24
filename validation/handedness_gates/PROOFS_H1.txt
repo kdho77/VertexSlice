@@ -1,0 +1,12 @@
+H1 no-op, production main output Montgomery 98fc7007 (L request, R request):
+FAIL H1 left-input->RIGHT right-input->LEFT
+H1 no-op, fixture true-LEFT STL through VertexSlice server (PR38-era, same prep as main), as left input:
+RIGHT
+H1 simulated fix (mirror across belt) of Montgomery L/R:
+PASS H1 left-input->LEFT right-input->RIGHT
+H1 bad change: print direction flip only (rot180, heel-first) of main output:
+FAIL H1 left-input->RIGHT right-input->LEFT
+H1 bad change: label swap only (feed R output as left, L output as right) -> passes H1 by construction? (H1 keys on INPUT fixture side, not filename)
+  n/a: H1 slices fixtures by input side; a filename/label swap does not change the G-code, so main output still FAILS
+Classifier: fixed + heel-first (mirror then rot180) stays LEFT:
+LEFT
