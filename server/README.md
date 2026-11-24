@@ -36,11 +36,86 @@ Set service variables:
 - `VERTEXSLICE_API_KEY` — required in production (clients send `X-API-Key`)
 - `VERTEXSLICE_CORS_ORIGINS` — comma-separated browser origins (OrthoCAD Vercel previews), or `*` for dev
 - `PORT` — provided by Railway
+- `VERTEXSLICE_JOB_STORE` — `memory` (default), `redis`, or `postgres`. See Slice jobs.
+- `VERTEXSLICE_REDIS_URL` — required when the store is `redis` (for example `redis://host:6379/0`)
+- `VERTEXSLICE_JOB_DATABASE_URL` — required when the store is `postgres` (libpq URL)
+- `VERTEXSLICE_JOB_RETENTION_S` — optional finished-job lifetime in seconds. Values below 3600 are raised to 3600.
 
 Health: `GET /health`  
 Slice: `POST /v1/slice` (`multipart/form-data`: `profile_id`, `model` file, optional `wall_loops`, `infill_density`, `print_direction`, `belt_insole_place` default true, optional `material`)
 
 `model` is `model.stl` when the design has no hardness regions (same request as before). When OrthoCAD has regional hardness, `model` is `model.3mf` (`model/3mf`, or a ZIP body): one main solid plus each region as an Orca `modifier_part` whose `sparse_infill_density` is an infill preset (14%, 20%, 26%, 32%, 38%) and whose `sparse_infill_pattern` is `gyroid`. `infill_density` is the global density for the main solid. After the slice, sparse infill inside each modifier's placed volume is measured against the surrounding base. `X-VertexSlice-Regions` and `X-VertexSlice-Regions-Verified` are the count whose measured density matches the requested preset. A 3MF that names modifiers but yields none, or whose G-code does not show that density, is HTTP 422.
+
+### Slice jobs
+
+One in-process worker runs slices off the HTTP event loop, in FIFO order. `POST /v1/slice` still waits on that worker and returns the same G-code body and headers as before. `POST /v1/slice/jobs` validates the same multipart fields, then returns while the worker is busy. Queue time is not slice time: it is not part of `elapsed_s`, and it is not part of the 260s slicer kill.
+
+Auth on every job route is the same `X-API-Key` check as `POST /v1/slice`. Validation errors (unknown profile, bad material, bad override, upload over the limit) return the same 4xx immediately and do not enter the queue.
+
+`POST /v1/slice/jobs` → **202**
+
+```json
+{"job_id": "<hex>", "status": "queued", "position": 1}
+```
+
+`position` is 1-based at the moment of acceptance. It counts this job plus every unfinished slice ahead of it, including the one already running. Position 1 means the worker will take it next.
+
+`GET /v1/slice/jobs/{job_id}` → **200**
+
+```json
+{
+  "job_id": "<hex>",
+  "status": "queued",
+  "position": 1,
+  "queued_at": "2026-11-23T17:00:00.000000Z",
+  "started_at": null,
+  "finished_at": null,
+  "elapsed_s": null,
+  "error": null
+}
+```
+
+`status` is `queued`, `running`, `succeeded`, or `failed`. `position` is the live place in line while `queued`, and `null` otherwise. Timestamps are ISO-8601 UTC. `elapsed_s` is slice time only: null until the worker starts the slice, then `now - started_at` while it runs, then `finished_at - started_at`. `error` is null unless `failed`. A slicer kill is the same text the sync route returns as HTTP 504, and it names the hop (`Slice exceeded 260s`).
+
+`GET /v1/slice/jobs/{job_id}/result`
+
+- `succeeded`: the same `text/plain` body and the same `X-*` headers as `POST /v1/slice` for that slice.
+- `queued` or `running`: **409** `{"detail": "job has not finished"}`.
+- `failed`: **409** whose `detail` is the job `error`. A failed job stays available so the client can tell it from expiry.
+- Unknown id, or a job finished more than 60 minutes ago: **404** `{"detail": "unknown or expired job"}`.
+
+Finished jobs are kept for 60 minutes (`SLICE_JOB_RETENTION_S`, or `VERTEXSLICE_JOB_RETENTION_S` when that is higher). With the default `memory` store a restart drops them. With `redis` or `postgres` a restart of one replica does not drop them; the rows live until the retention window. The client treats **404** on an id it already received as failed and retryable.
+
+The queue is a `JobStore` with `enqueue`, `claim`, `update`, `get`, and `result`. `claim` moves the oldest queued job to `running` in one atomic step (in-memory lock, one Redis `EVAL`, or one `UPDATE ... FOR UPDATE SKIP LOCKED`). Each process still runs one slice thread. A second process calling `claim` gets a different job, or nothing. `POST /v1/slice` stays on the process that accepted it and is not a shared row: its response has to be written on that connection, and a disconnect still kills only that process's slicer subprocess.
+
+If the client drops a synchronous `POST /v1/slice` while that slice is the one on the worker, the server kills that slice's subprocess tree and takes the next item. A slice that already produced G-code still returns that body.
+
+### Capacity
+
+One worker, one slice at a time. Throughput is `3600/S` slices per hour, where `S` is one ApexCore slice on the CPU that runs it. A pair of feet is two jobs. Two orders, both feet, is four. Those jobs wait in line and finish; the wait does not fail them.
+
+| S | slices/hour | queue for the 2nd job | queue for the 4th job |
+|---|---|---|---|
+| 164s | 22 | 164s | 492s |
+| 270s | 13 | 270s | 810s |
+
+164s is the last in-repo full slice of `validation/test_models/orthocad_sample_top_insole.stl` on an 8-core box, and >270s is the same ApexLight slice on a GitHub runner (`validation/seam_fuse_gates/slice_all.sh`, recorded in the 2026-11-23 timeout investigation). Both numbers are ApexLight, not ApexCore, and not the Railway service. Placement of that sample is 0.47s and the ApexCore post-process on a 4.5 MB reference is 2.5s, so the long stage is `orca-slicer`. This VM has no `orca-slicer` binary. ApexCore `S` on the production CPU was not measured here, and this change does not call that service.
+
+The 260s process kill still applies to a single slicer invocation. A lone slice with `S` over that cap still fails. Raising the cap or resizing the service waits on a measured production `S`. A second slice thread on a CPU that is already full during one slice makes both slices slower.
+
+`memory` is one process's queue. That is the right store for the current single replica, and it is the default, so this service does not need a new database to keep today's behavior. It cannot be shared: a second replica would have its own jobs, and a client that lands on the other replica gets **404** for an id the first replica accepted. At the ApexLight figures above, one replica finishes on the order of 300–500 slices a day (13/hour × 24 at 270s, 22/hour × 24 at 164s), so a day with thousands of slices needs more than one replica once `S` is in that range. Point every replica at the same store:
+
+- `VERTEXSLICE_JOB_STORE=redis` and `VERTEXSLICE_REDIS_URL`, or
+- `VERTEXSLICE_JOB_STORE=postgres` and `VERTEXSLICE_JOB_DATABASE_URL`
+
+The application creates its Redis keys or its `vertexslice_slice_jobs` table on first use. It does not provision Redis, Postgres, or a Railway service. Pick the store that already exists for that deployment; do not add one from this change. Each replica still slices one job at a time. Throughput becomes about `replicas × 3600/S` only when those CPUs are not the same full machine. A claimed job stays `running` if that process dies mid-slice; the client should treat a job that never finishes as failed and submit again. There is no automatic reclaim, because reclaiming a live slice would run it twice.
+
+Measured on this 4-vCPU VM on 2026-11-23, production calls 0, slicer patched so the worker blocks inside the slice call:
+
+- `GET /health` during that blocked sync slice: max **0.0011s** over 10 calls (limit 1s). `python3 -m unittest tests.test_slice_jobs.SliceJobTests.test_health_answers_during_sync_slice`
+- Same sample STL through `POST /v1/slice` and `GET /v1/slice/jobs/{id}/result`, slicer patched to return one fixed G-code file: bodies and `X-*` headers match. Both calls plus the two 3.6 MB uploads finished in **0.105s**.
+
+Until callers use the job routes, `POST /v1/slice` still holds the connection for the whole slice and still shares this one worker. Overlapping sync calls can still hit the caller's own deadline. The poll path is what takes queue wait off that clock.
 
 Materials: `GET /v1/materials` (with API key when configured).
 
