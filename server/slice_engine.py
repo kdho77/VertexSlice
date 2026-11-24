@@ -315,17 +315,21 @@ def slice_stl(
             encoding="utf-8",
         )
     if material in ("apex_forge", "apex_bounce"):
-        # Their filament and process stay as sliced. This is the inside-wall
-        # travel walk Core's seam pass already uses, and nothing else.
+        # Filament and process stay as sliced. The travel walk is the one
+        # Core's seam pass already uses. The forefoot fill is ApexCore #46's
+        # thick bead plus band infill (sections 3 mm and thicker), scaled onto
+        # this layer height. ApexCore and ApexLight return above and never
+        # reach this block.
         g2b = REPO_ROOT / "scripts" / "g2b_heelmod"
         if str(g2b) not in sys.path:
             sys.path.insert(0, str(g2b))
         from postprocess_g2b import clear_perimeter_crossings
+        from server.forefoot_hollow_band import apply_forefoot_hollow_band
 
-        gcode_path.write_text(
-            clear_perimeter_crossings(gcode_path.read_text(encoding="utf-8", errors="replace")),
-            encoding="utf-8",
-        )
+        text = gcode_path.read_text(encoding="utf-8", errors="replace")
+        text = clear_perimeter_crossings(text)
+        text = apply_forefoot_hollow_band(text)
+        gcode_path.write_text(text, encoding="utf-8")
     gcodes = [gcode_path]
 
     stats = {
