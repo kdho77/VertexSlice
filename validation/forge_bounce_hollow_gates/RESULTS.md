@@ -19,9 +19,30 @@ Overall FAIL, as required. ApexForge and ApexBounce fail hollow, G1, and G2. Ape
 
 Bad-change proof rejected a layer change at Y=25, an outer wall moved 0.1 mm, one ApexCore byte flipped, a bead outside the outline, slice time 261 s, and a Forge-only fill.
 
-## Worker
+## Worker `baa2c0877b2ac554ef3cf0d872930166511e95ee`
 
-No draft PR from `cursor/forge-bounce-hollow-band-1124` (or an equivalent ApexForge/ApexBounce generic-path hollow fix) was open when this log was written. No worker SHA has been graded. The gates were not edited to wait for it.
+Overall **FAIL**. Draft [PR #51](https://github.com/kdho77/VertexSlice/pull/51). The same commit is `cursor/forge-bounce-hollow-band-1124`. Graded with the frozen gates against live slices from Actions run 45295959179 (main `d935197`). Candidate slices are `server.slice_stl` on that same orca-slicer binary, using this SHA's `server/slice_engine.py`. Fixture `validation/test_models/orthocad_sample_top_insole.stl`, `apex-v2-insole-95a`, wall_loops 1, infill 26, toe_first, belt_insole_place. Hashed gate files were not edited.
+
+ApexForge and ApexBounce produced the same gate numbers. ApexCore is the live residual and is byte-identical.
+
+| Gate | ApexForge | ApexBounce | ApexCore |
+|---|---|---|---|
+| Hollow L<=165 / L<=181 | PASS 0 / 0 | PASS 0 / 0 | reported 131 / 131 (not a pass line) |
+| G1 | FAIL 1474/5833 | FAIL 1474/5833 | reported 3/15493 (not a pass line) |
+| G2 | FAIL 2440/2968, belt 54.0%, dorsal 71.7% | FAIL, same | PASS 0/8406 |
+| Surface | PASS | PASS | PASS |
+| Filament | FAIL 24392.72 mm / 70.41 g -> 25401.40 mm / 73.32 g | FAIL, same | PASS 29857.71 mm / 86.18 g, increase 0 |
+| Slice time | PASS 12.348 s | PASS 12.153 s | PASS 9.263 s |
+| Identity | — | — | PASS |
+| Shared path | PASS | PASS | — |
+
+Hollow remaining after layer 165 is 4297 on both materials, max air 15.918 mm. That air is outside the required window.
+
+G1 is the live count, unchanged. First residuals: layer 125 x-bin 265, layer 150 x-bin 214. G2 dropped from the live 2776 unbonded to 2440. First residuals: layer 165 x-bin 216, layer 151 x-bin 281, layer 141 x-bin 273.
+
+Filament increased 1008.68 mm / 2.91 g. Added extrusions are sparse infill (5384, none of another type, none more than 0.02 mm outside the live outline). 5097 of them are outside a previously hollow section of at least 3 mm. First samples: layer 129 sparse infill at (128.5, 0.747), (129.0, 0.749), (129.5, 0.750).
+
+Surface lock holds: 36125 locked segments, delta 0, no closed-loop start moved, no layer change moved. ApexCore is 3349500 bytes after the stamp line is ignored. The diff names both materials in one `apex_forge` / `apex_bounce` block, and both hollow pass lines match.
 
 ## CI on the gates head
 
