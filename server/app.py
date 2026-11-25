@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.requests import Request
 from starlette.responses import Response
 
+from server import build_info
 from server.job_store import StoredJob, job_store_from_env
 from server.jobs import DEFAULT_RETENTION_S, PreparedSlice, SliceJobQueue
 from server.profile_registry import (
@@ -65,9 +66,13 @@ def require_api_key(x_api_key: str | None = Header(default=None, alias="X-API-Ke
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
 
 
+build_info.start()
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "vertexslice-slicer"}
+    # "build" keys OrthoCAD's G-code cache: a different build never reuses cached G-code.
+    return {"status": "ok", "service": "vertexslice-slicer", "build": build_info.current_build()}
 
 
 @app.get("/v1/materials")
