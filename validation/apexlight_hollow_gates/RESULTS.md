@@ -33,18 +33,37 @@ Main ApexCore footer: 29857.71 mm, 86.18 g, 439 layers. ApexLight footer: 26227.
 
 ## Worker grade
 
-Not graded in the freeze commit. No pull request from `cursor/apexlight-hollow-band-1124` (or another ApexLight hollow-band branch) was open when these gates were frozen. The gate code is not to be edited when that SHA appears. Grade it with `run_gates.py` on that SHA's ApexLight and ApexCore slices and record the rows below.
+Graded after the gates were frozen. Gate code was not edited. `sha256sum -c validation/apexlight_hollow_gates/SHA256SUMS` still matches.
+
+Worker: draft [#54](https://github.com/kdho77/VertexSlice/pull/54), SHA `83c943ba9d36549703ad5f7d57ad177ce5022be7`, branch `cursor/find-an-apexlight-hollow-fill-method-that-keeps-every-layer-change-and-seam-station-byte-identical-t-c48a`. Diff against `d935197` is only `server/chains/apex_light.py`, `server/chains/apex_light_forefoot_fill.py`, and `tests/test_apex_light_forefoot_fill.py`. ApexCore and the slicer binary are not in that diff.
+
+Candidate ApexLight is that SHA's `fill_forefoot_hollow` applied to live `live_apex_light_orthocad.gcode` from run 45295959179 (the file finalize already wrote). The function reported hollow_before 1387, hollow_after 0, 35 layers, added 71.14956 mm, wall time 1.284 s. Candidate ApexCore is main's #46 file, the same bytes as the live core baseline, because this SHA does not change the ApexCore chain.
+
+Slice seconds passed to the gate: 159.956 = main docker-proof slicer clock 158.672 s plus the measured fill 1.284 s. The PM host clock 176.059 s plus the same fill is 177.343 s. Both are under 260 s. `elapsed_s` in `run_apex_light` includes this fill.
+
+Command:
+
+```bash
+python3 validation/apexlight_hollow_gates/run_gates.py \
+  --light-base live_apex_light_orthocad.gcode \
+  --light-cand cand_apex_light_83c943ba.gcode \
+  --core-base cand_apex_core_orthocad.gcode \
+  --core-cand cand_apex_core_orthocad.gcode \
+  --slice-seconds 159.956
+```
+
+Exit 1. Overall FAIL.
 
 | Gate | Result | Residual |
 |---|---|---|
-| H hollow | pending | |
-| G1 | pending | |
-| G2 | pending | |
-| S surface | pending | |
-| F filament | pending | |
-| T slice time | pending | |
-| C ApexCore | pending | |
-| Overall | pending | |
+| H hollow | PASS | Forefoot layers <= 165: 0. Physical window 165: 0. Total 4296, all on layers > 165. Max air 11.633 mm. |
+| G1 | FAIL | 14377 / 14813 unbonded. Median gap +0.340 mm. Unchanged from live. |
+| G2 | FAIL | 8604 / 9003 unbonded (live was 8648). Belt air 91.2%. Dorsal air 81.8%. |
+| S surface | PASS | 30774 wall segments, 436 seams, 0 missing, 0 added, 0 off the bottom. 0 layer changes moved. |
+| F filament | PASS | Live 26227.75 mm, 75.70 g. Candidate 26298.90 mm, 75.91 g. Increase 71.15 mm. 1630 added extrusions, 0 bad type, 0 outside a hollow section, 0 outside the outline. |
+| T slice time | PASS | 159.956 s (cap 260 s). PM-host equivalent 177.343 s. |
+| C ApexCore | PASS | Stamp-stripped SHA256 `0557d875933ce16a24151b2e4c6e88275528d44ce7b5b1b19cdd6bf6e12d7107` matches live. |
+| Overall | FAIL | G1 and G2. Forefoot hollow is 0 and the outer surface is unchanged. |
 
 ## Rule compliance
 
@@ -104,4 +123,4 @@ PASS. No fill was implemented.
 
 **Header: FINISH A draft gates PR, B this rule report, C worker grade when the worker exists.**
 
-A and B are this PR. C is pending until the worker SHA exists.
+A and B are this PR. C is the worker table above: SHA `83c943ba9d36549703ad5f7d57ad177ce5022be7` overall FAIL. G1 and G2 remain unbonded. H, S, F, T, and C pass.
