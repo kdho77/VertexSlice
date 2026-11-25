@@ -121,3 +121,22 @@ Filament increased 39.88 mm / 0.12 g. Added extrusions are sparse infill (287, n
 Surface lock holds: 36125 locked segments, delta 0, no closed-loop start moved, no layer change moved. ApexCore surface is 52857 locked segments, delta 0. ApexCore is 3349500 bytes after the stamp line is ignored (one stamp line on each file). The diff against `d935197` names both materials, and both hollow pass lines match.
 
 ApexBounce on this slice is still M109 S225 and M190 S60. This grade did not retune temperature or speed.
+
+## Worker `a84d814f99d3eed440827aff0fee919fa9727ec7`
+
+Overall **FAIL**, the same grade as `2ea145ef`. Draft [PR #51](https://github.com/kdho77/VertexSlice/pull/51) head. This commit adds one line to `.github/workflows/docker-server-proof.yml`: `git fetch --depth=1 origin d935197976b7cdd2fa89ced4ff43930b0212959f` before the ApexCore identity diff. It does not change the fill. `server/forefoot_hollow_band.py` blob `ad968e2c13fbfe071e725fb51da8253a4f5bd3a8` and `server/slice_engine.py` blob `a242a06185289e1d3edc2df1c6db37e07935c6db` match `2ea145ef`.
+
+The frozen `run_gates.py` was run again on the slices from that identical server code, with the diff of this SHA against `d935197`. Hashed gate files were not edited.
+
+| Gate | ApexForge | ApexBounce | ApexCore |
+|---|---|---|---|
+| Hollow L<=165 / L<=181 | PASS 0 / 0 | PASS 0 / 0 | reported 131 / 131 (not a pass line) |
+| G1 | FAIL 1474/5833 | FAIL 1474/5833 | reported 3/15493 (not a pass line) |
+| G2 | FAIL 2776/2968, belt 65.431%, dorsal 80.660% | FAIL, same | PASS 0/8406 |
+| Surface | PASS | PASS | PASS |
+| Filament | PASS 24392.72 mm / 70.41 g -> 24432.60 mm / 70.53 g | PASS, same | PASS 29857.71 mm / 86.18 g, increase 0 |
+| Slice time | PASS 4.087 s | PASS 4.101 s | PASS 8.875 s |
+| Identity | — | — | PASS |
+| Shared path | PASS | PASS | — |
+
+G1 equals live and equals `baa2c087`. G2 equals the live unbonded count and regresses against `baa2c087` (2440/2968). Filament stays PASS: 287 added sparse-infill extrusions, 0 outside a previously hollow >=3 mm section. Surface delta 0. ApexCore identity PASS, 3349500 bytes, stamp ignored. Shared path PASS on this SHA's diff.
