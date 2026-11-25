@@ -1,8 +1,31 @@
 # Handedness grade of the belt-mirror fix
 
-**GRADE: FAIL** (regrade on frozen gates v3, `19dff419554bdd2e9daed4b05b57c030507d3035`)
+**GRADE: PASS** (fresh slices of `9fe936425ad4449ee6a6d932b636a432c8dd2ea2`, frozen gates v3 `19dff419554bdd2e9daed4b05b57c030507d3035`)
 
-Worker head `0415b656d42d7ae0828e435b98f6fdae4f6f0486` (PR #52, `cursor/lr-swap-belt-mirror-1124`). Same slices as the v1 grade. `sha256sum -c handedness_gates/SHA256SUMS` at `19dff419` printed OK for all six files. This branch still changes no product code and does not edit the frozen gates.
+Worker PR #52. The cancelling mirror is now a model-Y negation and a winding reversal before the unchanged Z rotation. Candidate image: live `ghcr.io/kdho77/vertexslice-server@sha256:8cac1d54c5e1a12f4693412c32fe40dd9c5682b9279e2b1d38f1225760aca579` plus this head's `validation/stl_preprocess.py` (`6b7ce3fb9917e2cc85ef13a0a2fc1ced2d5ccfb174e299f4c4744756ea16ec25`) and `server/threemf_modifiers.py` (`515a3c7a3b6567e149abb46f7c0fda064c86cf1c75507b2d68bed6745f49c3c7`). The 0415b656 slices were not reused. `sha256sum -c` at `19dff419` printed OK. The worker tree's `validation/handedness_gates` matches that frozen tree. This branch still changes no product code.
+
+`run_gates.sh` exits `ALL_HANDEDNESS_GATES_PASS`. H1, H2, and H3 v3 pass on all four materials. H1h passes (LEFT). Command lines (everything before a semicolon) of each candidate side equal the opposite live file. Extrusion counts match and the nearest-point distance is 0.000 mm. Remaining text differences are the Orca timestamp and, on ApexLight both sides and on Forge and Bounce left, the `; printing object` id. Heel-first ApexCore left is the same toolpath as toe-first candidate left.
+
+| Material | H1 | H2 open-only layer changes cand / opposite live | H3 median mm | H3 fraction ≤ 0.30 | Extrusion mm cand = opposite live |
+| --- | --- | --- | --- | --- | --- |
+| apex_core left | LEFT, arch 18.29 / 33.41 | 1 / 1 | 0.0 | 1.0 | 29192.86 |
+| apex_core right | RIGHT, arch 33.41 / 18.29 | 1 / 1 | 0.0 | 1.0 | 29271.99 |
+| apex_light left | LEFT, arch 18.28 / 33.41 | 1 / 1 (closed off bottom 68 / 68) | 0.0 | 1.0 | 24869.09 |
+| apex_light right | RIGHT, arch 33.41 / 18.28 | 1 / 1 (closed off bottom 76 / 76) | 0.0 | 1.0 | 24915.89 |
+| apex_forge left | LEFT, arch 17.34 / 31.86 | 305 / 305 (open ends 156 / 156) | 0.0 | 1.0 | 1533852.19 |
+| apex_forge right | RIGHT, arch 31.86 / 17.33 | 293 / 293 (open ends 149 / 149) | 0.0 | 1.0 | 1542985.65 |
+| apex_bounce left | LEFT, arch 17.34 / 31.86 | 305 / 305 (open ends 156 / 156) | 0.0 | 1.0 | 1533852.19 |
+| apex_bounce right | RIGHT, arch 31.86 / 17.33 | 293 / 293 (open ends 149 / 149) | 0.0 | 1.0 | 1542985.65 |
+
+Config blocks are byte-identical. Feed means match on every pair (core 1508.91 / 1509.49, light 1466.67 / 1467.31, forge and bounce left 1824.71, right 1823.77).
+
+`path_equal.py`: every pair has equal extrusion counts, X-centre shift 0, and max nearest distance 0. Core 84642 and 84954, light 69890 and 69916, forge and bounce 80530 and 80442.
+
+PR #52 CI job "Handedness gates H1-H3" on this head finished success: https://github.com/kdho77/VertexSlice/actions/runs/45528204599/job/138916695630. It printed `ALL_HANDEDNESS_GATES_PASS` for all four materials and H1h. Its slice sizes match these files (candidate ApexCore left 3315401 bytes, live ApexCore right 3315401 bytes, ApexLight left 3081929 / live right 3081929, Forge left 3063328 / live right 3063328).
+
+## History: 0415b656 against the same v3 gates was FAIL
+
+Worker head `0415b656d42d7ae0828e435b98f6fdae4f6f0486`. Same live slices. The X-after-Rz placement was not byte-identical to live's opposite file. Kept as history. The section above replaces it as the verdict.
 
 v3 compares each candidate side with the live file of the opposite side and does not mirror. H1 passes on all four materials. H1h passes (LEFT). H3 v3 passes on all eight toe-first slices (outer-wall median 0.0 mm). H2 passes ApexCore and ApexLight. H2 fails ApexForge and ApexBounce, both sides, on one counter:
 
@@ -242,15 +265,15 @@ Commits on the worker branch: `b337442db0` mirror placement, `885d35c871` tests,
 
 ## (5) Rule-compliance ledger
 
-L1. Kendon 2026-10-24 9:33 PM MT (memory): he "confirmed the belt slicing chain mirrors parts (the golden, sliced from a true left STL, printed as a right foot). He approved fixing the mirror at VertexSlice belt placement". **PASS.** The change is an X mirror in belt placement (`prepare_belt_stl` and `prepare_belt_3mf`), which is the approved place. H1 then reads the true-LEFT fixture as a physical LEFT.
+L1. Kendon 2026-10-24 9:33 PM MT (memory): he "confirmed the belt slicing chain mirrors parts (the golden, sliced from a true left STL, printed as a right foot). He approved fixing the mirror at VertexSlice belt placement". **PASS.** On `9fe93642` the cancellation is a model-Y negation and a winding reversal before the existing Z rotation, in `prepare_belt_stl` and `prepare_belt_3mf`. That is still belt placement. H1 then reads the true-LEFT fixture as a physical LEFT. The earlier X-after-Rz form is history.
 
 L2. Kendon 2026-10-24: "Text a user adds to a left or right foot must read correctly on screen and print correctly on that foot, which means true-handed STL export and no net mirror in the slicing chain." **PASS** on the sliced fixtures. H1 is LEFT for a left input and RIGHT for a right input on every material that was offered. No text-on-mesh fixture was in the frozen gates, so this line is scored from the foot the G-code classifier reports.
 
 L3. Kendon 2026-10-24: "No other fix, including the belt mirror fix, may change or lose any of his ApexLight settings." **PASS.** The diff does not touch ApexLight presets or postprocess. H3 v3 config blocks are byte-identical on both ApexLight sides, and the outer-wall median against the opposite live file is 0.0 mm.
 
-L4. Kendon 2026-11-20 11:38 AM MT: "The seams have always been on the bottom it's been a permanent rule since the beginning". **FAIL** under v3, on a narrower measurement than v1. Closed seams off the bottom are 0 for ApexCore, Forge, and Bounce, and ApexLight matches the opposite live file (68 and 76). H2 still fails Forge and Bounce because open-only layer changes off the bottom are 308 > 305 (left vs live right) and 294 > 293 (right vs live left). The v1 same-side failures (ApexLight 53 > 40 and 76 > 68) were the mirror pairing; they are history.
+L4. Kendon 2026-11-20 11:38 AM MT: "The seams have always been on the bottom it's been a permanent rule since the beginning". **PASS** on `9fe93642`. H2 matches the opposite live file on every side: Forge and Bounce open-only layer changes are 305 = 305 and 293 = 293, open ends 156 = 156 and 149 = 149, closed off bottom 0. ApexLight closed off bottom is 68 = 68 and 76 = 76. The +3 / +1 miss was the previous head and is history.
 
-L5. Kendon standing rule: locked surface quality, seams and layer changes (bottom only); no scope growth; copy Cura's method. **FAIL.** File scope stays inside placement, tests, and one CI job. H3 v3 passes all eight slices (outer-wall median 0.0 mm). H2 still fails four Forge/Bounce sides, so layer changes off the bottom are not held to the opposite live file. The full extrusion cloud is not identical either: median distance 0, but 1–5 extra or missing extrusions and a farthest point of 0.72–2.39 mm (`path_equal.py`).
+L5. Kendon standing rule: locked surface quality, seams and layer changes (bottom only); no scope growth; copy Cura's method. **PASS** on this head. The behavior change is still the belt placement mirror, now Y negation before Rz. H3 v3 median is 0.0 mm and 100% of outer-wall layers are within 0.30 mm, with extrusion and feeds equal to the opposite live file. Command lines match that file. The 0415b656 extrusion-cloud gap is history.
 
 L6. Kendon 2026-11-24 4:18 PM MT (P0): MCP belt G-code labelled left is physically a right foot. Correct handedness is mandatory. **PASS** on these slices. Live no-op is still RIGHT for a left input. The candidate is LEFT for a left input and RIGHT for a right input, every offered material.
 
@@ -258,8 +281,8 @@ L7. Kendon 2026-11-24 4:28 PM MT: "(a) An automated handedness check in the gene
 
 L8. No merge or deploy without Kendon's explicit go. Draft PR only. **PASS** for this grade. This PR is a draft. The worker branch was not merged, deployed, or edited. No Railway change.
 
-L9. Frozen gate files are byte-identical to the PM's (SHA256SUMS); never edit, re-hash or skip a gate. If a gate cannot pass, stop and report why. **PASS.** `sha256sum -c` at `19dff419` is OK. This regrade did not edit or re-hash the gates. H2 cannot pass on Forge and Bounce; that is reported above and the gate file was left as issued.
+L9. Frozen gate files are byte-identical to the PM's (SHA256SUMS); never edit, re-hash or skip a gate. If a gate cannot pass, stop and report why. **PASS.** `sha256sum -c` at `19dff419` is OK, and the worker checkout of `validation/handedness_gates` matches that tree. This grade did not edit or re-hash the gates.
 
 ## Verdict
 
-**GRADE: FAIL** on `run_gates.sh` at `19dff419`. H1, H1h, and H3 v3 pass for every offered material. H2 passes ApexCore and ApexLight and fails ApexForge and ApexBounce by 3 and 1 open-only layer changes off the bottom (308 > 305, 294 > 293) against the opposite live file. The live-only noise floor of that counter is 0 on a repeated identical slice and 0 under a +1e-5 mm X perturbation (extrusion count does move, by 6). v1 and v2 numbers above are history. Frozen files were not edited. Do not merge.
+**GRADE: PASS** on `run_gates.sh` at `19dff419` for worker `9fe936425ad4449ee6a6d932b636a432c8dd2ea2`. Fresh candidate slices, all four materials plus heel-first. H1, H1h, H2, and H3 v3 pass. Candidate command lines equal the opposite live file. The 0415b656 FAIL and the v1/v2 numbers above are history. Frozen files were not edited. Do not merge.
