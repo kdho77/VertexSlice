@@ -48,6 +48,8 @@ HANDEDNESS_GATES_FAIL
 
 On the worker tree, `cd validation && sha256sum -c handedness_gates/SHA256SUMS` printed OK for all six files. `git diff a7d2d60f..0415b656 -- validation/handedness_gates validation/seam_fuse_gates` is empty. The same check inside `run_gates.sh` on this checkout also printed OK. Gates were not re-hashed and none was skipped.
 
+While this grade was running, `cursor/lr-swap-gates-1124` moved from `a7d2d60f` to `2d6d27512d` (`H3 v2: dense 0.05 mm outer-wall sampling and feed distribution (measurement fix, thresholds unchanged)`). That commit edits `h3_surface_mirror_equal.py` and re-hashes `SHA256SUMS`. This grade did not take that edit. The tables below are the pinned runner at `a7d2d60f`. The same G-code was then re-measured with the v2 file, read-only, and those numbers are in the addendum. H2 was not changed by that commit.
+
 ## (2) Gate × material
 
 H1. PASS only if the left-input slice classifies LEFT and the right-input slice classifies RIGHT.
@@ -89,7 +91,24 @@ H3. Config block must be byte-identical, layer count equal, outer-wall block cou
 | apex_bounce | left | FAIL | yes | 481/481 | 328/327 | 1538054.85 / 1542985.65 | 479 | 0.0731 | 0.8471 | 143; largest \|Δ\| 583 at F2100 (28201 vs 27618) |
 | apex_bounce | right | FAIL | yes | 481/481 | 327/328 | 1542719.98 / 1533852.19 | 479 | 0.0731 | 0.8739 | 145; largest \|Δ\| 583 at F2100 (27618 vs 28201) |
 
-Every H3 failure is W and F. C, N, and E pass on every file. The config block in the G-code is byte-identical to live for every material and side. Outer-wall median distance is above 0.15 mm everywhere (0.35 mm on ApexCore, 1.06 mm on ApexLight, 0.85–0.87 mm on Forge and Bounce) and fewer than 20% of layers are within 0.30 mm.
+Every H3 v1 failure is W and F. C, N, and E pass on every file. The config block in the G-code is byte-identical to live for every material and side. Under v1's 0.5 mm samples the outer-wall median is 0.35 mm on ApexCore, 1.06 mm on ApexLight, and 0.85–0.87 mm on Forge and Bounce, and fewer than 20% of layers are within 0.30 mm.
+
+### H3 v2 addendum (not the pinned runner)
+
+`2d6d275` says v1's 0.5 mm samples and per-value feed bins fail a real re-slice even when the mesh mirror is good. Thresholds stay 0.30 mm / 0.15 mm median. Re-ran that script on these same files:
+
+| Material | Side | v2 result | Median mm | Fraction ≤ 0.30 mm | F |
+| --- | --- | --- | --- | --- | --- |
+| apex_core | left | PASS | 0.0884 | 0.9909 | pass |
+| apex_core | right | PASS | 0.0884 | 0.9909 | pass |
+| apex_light | left | FAIL | 1.0375 | 0.0753 | pass |
+| apex_light | right | FAIL | 1.0414 | 0.0753 | pass |
+| apex_forge | left | FAIL | 0.8198 | 0.1587 | pass |
+| apex_forge | right | FAIL | 0.8496 | 0.1524 | pass |
+| apex_bounce | left | FAIL | 0.8198 | 0.1587 | pass |
+| apex_bounce | right | FAIL | 0.8496 | 0.1524 | pass |
+
+ApexCore's v1 wall/feed failure is the sampling artefact the v2 note describes (same 0.0884 mm median the PM recorded for this worker SHA). ApexLight, Forge, and Bounce still miss the wall tolerance with dense samples. Feeds pass v2 on all eight. H2 is unchanged, so the runner still fails.
 
 ## (3) No-op and bad-change proofs
 
@@ -145,4 +164,4 @@ L9. Frozen gate files are byte-identical to the PM's (SHA256SUMS); never edit, r
 
 ## Verdict
 
-**GRADE: FAIL.** H1 passes and the placement diff is in the allowed files, with ApexLight's config block unchanged. H2 fails on ApexLight (both sides) and on Forge and Bounce left. H3 fails on all eight toe-first slices because the outer wall is not the live belt-mirror within 0.30 mm / 0.15 mm median and the outer-wall feeds are not the same multiset. The frozen files were left untouched.
+**GRADE: FAIL** against the pinned gates at `a7d2d60f`. H1 passes and the placement diff is in the allowed files, with every config block byte-identical to live. H2 fails on ApexLight (both sides) and on Forge and Bounce left. H3 v1 fails on all eight toe-first slices. H3 v2, which landed on the gates branch during this grade and was not used as the pinned runner, passes ApexCore (median 0.0884 mm) and still fails ApexLight, Forge, and Bounce on wall distance. The frozen files on this branch were left at the pinned hashes.
