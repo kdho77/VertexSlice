@@ -295,7 +295,7 @@ jobs:
             slice_one apex_core left "$LEFT" heel_first "${tag}_apex_core_left_heel" 0
             docker rm -f "$name" >/dev/null
           done
-          python3 -m pip install -q numpy
+          python3 -m pip install -q numpy scipy
           bash validation/handedness_gates/run_gates.sh "$OUT"
 
       - name: Upload slice and gate output
