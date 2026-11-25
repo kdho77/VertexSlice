@@ -164,6 +164,7 @@ jobs:
 
       - name: ApexCore chain files match live main
         run: |
+          git fetch --depth=1 origin d935197976b7cdd2fa89ced4ff43930b0212959f
           git diff --quiet d935197976b7cdd2fa89ced4ff43930b0212959f -- \
             server/chains/apex_core.py \
             server/chains/apex_light.py \
