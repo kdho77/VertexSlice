@@ -544,3 +544,7 @@ class SliceJobTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# Build fingerprint tests run in the same CI step (the workflow lists modules explicitly).
+from tests.test_build_info import BuildInfoTest  # noqa: E402,F401
