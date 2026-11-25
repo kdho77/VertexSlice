@@ -140,3 +140,17 @@ The frozen `run_gates.py` was run again on the slices from that identical server
 | Shared path | PASS | PASS | — |
 
 G1 equals live and equals `baa2c087`. G2 equals the live unbonded count and regresses against `baa2c087` (2440/2968). Filament stays PASS: 287 added sparse-infill extrusions, 0 outside a previously hollow >=3 mm section. Surface delta 0. ApexCore identity PASS, 3349500 bytes, stamp ignored. Shared path PASS on this SHA's diff.
+
+A later run sliced this SHA again with `server.slice_stl` on the orca-slicer binary from Actions run 45295959179. `sha256sum -c SHA256SUMS` matched the freeze before that run. File sizes match the `2ea145ef` slices: Forge 3203086 bytes, Bounce 3203159 bytes, Core 3349500 bytes. The frozen gates returned the same counts as the table. Slice time on that run is PASS 13.579 s, 13.478 s, and 9.111 s. ApexBounce is still M109 S225 and M190 S60. ApexForge is M109 S245 with no bed wait.
+
+## CI on `5ffabefe52`
+
+Actions run [45517874520](https://github.com/kdho77/VertexSlice/actions/runs/45517874520), commit `5ffabefe52068b268b41387f18a656d2436d1204`. That commit changes only this grade log.
+
+| Job | Result |
+|---|---|
+| Build image and run slice proof | PASS |
+| Validation scripts (no binary) | PASS |
+| Seam-fuse gates G1 G3-G8 | FAIL |
+
+Same seam-fuse failures already recorded for `e359a446` and for main run [45295959179](https://github.com/kdho77/VertexSlice/actions/runs/45295959179): G3, G4, and orthocad G7, plus G8 because `validation/forge_bounce_hollow_gates/` is outside the frozen allow-list. G8 also reports one existing workflow line removed or edited, which main already reports. Not retried. The hashed gate files were not edited.
