@@ -82,6 +82,25 @@ Line check on that candidate, outside the frozen script: 0 live non-footer lines
 | Slice time not worse than 260 s | PASS | 159.956 s on the first host. 160.029 s on the second. PM-host equivalent 177.343 s. |
 | ApexCore byte-identical to live, stamp exempt | PASS | Frozen C. The SHA does not change `server/chains/apex_core.py`. |
 
+## Worker grade of `098c389d`
+
+Head of draft #54 moved. New SHA `098c389d09b8a878783166826d12566a4de12999` (`06d442b4b3` confines added travels, `098c389d09` adds the matching tests). Diff against `d935197` is still only `server/chains/apex_light.py`, `server/chains/apex_light_forefoot_fill.py`, and `tests/test_apex_light_forefoot_fill.py`. ApexCore is not in the diff. Hashed gate files were not edited.
+
+Candidate ApexLight is this SHA's `fill_forefoot_hollow` on the same live file. The function reported hollow_before 1387, hollow_after 0, 35 layers, added 71.14956 mm, wall time 3.084 s. Output 3254273 bytes. Slice clock passed by the gate: 161.756 s = 158.672 + 3.084. PM-host equivalent 179.143 s. Both are under 260 s. Candidate ApexCore is main's #46 file.
+
+`run_gates.py` exit 1. Overall FAIL. The frozen counts match `83c943ba`.
+
+| Gate | Result | Residual |
+|---|---|---|
+| H hollow | PASS | Forefoot layers <= 165: 0. Physical window 165: 0. Total 4296, all on layers > 165. Max air 11.633 mm. |
+| G1 | FAIL | 14377 / 14813 unbonded. Median gap +0.340 mm. Equal to live. |
+| G2 | FAIL | 8604 / 9003 unbonded (live was 8648). Belt air 91.236%. Dorsal air 81.806%. |
+| S surface | PASS | 30774 wall segments, 436 seams, 0 missing, 0 added, 0 off the bottom. 0 layer changes moved. |
+| F filament | PASS | Live 26227.75 mm, 75.70 g. Candidate 26298.90 mm, 75.91 g. Increase 71.15 mm. 1630 added extrusions, 0 bad type, 0 outside a hollow section, 0 outside the outline. |
+| T slice time | PASS | 161.756 s (cap 260 s). |
+| C ApexCore | PASS | Stamp-stripped SHA256 `0557d875933ce16a24151b2e4c6e88275528d44ce7b5b1b19cdd6bf6e12d7107` matches live. |
+| Overall | FAIL | G1 and G2. The travel commits do not change these frozen counts. |
+
 ## Rule compliance
 
 This agent wrote gates only. It did not implement a hollow fill and did not change any G-code that would be printed.
@@ -140,7 +159,7 @@ PASS. No fill was implemented.
 
 **Header: FINISH A draft gates PR, B this rule report, C worker grade when the worker exists.**
 
-A and B are this PR. C is the worker table above: SHA `83c943ba9d36549703ad5f7d57ad177ce5022be7` overall FAIL. G1 and G2 remain unbonded. H, S, F, T, and C pass.
+A and B are this PR. C for `83c943ba` is the first worker table. C for the current head `098c389d09b8a878783166826d12566a4de12999` is the later table: overall FAIL, same frozen residuals. G1 and G2 remain unbonded. H, S, F, T, and C pass.
 
 ## Rule compliance for the grade of 83c943ba
 
