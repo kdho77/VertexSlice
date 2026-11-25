@@ -91,25 +91,33 @@ Slice wall-clock on this machine is under the 260 s cap. ApexBounce on this slic
 
 ## Worker `2ea145ef384c4182499eb8fa2afd1d7895164bd5`
 
-Overall **FAIL**. Draft [PR #51](https://github.com/kdho77/VertexSlice/pull/51) head, one commit after `3225c7e6`. It changes `server/forefoot_hollow_band.py` and `tests/test_forefoot_hollow_band.py`. `server/slice_engine.py` is unchanged. Graded with the frozen gates. `sha256sum -c SHA256SUMS` still matches the freeze. Hashed gate files were not edited.
+Overall **FAIL**. Draft [PR #51](https://github.com/kdho77/VertexSlice/pull/51) head after `3225c7e6`. This is the fill-confinement commit. It changes `server/forefoot_hollow_band.py` and `tests/test_forefoot_hollow_band.py`. `server/slice_engine.py` is unchanged. Graded with the frozen gates. `sha256sum -c SHA256SUMS` still matches the freeze. Hashed gate files were not edited.
 
-Candidate slices are `server.slice_stl` on the orca-slicer binary from Actions run 45295959179, using this SHA's `server/`. Same fixture and overrides as the earlier grades. ApexForge and ApexBounce match.
+Candidate slices are `server.slice_stl` on the orca-slicer binary from Actions run 45295959179, using this SHA's `server/`. Fixture `validation/test_models/orthocad_sample_top_insole.stl`, `apex-v2-insole-95a`, wall_loops 1, infill 26, toe_first, belt_insole_place. Live slices are the same binary and the live `server/` at `d935197`. ApexForge and ApexBounce match. ApexCore is the live residual and is byte-identical.
+
+Two independent runs measured the same geometry. Slice times differ by machine and both are under 260 s. The table below is this run.
 
 | Gate | ApexForge | ApexBounce | ApexCore |
 |---|---|---|---|
 | Hollow L<=165 / L<=181 | PASS 0 / 0 | PASS 0 / 0 | reported 131 / 131 (not a pass line) |
 | G1 | FAIL 1474/5833 | FAIL 1474/5833 | reported 3/15493 (not a pass line) |
-| G2 | FAIL 2776/2968, belt 65.4%, dorsal 80.7% | FAIL, same | PASS 0/8406 |
+| G2 | FAIL 2776/2968, belt 65.431%, dorsal 80.660% | FAIL, same | PASS 0/8406 |
 | Surface | PASS | PASS | PASS |
 | Filament | PASS 24392.72 mm / 70.41 g -> 24432.60 mm / 70.53 g | PASS, same | PASS 29857.71 mm / 86.18 g, increase 0 |
-| Slice time | PASS 14.054 s | PASS 12.952 s | PASS 9.665 s |
+| Slice time | PASS 4.087 s | PASS 4.101 s | PASS 8.875 s |
 | Identity | — | — | PASS |
 | Shared path | PASS | PASS | — |
 
-Hollow after layer 165 is still 4297, max air 15.918 mm.
+The other run recorded slice time PASS 14.054 s, 12.952 s, and 9.665 s.
 
-G1 is unchanged from live and from `baa2c087`: 1474/5833. First residuals: layer 125 x-bin 265, layer 150 x-bin 214. G2 is 2776/2968, belt air 65.431%, dorsal air 80.660%. That equals live and is higher than `baa2c087` (2440/2968). The frozen pass line is still 0. First residuals: layer 132 x-bin 268, layer 165 x-bin 216, layer 151 x-bin 281.
+Hollow remaining after layer 165 is 4297 on both materials, max air 15.918 mm. That air is outside the required window.
 
-Filament increased 39.88 mm / 0.12 g. Added extrusions are 287 sparse infill, none of another type, none more than 0.02 mm outside the live outline, and none outside a previously hollow section of at least 3 mm. That gate PASSes. The 5097 out-of-section extrusions on `baa2c087` are gone.
+G1 is 1474/5833. That equals live and equals `baa2c087`. It is not worse than live and it is not a regression against `baa2c087`. The frozen pass line is still 0, so the gate is FAIL. First residuals: layer 125 x-bin 265, layer 150 x-bin 214.
 
-Surface lock holds: 36125 locked segments, delta 0. ApexCore identity PASS, 3349500 bytes, stamp ignored. Shared path PASS: both hollow pass lines match, and the diff names both materials.
+G2 is 2776/2968. That equals the live unbonded count and is worse than `baa2c087` (2440/2968), so it regresses against `baa2c087`. The frozen pass line is still 0. Belt air 65.431267% matches the live re-measure. Dorsal air is 80.660377%, against the live re-measure of 80.896226% at the same unbonded count. First residuals: layer 132 x-bin 268, layer 165 x-bin 216, layer 151 x-bin 281.
+
+Filament increased 39.88 mm / 0.12 g. Added extrusions are sparse infill (287, none of another type, none more than 0.02 mm outside the live outline). 0 of them are outside a previously hollow section of at least 3 mm. The filament rule PASSes. The 5097 out-of-section extrusions on `baa2c087` are gone.
+
+Surface lock holds: 36125 locked segments, delta 0, no closed-loop start moved, no layer change moved. ApexCore surface is 52857 locked segments, delta 0. ApexCore is 3349500 bytes after the stamp line is ignored (one stamp line on each file). The diff against `d935197` names both materials, and both hollow pass lines match.
+
+ApexBounce on this slice is still M109 S225 and M190 S60. This grade did not retune temperature or speed.
