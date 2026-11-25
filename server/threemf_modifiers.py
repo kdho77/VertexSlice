@@ -193,12 +193,12 @@ def prepare_belt_3mf(
     new_instances: dict[str, str] = {}
     if place:
         world_pts = [v for tri in main_world for v in tri]
-        rotated = [_rotate_z(x, y, deg) + (z,) for x, y, z in world_pts]
-        # Same order as prepare_belt_stl: Rz, then model-X mirror, then centre.
-        mirrored = [(-x, y, z) for x, y, z in rotated]
-        xs = [p[0] for p in mirrored]
-        ys = [p[1] for p in mirrored]
-        zs = [p[2] for p in mirrored]
+        # Same order as prepare_belt_stl: MirrorY, then Rz, then centre.
+        pre_mirrored = [(x, -y, z) for x, y, z in world_pts]
+        rotated = [_rotate_z(x, y, deg) + (z,) for x, y, z in pre_mirrored]
+        xs = [p[0] for p in rotated]
+        ys = [p[1] for p in rotated]
+        zs = [p[2] for p in rotated]
         min_x, max_x = min(xs), max(xs)
         min_y, min_z = min(ys), min(zs)
         width = max_x - min_x
@@ -209,7 +209,7 @@ def prepare_belt_3mf(
         x_shift = x_center_mm - (width / 2.0) - min_x
         y_shift = -min_y
         z_shift = -min_z
-        rigid = _mul(_translation(x_shift, y_shift, z_shift), _mul(_mirror_x(), _rotation_z(deg)))
+        rigid = _mul(_translation(x_shift, y_shift, z_shift), _mul(_rotation_z(deg), _mirror_y()))
         items = _build_items(root_xml)
         if not items:
             raise ThreemfError("3MF has no build item to place")
@@ -218,7 +218,7 @@ def prepare_belt_3mf(
         root_xml = _rewrite_item_transforms(root_xml, new_instances)
         placement.update(
             {
-                "mirror_x": True,
+                "mirror_y_pre_rotation": True,
                 "model_x_shift_mm": round(x_shift, 3),
                 "oriented_x_across_belt_mm": round(width, 3),
                 "oriented_y_along_belt_mm": round(max(ys) - min_y, 3),
@@ -226,9 +226,9 @@ def prepare_belt_3mf(
                 "bed_width_x_mm": bed_width_x_mm,
             }
         )
-        # rigid is det −1. Reverse winding on the placed solid so the belt-trim
-        # STL keeps outward normals (Orca's slicer applies the same compensation
-        # to a negative-det build transform via mirrored_sign).
+        # rigid is det −1 (MirrorY). Reverse winding on the placed solid so the
+        # belt-trim STL keeps outward normals (Orca's slicer applies the same
+        # compensation to a negative-det build transform via mirrored_sign).
         placed_main = [
             tuple(_apply(rigid, *v) for v in reversed(tri))
             for tri in main_world
@@ -386,10 +386,10 @@ def _rotation_z(deg: float) -> list[list[float]]:
     return m
 
 
-def _mirror_x() -> list[list[float]]:
-    """Reflect model X. det −1, applied after Z rotation and before X centring."""
+def _mirror_y() -> list[list[float]]:
+    """Reflect model Y. det −1, applied before Z rotation."""
     m = _identity()
-    m[0][0] = -1.0
+    m[1][1] = -1.0
     return m
 
 

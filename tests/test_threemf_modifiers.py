@@ -319,7 +319,7 @@ class PrepareTest(unittest.TestCase):
             center = (bounds["xmin"] + bounds["xmax"]) / 2
             self.assertAlmostEqual(center, 140.0, places=2)
             mod = meta["placed_modifiers"][0]
-            # X mirror puts the high-Y met pad on the low-X side of the centred part.
+            # Y mirror before Rz270 puts the high-Y met pad on the low-X side of the centred part.
             self.assertLess(mod["xmax"], bounds["xmax"] - 10)
             self.assertLess(mod["xmin"], (bounds["xmin"] + bounds["xmax"]) / 2.0)
             self.assertGreaterEqual(mod["xmin"], bounds["xmin"] - 0.05)

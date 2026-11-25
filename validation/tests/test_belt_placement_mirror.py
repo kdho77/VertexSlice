@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Belt placement cancels Orca's det −1 reflection: X mirror after Rz, before X centring."""
+"""Belt placement cancels Orca's det −1 reflection: Y mirror before Rz."""
 from __future__ import annotations
 
 import struct
@@ -15,7 +15,7 @@ sys.path.insert(0, str(REPO / "validation"))
 
 from apex_bed_placement import APEX_INSOLE_X_CENTER_MM  # noqa: E402
 from server.threemf_modifiers import prepare_belt_3mf  # noqa: E402
-from stl_preprocess import _read_triangles, _rotate_z, prepare_belt_stl  # noqa: E402
+from stl_preprocess import _read_triangles, _rotate_z, _write_triangles, prepare_belt_stl  # noqa: E402
 
 X_CENTER = APEX_INSOLE_X_CENTER_MM
 
@@ -71,12 +71,19 @@ def _x_center(tris: list[tuple[tuple[float, float, float], ...]]) -> float:
     return (min(xs) + max(xs)) / 2.0
 
 
+def _negate_y(
+    tris: list[tuple[tuple[float, float, float], ...]],
+) -> list[tuple[tuple[float, float, float], ...]]:
+    """Model-Y negation with winding reversed, the right-hand input live rotates."""
+    return [tuple((x, -y, z) for x, y, z in reversed(tri)) for tri in tris]
+
+
 def _rotate_only_centered(
     tris: list[tuple[tuple[float, float, float], ...]],
     deg: int,
     x_center: float,
 ) -> list[tuple[tuple[float, float, float], ...]]:
-    """Pre-mirror placement: Rz, then Y/Z min at 0 and X centred. No reflection."""
+    """Live placement: Rz, then Y/Z min at 0 and X centred. No extra reflection."""
     rotated: list[tuple[tuple[float, float, float], ...]] = []
     xs: list[float] = []
     ys: list[float] = []
@@ -94,14 +101,6 @@ def _rotate_only_centered(
     min_y, min_z = min(ys), min(zs)
     x_shift = x_center - (max_x - min_x) / 2.0 - min_x
     return [tuple((x + x_shift, y - min_y, z - min_z) for x, y, z in tri) for tri in rotated]
-
-
-def _mirror_across_x(
-    tris: list[tuple[tuple[float, float, float], ...]],
-    x_center: float,
-) -> list[tuple[tuple[float, float, float], ...]]:
-    """Reflect X through x_center and reverse winding (det −1, outward normals)."""
-    return [tuple((2.0 * x_center - x, y, z) for x, y, z in reversed(tri)) for tri in tris]
 
 
 def _write_wedge_3mf(path: Path, tris: list[tuple[tuple[float, float, float], ...]]) -> None:
@@ -158,45 +157,42 @@ def _linear_det(transform: str) -> float:
     return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
 
 
-class BeltMirrorPlacementTests(unittest.TestCase):
-    def _assert_matches_rotate_only_mirrored(
-        self,
-        prepared: list[tuple[tuple[float, float, float], ...]],
-        source: list[tuple[tuple[float, float, float], ...]],
-        deg: int,
-    ) -> None:
-        oracle = _mirror_across_x(_rotate_only_centered(source, deg, X_CENTER), X_CENTER)
-        self.assertEqual(len(prepared), len(oracle))
-        for got, exp in zip(prepared, oracle):
-            for gv, ev in zip(got, exp):
-                self.assertAlmostEqual(gv[0], ev[0], delta=1e-3)
-                self.assertAlmostEqual(gv[1], ev[1], delta=1e-3)
-                self.assertAlmostEqual(gv[2], ev[2], delta=1e-3)
-        self.assertAlmostEqual(_x_center(prepared), X_CENTER, delta=0.01)
-        self.assertEqual(tuple(round(v, 3) for v in _extents(prepared)), tuple(round(v, 3) for v in _extents(oracle)))
-        src_vol = _signed_volume(source)
-        prep_vol = _signed_volume(prepared)
-        self.assertGreater(src_vol, 0.0)
-        self.assertGreater(prep_vol, 0.0)
-        self.assertAlmostEqual(prep_vol, src_vol, delta=abs(src_vol) * 0.02 + 1e-3)
+def _mesh_bytes(path: Path) -> bytes:
+    """Triangle count and records. The 80-byte header is not part of the mesh."""
+    data = path.read_bytes()
+    return data[80:]
 
-    def test_prepare_belt_stl_mirrors_x_after_rotation(self) -> None:
+
+class BeltMirrorPlacementTests(unittest.TestCase):
+    def _oracle_stl(self, folder: Path, source: list[tuple[tuple[float, float, float], ...]], deg: int) -> Path:
+        oracle = _rotate_only_centered(_negate_y(source), deg, X_CENTER)
+        path = folder / f"oracle_{deg}.stl"
+        _write_triangles(path, oracle)
+        return path
+
+    def test_prepare_belt_stl_matches_rotated_y_negation(self) -> None:
         source = _wedge()
         with tempfile.TemporaryDirectory() as td:
-            src = Path(td) / "wedge.stl"
+            folder = Path(td)
+            src = folder / "wedge.stl"
             _write_stl(src, source)
             for deg in (270, 90):
                 out, meta = prepare_belt_stl(src, deg, bed_width_x_mm=250.0, x_center_mm=X_CENTER)
-                self.assertTrue(meta.get("mirror_x"))
+                self.assertTrue(meta.get("mirror_y_pre_rotation"))
                 self.assertEqual(meta["x_center_mm"], X_CENTER)
                 self.assertEqual(meta["rotation_z_deg"], deg)
+                oracle = self._oracle_stl(folder, source, deg)
+                self.assertEqual(out.read_bytes(), oracle.read_bytes())
                 prepared = _read_triangles(out)
-                self._assert_matches_rotate_only_mirrored(prepared, source, deg)
-                rotate_ext = _extents(_rotate_only_centered(source, deg, X_CENTER))
-                for got, exp in zip(_extents(prepared), rotate_ext):
-                    self.assertAlmostEqual(got, exp, delta=0.02)
+                self.assertAlmostEqual(_x_center(prepared), X_CENTER, delta=0.01)
+                src_vol = _signed_volume(source)
+                prep_vol = _signed_volume(prepared)
+                self.assertGreater(src_vol, 0.0)
+                self.assertGreater(prep_vol, 0.0)
+                self.assertAlmostEqual(prep_vol, src_vol, delta=abs(src_vol) * 0.02 + 1e-3)
+                self.assertEqual(_extents(prepared), _extents(_read_triangles(oracle)))
 
-    def test_prepare_belt_3mf_matches_stl_mirror(self) -> None:
+    def test_prepare_belt_3mf_matches_rotated_y_negation(self) -> None:
         source = _wedge()
         with tempfile.TemporaryDirectory() as td:
             folder = Path(td)
@@ -212,21 +208,17 @@ class BeltMirrorPlacementTests(unittest.TestCase):
                     x_center_mm=X_CENTER,
                     print_direction=direction,
                 )
-                self.assertTrue(meta.get("mirror_x"))
+                self.assertTrue(meta.get("mirror_y_pre_rotation"))
+                self.assertTrue(stl_meta.get("mirror_y_pre_rotation"))
                 self.assertEqual(meta["x_center_mm"], X_CENTER)
                 self.assertEqual(meta["rotation_z_deg"], deg)
                 det = _linear_det(_build_transform(dest))
                 self.assertLess(det, 0.0)
                 self.assertAlmostEqual(abs(det), 1.0, delta=1e-6)
-                placed = _read_triangles(Path(meta["placed_main_stl"]))
-                self._assert_matches_rotate_only_mirrored(placed, source, deg)
-                stl_tris = _read_triangles(stl_out)
-                self.assertEqual(len(placed), len(stl_tris))
-                for got, exp in zip(placed, stl_tris):
-                    for gv, ev in zip(got, exp):
-                        self.assertAlmostEqual(gv[0], ev[0], delta=1e-3)
-                        self.assertAlmostEqual(gv[1], ev[1], delta=1e-3)
-                        self.assertAlmostEqual(gv[2], ev[2], delta=1e-3)
+                oracle = self._oracle_stl(folder, source, deg)
+                placed_path = Path(meta["placed_main_stl"])
+                self.assertEqual(_mesh_bytes(placed_path), _mesh_bytes(stl_out))
+                self.assertEqual(_mesh_bytes(placed_path), _mesh_bytes(oracle))
                 bounds = meta["placed_main_bounds"]
                 self.assertAlmostEqual((bounds["xmin"] + bounds["xmax"]) / 2.0, X_CENTER, delta=0.01)
 
