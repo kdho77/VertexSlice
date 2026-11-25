@@ -162,6 +162,13 @@ jobs:
           fi
           exit "$status"
 
+      - name: ApexCore chain files match live main
+        run: |
+          git diff --quiet d935197976b7cdd2fa89ced4ff43930b0212959f -- \
+            server/chains/apex_core.py \
+            server/chains/apex_light.py \
+            scripts/g2b_heelmod/postprocess_g2b.py
+
       - name: ApexForge and ApexBounce forefoot hollow band
         run: |
           mkdir -p "${{ runner.temp }}/forefoot-gcode"
