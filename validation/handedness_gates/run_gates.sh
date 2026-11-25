@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# run_gates.sh - FROZEN runner for handedness gates H1-H3 (OrthoCAD PM, 2026-11-24). Do not edit; checked by SHA256SUMS.
+# run_gates.sh - FROZEN runner for handedness gates H1-H3 (OrthoCAD PM, 2026-11-24; v3 6:00 PM MT: H2/H3 compare each
+# candidate side with the live file of the OPPOSITE side, which is the same placed mesh; see h3_surface_mirror_equal.py). Do not edit; checked by SHA256SUMS.
 # usage (VertexSlice repo root): bash validation/handedness_gates/run_gates.sh OUT_DIR
 # OUT_DIR must hold, for MAT in apex_core apex_light (and apex_forge apex_bounce when the server offers them):
 #   cand_${MAT}_left.gcode  cand_${MAT}_right.gcode   candidate server, input = fixture LEFT / its Y-mirror (RIGHT)
@@ -19,8 +20,9 @@ for MAT in apex_core apex_light apex_forge apex_bounce; do
   n=$((n+1))
   run "H1_handedness_$MAT" python3 $G/h1_handedness.py "$OUT/cand_${MAT}_left.gcode" "$OUT/cand_${MAT}_right.gcode"
   for S in left right; do
-    run "H2_seam_bottom_${MAT}_$S" bash $G/h2_seam_bottom.sh "$OUT/cand_${MAT}_$S.gcode" "$OUT/live_${MAT}_$S.gcode"
-    run "H3_surface_mirror_equal_${MAT}_$S" python3 $G/h3_surface_mirror_equal.py "$OUT/cand_${MAT}_$S.gcode" "$OUT/live_${MAT}_$S.gcode"
+    O=$([ $S = left ] && echo right || echo left)
+    run "H2_seam_bottom_${MAT}_$S" bash $G/h2_seam_bottom.sh "$OUT/cand_${MAT}_$S.gcode" "$OUT/live_${MAT}_$O.gcode"
+    run "H3_surface_equal_${MAT}_$S" python3 $G/h3_surface_mirror_equal.py "$OUT/cand_${MAT}_$S.gcode" "$OUT/live_${MAT}_$O.gcode" --opposite
   done
 done
 if [ -s "$OUT/cand_apex_core_left_heel.gcode" ]; then

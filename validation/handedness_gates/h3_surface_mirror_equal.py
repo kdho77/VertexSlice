@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""h3_surface_mirror_equal.py - FROZEN gate H3 v2 (OrthoCAD PM, 2026-11-24 5:40 PM MT). Do not edit; checked by SHA256SUMS.
+"""h3_surface_mirror_equal.py - FROZEN gate H3 v3 (OrthoCAD PM, 2026-11-24 6:00 PM MT). Do not edit; checked by SHA256SUMS.
 Kendon's locked rule: surface quality untouched, no scope growth. The handedness fix may only mirror the part across
 the belt. So the candidate must be the LIVE file's mirror, with the same settings.
 v2 (measurement fix, thresholds unchanged): v1 compared 0.5 mm point samples, thinned to 6000 points, nearest point to
@@ -7,7 +7,15 @@ nearest point, so sampling alone added up to ~0.3 mm and only a coordinate-exact
 mirrored mesh (PM local slice of PR #52, 5:20 PM MT) measured 0.35 mm median from sampling alone. v2 samples every 0.05 mm
 with no thinning (KD-tree). v1 F compared exact per-segment feed values; Orca's min-layer-time slowdown rescales a few
 slow segments by <1% when path lengths change by rounding, so v2 compares the outer-wall feed distribution instead.
-usage: h3_surface_mirror_equal.py CANDIDATE.gcode LIVE.gcode     (same material, same input STL)   exit 0 PASS, 1 FAIL
+v3 (comparison partner fix, thresholds unchanged): the fix places a left input exactly where live places its Y-mirror
+(Rz270 then X-mirror == Y-mirror then Rz270), so CANDIDATE(left) must reproduce LIVE(right) and CANDIDATE(right) LIVE(left)
+with no mirroring at all: the fix may not create any toolpath production does not already print today. Comparing against
+the mirror of the same-side live file instead measured Orca's own left/right non-equivariance (live right vs mirrored live
+left: ApexLight W_median 0.244 mm, Forge/Bounce ~0.85 mm on the grader's server slices), which exists in production today
+and is not caused by the fix. Use --opposite for v3 (run_gates.sh does); without it the v2 mirror comparison runs.
+usage: h3_surface_mirror_equal.py CANDIDATE.gcode LIVE.gcode [--opposite]   exit 0 PASS, 1 FAIL
+  --opposite: LIVE is the live file for the OTHER side (same placed mesh); W compares without mirroring, after aligning
+  the bottom-footprint X centres.
   C  CONFIG_BLOCK (between ; CONFIG_BLOCK_START/END) byte-identical.
   N  same layer count (';Z:' markers), same count of ';TYPE:Outer wall' blocks within 2%.
   E  total extrusion (sum of positive E) within 1.0%.
@@ -58,8 +66,9 @@ def wq(v, w, qs):
     o = np.argsort(v); v = v[o]; c = np.cumsum(w[o]); c = c / c[-1]
     return [float(v[np.searchsorted(c, q / 100.0)]) for q in qs]
 
+OPP = '--opposite' in sys.argv[3:]
 C, L = parse(sys.argv[1]), parse(sys.argv[2])
-res = {}
+res = {'mode': 'opposite' if OPP else 'mirror'}
 res['C_config_identical'] = C['cfg'] == L['cfg'] and len(C['cfg']) > 1000
 res['N_layers'] = [C['nlayers'], L['nlayers']]
 res['N_ok'] = C['nlayers'] == L['nlayers'] and abs(C['n_outer'] - L['n_outer']) <= 0.02 * max(1, L['n_outer'])
@@ -67,7 +76,8 @@ res['E'] = [round(C['e'], 2), round(L['e'], 2)]
 res['E_ok'] = abs(C['e'] - L['e']) <= 0.01 * L['e']
 ds = []
 for k in sorted(set(C['layers']) & set(L['layers'])):
-    a = C['layers'][k]; b = L['layers'][k].copy(); b[:, 0] = L['cx'] + C['cx'] - b[:, 0]
+    a = C['layers'][k]; b = L['layers'][k].copy()
+    b[:, 0] = (b[:, 0] + C['cx'] - L['cx']) if OPP else (L['cx'] + C['cx'] - b[:, 0])
     ds.append(max(float(cKDTree(b).query(a)[0].max()), float(cKDTree(a).query(b)[0].max())))
 ds = np.array(ds) if ds else np.array([99.0])
 res['W_layers'] = int(len(ds)); res['W_frac_le_0.30'] = round(float((ds <= 0.30).mean()), 4); res['W_median'] = round(float(np.median(ds)), 4)
@@ -82,5 +92,5 @@ else:
 ok = res['C_config_identical'] and res['N_ok'] and res['E_ok'] and res['W_ok'] and res['F_ok']
 res['pass'] = ok
 print(json.dumps(res, indent=1))
-print(('PASS' if ok else 'FAIL') + ' H3v2 ' + ' '.join(f"{k}={res[k]}" for k in ('C_config_identical', 'N_ok', 'E_ok', 'W_ok', 'F_ok', 'W_median', 'W_frac_le_0.30')), file=sys.stderr)
+print(('PASS' if ok else 'FAIL') + (' H3v3-opposite ' if OPP else ' H3v2-mirror ') + ' '.join(f"{k}={res[k]}" for k in ('C_config_identical', 'N_ok', 'E_ok', 'W_ok', 'F_ok', 'W_median', 'W_frac_le_0.30')), file=sys.stderr)
 sys.exit(0 if ok else 1)
