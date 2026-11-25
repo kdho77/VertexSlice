@@ -1,30 +1,36 @@
 #!/usr/bin/env python3
-"""h3_surface_mirror_equal.py - FROZEN gate H3 (OrthoCAD PM, 2026-11-24). Do not edit; checked by SHA256SUMS.
+"""h3_surface_mirror_equal.py - FROZEN gate H3 v2 (OrthoCAD PM, 2026-11-24 5:40 PM MT). Do not edit; checked by SHA256SUMS.
 Kendon's locked rule: surface quality untouched, no scope growth. The handedness fix may only mirror the part across
 the belt. So the candidate must be the LIVE file's mirror, with the same settings.
+v2 (measurement fix, thresholds unchanged): v1 compared 0.5 mm point samples, thinned to 6000 points, nearest point to
+nearest point, so sampling alone added up to ~0.3 mm and only a coordinate-exact mirror could pass; a real re-slice of the
+mirrored mesh (PM local slice of PR #52, 5:20 PM MT) measured 0.35 mm median from sampling alone. v2 samples every 0.05 mm
+with no thinning (KD-tree). v1 F compared exact per-segment feed values; Orca's min-layer-time slowdown rescales a few
+slow segments by <1% when path lengths change by rounding, so v2 compares the outer-wall feed distribution instead.
 usage: h3_surface_mirror_equal.py CANDIDATE.gcode LIVE.gcode     (same material, same input STL)   exit 0 PASS, 1 FAIL
   C  CONFIG_BLOCK (between ; CONFIG_BLOCK_START/END) byte-identical.
-  N  same layer count (';Z:' / ';LAYER_CHANGE' markers), same count of ';TYPE:Outer wall' blocks within 2%.
+  N  same layer count (';Z:' markers), same count of ';TYPE:Outer wall' blocks within 2%.
   E  total extrusion (sum of positive E) within 1.0%.
-  W  outer-wall geometry: per layer, candidate outer-wall polyline points vs LIVE outer-wall points mirrored across the
-     belt (X -> cxL + cxC - X, cx = bottom-footprint X centre of each file). Symmetric max nearest distance <= 0.30 mm on
-     >= 95% of layers that have outer wall in both, and median over layers <= 0.15 mm.
-  F  outer-wall feedrate multiset (F values on Outer wall extrusions, rounded to 1 mm/min) identical within 1% per value.
+  W  outer-wall geometry: per layer, candidate outer-wall segments (sampled every 0.05 mm) vs LIVE outer-wall segments
+     mirrored across the belt (X -> cxL + cxC - X, cx = bottom-footprint X centre of each file). Symmetric max nearest
+     distance <= 0.30 mm on >= 95% of layers that have outer wall in both, and median over layers <= 0.15 mm.
+  F  outer-wall feedrate (F on Outer wall extrusions, weighted by segment length): mean within 0.5% and the 5/25/50/75/95
+     percentiles each within 1% of LIVE.
 """
 import json, re, sys
-from collections import Counter
 import numpy as np
+from scipy.spatial import cKDTree
 num = re.compile(r'([XYZEF])(-?\d*\.?\d+)')
+STEP = 0.05
 
 def parse(fn):
     txt = open(fn, errors='replace').read()
     cfg = txt[txt.find('; CONFIG_BLOCK_START'):txt.find('; CONFIG_BLOCK_END')]
     x = y = z = 0.0; f = 0.0; t = ''; layer = -1
-    layers = {}; e_tot = 0.0; feeds = Counter(); n_outer = 0; bot = []
+    layers = {}; e_tot = 0.0; n_outer = 0; bot = []; fv = []; fw = []
     for line in txt.split('\n'):
-        if line.startswith(';Z:') or line.startswith(';LAYER_CHANGE'):
-            if line.startswith(';Z:'): layer += 1
-            continue
+        if line.startswith(';Z:'):
+            layer += 1; continue
         if line.startswith(';TYPE:'):
             t = line[6:].strip(); n_outer += t == 'Outer wall'; continue
         if not line.startswith(('G0', 'G1')): continue
@@ -40,21 +46,17 @@ def parse(fn):
             e_tot += ev
             if y <= 0.6: bot.append(x)
             if t == 'Outer wall':
-                feeds[round(f)] += 1
-                seg = np.array([[px, py, pz], [x, y, z]])
-                n = max(2, int(np.linalg.norm(seg[1] - seg[0]) / 0.5) + 1)
-                pts = seg[0] + (seg[1] - seg[0]) * np.linspace(0, 1, n)[:, None]
-                layers.setdefault(layer, []).append(pts)
+                p = np.array([px, py, pz]); q = np.array([x, y, z]); ln = float(np.linalg.norm(q - p))
+                fv.append(f); fw.append(ln)
+                n = max(2, int(ln / STEP) + 1)
+                layers.setdefault(layer, []).append(p + (q - p) * np.linspace(0, 1, n)[:, None])
     layers = {k: np.vstack(v) for k, v in layers.items()}
-    return dict(cfg=cfg, layers=layers, e=e_tot, feeds=feeds, n_outer=n_outer, nlayers=layer + 1,
+    return dict(cfg=cfg, layers=layers, e=e_tot, n_outer=n_outer, nlayers=layer + 1, fv=np.array(fv), fw=np.array(fw),
                 cx=(min(bot) + max(bot)) / 2 if bot else 0.0)
 
-def nn_max(a, b):
-    best = 0.0
-    for i in range(0, len(a), 2000):
-        d = np.sqrt(((a[i:i + 2000, None, :] - b[None, :, :]) ** 2).sum(-1)).min(1)
-        best = max(best, float(d.max()))
-    return best
+def wq(v, w, qs):
+    o = np.argsort(v); v = v[o]; c = np.cumsum(w[o]); c = c / c[-1]
+    return [float(v[np.searchsorted(c, q / 100.0)]) for q in qs]
 
 C, L = parse(sys.argv[1]), parse(sys.argv[2])
 res = {}
@@ -66,16 +68,19 @@ res['E_ok'] = abs(C['e'] - L['e']) <= 0.01 * L['e']
 ds = []
 for k in sorted(set(C['layers']) & set(L['layers'])):
     a = C['layers'][k]; b = L['layers'][k].copy(); b[:, 0] = L['cx'] + C['cx'] - b[:, 0]
-    if len(a) > 6000: a = a[:: len(a) // 6000 + 1]
-    if len(b) > 6000: b = b[:: len(b) // 6000 + 1]
-    ds.append(max(nn_max(a, b), nn_max(b, a)))
+    ds.append(max(float(cKDTree(b).query(a)[0].max()), float(cKDTree(a).query(b)[0].max())))
 ds = np.array(ds) if ds else np.array([99.0])
 res['W_layers'] = int(len(ds)); res['W_frac_le_0.30'] = round(float((ds <= 0.30).mean()), 4); res['W_median'] = round(float(np.median(ds)), 4)
-res['W_ok'] = res['W_frac_le_0.30'] >= 0.95 and res["W_median"] <= 0.15
-keys = set(C['feeds']) | set(L['feeds'])
-res['F_ok'] = all(abs(C['feeds'][k] - L['feeds'][k]) <= max(2, 0.01 * L['feeds'][k]) for k in keys)
+res['W_ok'] = res['W_frac_le_0.30'] >= 0.95 and res['W_median'] <= 0.15
+if len(C['fv']) and len(L['fv']):
+    mc = float(np.average(C['fv'], weights=C['fw'])); ml = float(np.average(L['fv'], weights=L['fw']))
+    qs = [5, 25, 50, 75, 95]; qc = wq(C['fv'], C['fw'], qs); ql = wq(L['fv'], L['fw'], qs)
+    res['F_mean'] = [round(mc, 2), round(ml, 2)]; res['F_pct'] = [qc, ql]
+    res['F_ok'] = abs(mc - ml) <= 0.005 * ml and all(abs(a - b) <= 0.01 * b for a, b in zip(qc, ql))
+else:
+    res['F_ok'] = False
 ok = res['C_config_identical'] and res['N_ok'] and res['E_ok'] and res['W_ok'] and res['F_ok']
 res['pass'] = ok
 print(json.dumps(res, indent=1))
-print(('PASS' if ok else 'FAIL') + ' H3 ' + ' '.join(f"{k}={res[k]}" for k in ('C_config_identical', 'N_ok', 'E_ok', 'W_ok', 'F_ok', 'W_median', 'W_frac_le_0.30')), file=sys.stderr)
+print(('PASS' if ok else 'FAIL') + ' H3v2 ' + ' '.join(f"{k}={res[k]}" for k in ('C_config_identical', 'N_ok', 'E_ok', 'W_ok', 'F_ok', 'W_median', 'W_frac_le_0.30')), file=sys.stderr)
 sys.exit(0 if ok else 1)
