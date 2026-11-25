@@ -54,8 +54,8 @@ class AnalyzerTest(unittest.TestCase):
             part = meta["placed_main_bounds"]
             region = meta["placed_modifiers"][0]
             base = {
-                "xmin": part["xmin"],
-                "xmax": region["xmin"] - 1,
+                "xmin": region["xmax"] + 1,
+                "xmax": part["xmax"],
                 "ymin": part["ymin"],
                 "ymax": part["ymax"],
                 "zmin": part["zmin"],
@@ -87,8 +87,8 @@ class AnalyzerTest(unittest.TestCase):
             part = meta["placed_main_bounds"]
             region = meta["placed_modifiers"][0]
             base = {
-                "xmin": part["xmin"],
-                "xmax": region["xmin"] - 1,
+                "xmin": region["xmax"] + 1,
+                "xmax": part["xmax"],
                 "ymin": part["ymin"],
                 "ymax": part["ymax"],
                 "zmin": part["zmin"],
@@ -112,7 +112,10 @@ class AnalyzerTest(unittest.TestCase):
             _dest, meta = prepare_belt_3mf(src, dest_dir=Path(tmp) / "out")
             self.assertEqual(meta["regions_applied"], 1)
             self.assertEqual(meta["modifiers"][0]["sparse_infill_density"], "20%")
-            self.assertGreater(meta["placed_modifiers"][0]["xmin"], meta["placed_main_bounds"]["xmin"] + 10)
+            mod = meta["placed_modifiers"][0]
+            part = meta["placed_main_bounds"]
+            self.assertLess(mod["xmax"], part["xmax"] - 10)
+            self.assertLess(mod["xmin"], (part["xmin"] + part["xmax"]) / 2.0)
 
 
 if __name__ == "__main__":

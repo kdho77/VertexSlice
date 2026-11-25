@@ -1,0 +1,24 @@
+H3 v2 proofs (PM, 2026-11-24 ~5:40 PM MT). apex_core, fixture true-left STL and its Y-mirror, sliced locally with the
+production chain (server.chains.apex_core, local orca_wrap): LIVE = origin/main d935197976, FIX = PR #52 head 0415b656.
+v1 on FIX vs LIVE (real re-slice): FAIL W_median=0.3538 W_frac_le_0.30=0.19, F 160 exact-value bins differ (sampling artefact; v1 only passes coordinate-exact mirrors)
+v2 FIX left  vs LIVE left : PASS C=True N=True E=True W_median=0.0884 W_frac_le_0.30=0.9909 F_ok=True (mean 1522.7 vs 1522.8)
+v2 FIX right vs LIVE right: PASS W_median=0.0884 W_frac_le_0.30=0.9909
+v2 no-op LIVE vs LIVE (not mirrored): FAIL W_median=7.79 W_frac=0.0
+v2 exact mirror_x of LIVE: PASS W_median=0.0
+v2 bad: FIX with outer wall 10% slower: FAIL F_ok=False
+v2 bad: FIX turned 180 deg (rot180): FAIL W_median=143.0
+v2 bad: FIX left vs LIVE right (wrong file): FAIL W_median=7.78
+v2 bad: FIX outer wall widened ~0.4 mm at the edges: FAIL W_median=0.3738 W_frac=0.16
+Requires numpy and scipy (CI: pip install -q numpy scipy).
+
+H3 v3 / runner v3 (PM, 2026-11-24 ~6:00 PM MT). Grader PR #53 found ApexLight/Forge/Bounce fail H2 and H3 v2 (W_median
+0.82-1.06 mm) against the mirror of the same-side live file. Cause: Orca is not mirror-equivariant. Live production's
+own right file vs the mirrored live left already differs that much (ApexLight local: W_median 0.244 mm). The fix places
+a left input exactly where live places the right (Rz270 then X-mirror == Y-mirror then Rz270), so the correct partner is
+the live OPPOSITE-side file, with no mirroring. Grader tables confirm it: candidate-left seam counts equal live-right counts.
+Local proofs (production chain, apex_core and apex_light, fixture L and its Y-mirror):
+FIX (PR #52 0415b656) vs live opposite: H1 PASS both materials; H2 PASS x4; H3v3 PASS x4, W_median 0.0 (paths identical)
+NO-OP (cand = live): H1 FAIL both; H3v3 FAIL x4 (W_median 7.79 / 7.78)
+BAD outer wall 10% slower (core left): H3v3 FAIL F_ok=False
+BAD rot180 print-direction flip (light left): H3v3 FAIL W_median 142.7
+Thresholds unchanged from v1.

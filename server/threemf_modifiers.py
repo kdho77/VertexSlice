@@ -25,10 +25,11 @@ that global value. Modifier densities must be one of the hardness presets
 (14, 20, 26, 32, 38). A file that declares modifiers and yields none is
 ``ModifierRegionsNotApplied`` (HTTP 422).
 
-Belt placement is the same rigid move as ``prepare_orthocad_insole_stl``:
-Z rotation, Y/Z min at 0, X centered. It is composed onto every build-item
-transform so the main solid and its modifiers stay registered. STL bytes never
-enter this module.
+Belt placement matches ``prepare_orthocad_insole_stl``: Z rotation, then an X
+mirror that cancels Orca's det −1 belt reflection, then Y/Z min at 0 and X
+centered. The mirror is composed onto every build-item transform so the main
+solid and its modifiers stay registered. The placed-main STL reverses triangle
+winding so its normals stay outward. STL uploads never enter this module.
 """
 from __future__ import annotations
 
@@ -192,7 +193,9 @@ def prepare_belt_3mf(
     new_instances: dict[str, str] = {}
     if place:
         world_pts = [v for tri in main_world for v in tri]
-        rotated = [_rotate_z(x, y, deg) + (z,) for x, y, z in world_pts]
+        # Same order as prepare_belt_stl: MirrorY, then Rz, then centre.
+        pre_mirrored = [(x, -y, z) for x, y, z in world_pts]
+        rotated = [_rotate_z(x, y, deg) + (z,) for x, y, z in pre_mirrored]
         xs = [p[0] for p in rotated]
         ys = [p[1] for p in rotated]
         zs = [p[2] for p in rotated]
@@ -206,7 +209,7 @@ def prepare_belt_3mf(
         x_shift = x_center_mm - (width / 2.0) - min_x
         y_shift = -min_y
         z_shift = -min_z
-        rigid = _mul(_translation(x_shift, y_shift, z_shift), _rotation_z(deg))
+        rigid = _mul(_translation(x_shift, y_shift, z_shift), _mul(_rotation_z(deg), _mirror_y()))
         items = _build_items(root_xml)
         if not items:
             raise ThreemfError("3MF has no build item to place")
@@ -215,6 +218,7 @@ def prepare_belt_3mf(
         root_xml = _rewrite_item_transforms(root_xml, new_instances)
         placement.update(
             {
+                "mirror_y_pre_rotation": True,
                 "model_x_shift_mm": round(x_shift, 3),
                 "oriented_x_across_belt_mm": round(width, 3),
                 "oriented_y_along_belt_mm": round(max(ys) - min_y, 3),
@@ -222,8 +226,11 @@ def prepare_belt_3mf(
                 "bed_width_x_mm": bed_width_x_mm,
             }
         )
+        # rigid is det −1 (MirrorY). Reverse winding on the placed solid so the
+        # belt-trim STL keeps outward normals (Orca's slicer applies the same
+        # compensation to a negative-det build transform via mirrored_sign).
         placed_main = [
-            tuple(_apply(rigid, *v) for v in tri)
+            tuple(_apply(rigid, *v) for v in reversed(tri))
             for tri in main_world
         ]
         placement["placed_main_bounds"] = _bounds(placed_main)
@@ -376,6 +383,13 @@ def _rotation_z(deg: float) -> list[list[float]]:
     m = _identity()
     m[0][0], m[0][1] = c, -s
     m[1][0], m[1][1] = s, c
+    return m
+
+
+def _mirror_y() -> list[list[float]]:
+    """Reflect model Y. det −1, applied before Z rotation."""
+    m = _identity()
+    m[1][1] = -1.0
     return m
 
 

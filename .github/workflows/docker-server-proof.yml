@@ -162,6 +162,151 @@ jobs:
           fi
           exit "$status"
 
+  # Frozen handedness gates H1-H3. Additive: the jobs above are unchanged.
+  # LIVE is the published server image of origin/main d935197976. CANDIDATE is
+  # that image plus this branch's belt placement (validation/stl_preprocess.py
+  # and server/threemf_modifiers.py). src/ is unchanged, so the slicer binary
+  # matches LIVE. The gateway-timeout overlay is the slice_all.sh approach,
+  # applied only inside the throwaway containers.
+  handedness_gates:
+    name: Handedness gates H1-H3
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          lfs: 'true'
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker system prune -af
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build candidate and slice gate inputs
+        run: |
+          set -euo pipefail
+          LIVE="ghcr.io/kdho77/vertexslice-server@sha256:8cac1d54c5e1a12f4693412c32fe40dd9c5682b9279e2b1d38f1225760aca579"
+          docker pull "$LIVE"
+          root="$RUNNER_TEMP/handedness"
+          rm -rf "$root"
+          mkdir -p "$root/cand/validation" "$root/cand/server" "$RUNNER_TEMP/slices"
+          cp validation/stl_preprocess.py "$root/cand/validation/stl_preprocess.py"
+          cp server/threemf_modifiers.py "$root/cand/server/threemf_modifiers.py"
+          cat > "$root/cand.Dockerfile" << 'EOF'
+          FROM live-base
+          COPY validation/stl_preprocess.py /app/validation/stl_preprocess.py
+          COPY server/threemf_modifiers.py /app/server/threemf_modifiers.py
+          EOF
+          sed -i 's/^          //' "$root/cand.Dockerfile"
+          docker tag "$LIVE" live-base
+          docker build -f "$root/cand.Dockerfile" -t vertexslice-server:cand "$root/cand"
+          python3 - << 'PY'
+          import os
+          import struct
+          from pathlib import Path
+          src = Path("validation/test_models/orthocad_sample_top_insole.stl")
+          data = src.read_bytes()
+          n = struct.unpack_from("<I", data, 80)[0]
+          if data[:5].lower() == b"solid" or 84 + n * 50 != len(data):
+              raise SystemExit(f"{src} is not the expected binary STL (tris={n} bytes={len(data)})")
+          out = bytearray(data[:84])
+          for i in range(n):
+              base = 84 + i * 50
+              vals = struct.unpack_from("<12f", data, base)
+              # Y negated and triangle winding reversed (v1, v2, v3) -> (v3, v2, v1).
+              mirrored = (0.0, 0.0, 1.0, vals[9], -vals[10], vals[11], vals[6], -vals[7], vals[8], vals[3], -vals[4], vals[5])
+              out += struct.pack("<12f", *mirrored)
+              out += data[base + 48 : base + 50]
+          dest = Path(os.environ["RUNNER_TEMP"]) / "slices" / "right_input.stl"
+          dest.write_bytes(out)
+          print(f"RIGHT stl tris={n} bytes={dest.stat().st_size}")
+          PY
+          # Gateway timeout overlay copied from validation/seam_fuse_gates/slice_all.sh.
+          # server/app.py hard-codes SLICE_GATEWAY_TIMEOUT_S = 260. The copy is
+          # bind-mounted into the test container only; the repo, images, and
+          # production are not changed. The same overlay is applied to both images.
+          KEY=gate-local-key
+          OUT="$RUNNER_TEMP/slices"
+          LEFT="$GITHUB_WORKSPACE/validation/test_models/orthocad_sample_top_insole.stl"
+          RIGHT="$OUT/right_input.stl"
+          port=18080
+          for spec in "cand=vertexslice-server:cand" "live=$LIVE"; do
+            tag=${spec%%=*}; img=${spec#*=}
+            port=$((port + 1)); name="hand_${tag}"
+            docker rm -f "$name" >/dev/null 2>&1 || true
+            ov="$OUT/.overlay_${tag}"; mkdir -p "$ov"
+            cid=$(docker create "$img")
+            docker cp "$cid:/app/server/app.py" "$ov/app.py"
+            docker rm "$cid" >/dev/null
+            n=$(grep -c '^SLICE_GATEWAY_TIMEOUT_S = 260$' "$ov/app.py" || true)
+            [ "$n" = 1 ] || { echo "app.py in $img does not have exactly one 'SLICE_GATEWAY_TIMEOUT_S = 260' line ($n); stop"; exit 3; }
+            sed -i 's/^SLICE_GATEWAY_TIMEOUT_S = 260$/SLICE_GATEWAY_TIMEOUT_S = 880  # test-harness overlay only (handedness gates)/' "$ov/app.py"
+            docker run -d --name "$name" -p "$port:8080" -e VERTEXSLICE_API_KEY="$KEY" \
+              -v "$(cd "$ov" && pwd)/app.py:/app/server/app.py:ro" "$img" >/dev/null
+            ok=0
+            for i in $(seq 1 120); do
+              curl -fsS "http://127.0.0.1:$port/health" >/dev/null 2>&1 && { ok=1; break; }
+              sleep 2
+            done
+            [ "$ok" = 1 ] || { echo "server $tag did not become healthy"; docker logs "$name" | tail -30; exit 1; }
+            mapfile -t mats < <(curl -fsS -H "X-API-Key: $KEY" "http://127.0.0.1:$port/v1/materials" \
+              | python3 -c 'import json,sys; d=json.load(sys.stdin); ids=[m["id"] if isinstance(m, dict) else m for m in d["materials"]]; print("\n".join(ids))')
+            echo "$tag materials: ${mats[*]}"
+            want=()
+            for mat in apex_core apex_light; do
+              printf '%s\n' "${mats[@]}" | grep -qx "$mat" || { echo "server $tag does not list $mat"; exit 1; }
+              want+=("$mat")
+            done
+            for mat in apex_forge apex_bounce; do
+              printf '%s\n' "${mats[@]}" | grep -qx "$mat" && want+=("$mat") || echo "$tag skip $mat (not listed)"
+            done
+            slice_one() {
+              local mat=$1 side=$2 stl=$3 direction=$4 outname=$5 required=$6
+              local f="$OUT/${outname}"
+              local t0 code
+              t0=$(date +%s)
+              code=$(curl -sS -m 900 -w '%{http_code}' -D "$f.hdr" -o "$f.gcode" -H "X-API-Key: $KEY" \
+                -F profile_id=apex-v2-insole-95a -F "model=@${stl}" \
+                -F wall_loops=1 -F infill_density=26 -F "print_direction=${direction}" \
+                -F belt_insole_place=true -F "material=${mat}" \
+                "http://127.0.0.1:${port}/v1/slice") || code=000
+              local bytes
+              bytes=$(stat -c %s "$f.gcode" 2>/dev/null || echo 0)
+              echo "$tag $outname http=$code seconds=$(( $(date +%s) - t0 )) bytes=$bytes"
+              if [ "$required" = 1 ]; then
+                [ "$code" = 200 ] && [ "$bytes" -gt 0 ] || { echo "slice failed: $tag $outname"; docker logs "$name" 2>&1 | tail -30; docker rm -f "$name" >/dev/null; exit 1; }
+              elif [ "$code" != 200 ] || [ "$bytes" -eq 0 ]; then
+                rm -f "$f.gcode" "$f.hdr"
+                echo "$tag $outname not accepted (http=$code); omitted"
+              fi
+            }
+            for mat in "${want[@]}"; do
+              slice_one "$mat" left "$LEFT" toe_first "${tag}_${mat}_left" 1
+              slice_one "$mat" right "$RIGHT" toe_first "${tag}_${mat}_right" 1
+            done
+            slice_one apex_core left "$LEFT" heel_first "${tag}_apex_core_left_heel" 0
+            docker rm -f "$name" >/dev/null
+          done
+          python3 -m pip install -q numpy scipy
+          bash validation/handedness_gates/run_gates.sh "$OUT"
+
+      - name: Upload slice and gate output
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: handedness-gates-${{ github.sha }}
+          path: ${{ runner.temp }}/slices
+          retention-days: 14
+          if-no-files-found: warn
+
   validation_unit:
     name: Validation scripts (no binary)
     runs-on: ubuntu-latest
@@ -188,6 +333,7 @@ jobs:
           python validation/tests/test_apex_v2_gcode_bookends.py
           python validation/tests/test_first_layer_y.py
           python validation/tests/test_print_direction_tunables.py
+          python validation/tests/test_belt_placement_mirror.py
           python -m unittest tests.test_server_full_chain tests.test_golden_gate tests.test_threemf_modifiers tests.test_region_infill tests.test_slice_jobs tests.test_job_store -v
 
   # Frozen seam-fuse gates. Additive: the jobs above are unchanged.

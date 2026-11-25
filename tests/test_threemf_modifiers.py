@@ -319,8 +319,11 @@ class PrepareTest(unittest.TestCase):
             center = (bounds["xmin"] + bounds["xmax"]) / 2
             self.assertAlmostEqual(center, 140.0, places=2)
             mod = meta["placed_modifiers"][0]
-            self.assertGreater(mod["xmin"], bounds["xmin"] + 10)
-            self.assertLess(mod["xmax"], bounds["xmax"] + 0.1)
+            # Y mirror before Rz270 puts the high-Y met pad on the low-X side of the centred part.
+            self.assertLess(mod["xmax"], bounds["xmax"] - 10)
+            self.assertLess(mod["xmin"], (bounds["xmin"] + bounds["xmax"]) / 2.0)
+            self.assertGreaterEqual(mod["xmin"], bounds["xmin"] - 0.05)
+            self.assertLessEqual(mod["xmax"], bounds["xmax"] + 0.05)
         finally:
             for path in folder.rglob("*"):
                 if path.is_file():
@@ -550,8 +553,8 @@ class HttpTest(unittest.TestCase):
             part = meta["placed_main_bounds"]
             region = meta["placed_modifiers"][0]
             base = {
-                "xmin": part["xmin"],
-                "xmax": region["xmin"] - 1,
+                "xmin": region["xmax"] + 1,
+                "xmax": part["xmax"],
                 "ymin": part["ymin"],
                 "ymax": part["ymax"],
                 "zmin": part["zmin"],
