@@ -22,8 +22,11 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from server.forefoot_hollow_band import (  # noqa: E402
+    _confine_added_sparse,
     _deposited_mm_scan,
+    added_sparse_outside_hollow,
     apply_forefoot_hollow_band,
+    hollow_column_count,
     scaled_forefoot_window,
 )
 from server.profile_registry import applied_infill_density, get_profile  # noqa: E402
@@ -196,27 +199,9 @@ def _off_bottom(segs: list[tuple], seams: dict[int, tuple[float, float]]) -> int
     return sum(1 for layer, (_x, y) in seams.items() if y - lows.get(layer, y) > 0.25)
 
 
-def _hollow(text: str, height: float, last: int) -> tuple[int, float]:
-    g2b_dir = REPO / "scripts" / "g2b_heelmod"
-    if str(g2b_dir) not in sys.path:
-        sys.path.insert(0, str(g2b_dir))
-    import postprocess_g2b as g2b
-
-    saved = (g2b.FOREFOOT_LAYER_H, g2b._BAND_FIRST, g2b._BAND_LAST)
-    try:
-        g2b.FOREFOOT_LAYER_H = height
-        parsed = g2b._parse_moves(text.splitlines(keepends=True), reset_type=False)
-        g2b._BAND_FIRST = 1
-        g2b._BAND_LAST = last
-        found = g2b._band_hollow_map(parsed["segs"])
-    finally:
-        g2b.FOREFOOT_LAYER_H, g2b._BAND_FIRST, g2b._BAND_LAST = saved
-    count = sum(len(cols) for cols in found.values())
-    air = 0.0
-    for cols in found.values():
-        for phigh, dlow in cols.values():
-            air = max(air, dlow - phigh)
-    return count, air
+def _hollow(text: str, _height: float, last: int) -> tuple[int, float]:
+    """0.25 mm columns and the 0.46 mm envelope. ``_height`` is the sliced layer height."""
+    return hollow_column_count(text, last)
 
 
 def _bond_columns(text: str, height: float, last: int) -> dict[str, int]:
@@ -300,6 +285,52 @@ def _outline_beyond_mm(live: list[tuple], cand: list[tuple]) -> float:
     return worst
 
 
+class SparseFillStaysInHollowSections(unittest.TestCase):
+    """Added sparse infill has to land in a previously hollow >=3 mm column.
+
+    The column is the 0.25 mm tool: two outer skins at least 3 mm apart and
+    more than 1 mm of air. A bead in some other 3–6 mm section is not kept.
+    """
+
+    def test_a_bead_outside_a_hollow_section_is_removed(self) -> None:
+        skins = "\n".join(
+            [
+                "; layer_height = 0.42",
+                "; filament_diameter: 1.75",
+                "; filament_density: 1.2",
+                "; filament used [mm] = 10.00",
+                "; filament used [cm3] = 1.00",
+                "; filament used [g] = 1.00",
+                "M82",
+                ";LAYER_CHANGE",
+                ";LAYER_CHANGE",
+                ";TYPE:Outer wall",
+                "G1 X100 Y0 F1000",
+                "G1 X110 Y0 E0.40000",
+                "G1 X100 Y4 F30000",
+                "G1 X110 Y4 E0.80000",
+            ]
+        ) + "\n"
+        added = skins + "\n".join(
+            [
+                ";TYPE:Sparse infill",
+                "G1 X104 Y2 F30000",
+                "G1 X106 Y2 E0.90000",
+                "G1 X49 Y2 F30000",
+                "G1 X51 Y2 E1.00000",
+                "G1 X104 Y10 F30000",
+                "G1 X106 Y10 E1.10000",
+            ]
+        ) + "\n"
+        confined = _confine_added_sparse(skins, added)
+        self.assertEqual(added_sparse_outside_hollow(skins, confined), 0)
+        self.assertIn("X106", confined)
+        self.assertNotIn("E1.00000", confined)
+        self.assertNotIn("E1.10000", confined)
+        self.assertIn("X51", confined)
+        self.assertIn("X106 Y10", confined)
+
+
 class ForefootWindow(unittest.TestCase):
     def test_orthocad_042_matches_the_046_band(self) -> None:
         window = scaled_forefoot_window(0.42, 481)
@@ -369,6 +400,7 @@ class GenericForefootHollowBand(unittest.TestCase):
             self.assertEqual(row["temps_identical"], True, row)
             self.assertEqual(row["off_bottom_live"], row["off_bottom_cand"])
             self.assertLessEqual(row["outline_beyond_mm"], 0.02, row)
+            self.assertEqual(row["added_sparse_outside_hollow"], 0, row)
             self.assertGreater(row["filament_mm_cand"], row["filament_mm_live"])
             self.assertFalse(row["vsabs"])
         self.assertTrue(any(line.startswith("M109 S245") for line in forge["temps"]))
@@ -448,6 +480,7 @@ class GenericForefootHollowBand(unittest.TestCase):
             "off_bottom_live": _off_bottom(live_segs, live_seams),
             "off_bottom_cand": _off_bottom(cand_segs, cand_seams),
             "outline_beyond_mm": round(_outline_beyond_mm(live_segs, cand_segs), 4),
+            "added_sparse_outside_hollow": added_sparse_outside_hollow(before, after),
             "filament_mm_live": mm_live,
             "filament_mm_cand": mm_cand,
             "filament_g_live": g_live,
