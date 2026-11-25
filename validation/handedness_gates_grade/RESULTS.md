@@ -1,10 +1,74 @@
 # Handedness grade of the belt-mirror fix
 
-**GRADE: FAIL**
+**GRADE: FAIL** (regrade on frozen gates v3, `19dff419554bdd2e9daed4b05b57c030507d3035`)
 
-Worker head `0415b656d42d7ae0828e435b98f6fdae4f6f0486` on `cursor/lr-swap-belt-mirror-1124` (base `a7d2d60f3df38b8664975d53d9d596f09a657c4c`). Graded 2026-11-25. Frozen gates were not edited. This branch does not change product code.
+Worker head `0415b656d42d7ae0828e435b98f6fdae4f6f0486` (PR #52, `cursor/lr-swap-belt-mirror-1124`). Same slices as the v1 grade. `sha256sum -c handedness_gates/SHA256SUMS` at `19dff419` printed OK for all six files. This branch still changes no product code and does not edit the frozen gates.
 
-H1 (physical foot) passes for apex_core, apex_light, apex_forge, and apex_bounce, toe-first left and right. The heel-first ApexCore left file also classifies LEFT. H2 and H3 do not pass for every material, so the frozen runner exits `HANDEDNESS_GATES_FAIL`.
+v3 compares each candidate side with the live file of the opposite side and does not mirror. H1 passes on all four materials. H1h passes (LEFT). H3 v3 passes on all eight toe-first slices (outer-wall median 0.0 mm). H2 passes ApexCore and ApexLight. H2 fails ApexForge and ApexBounce, both sides, on one counter:
+
+| Material | Side | Partner | Result | open-only layer changes off bottom (cand vs opposite live) |
+| --- | --- | --- | --- | --- |
+| apex_forge | left | live right | FAIL | 308 > 305 |
+| apex_forge | right | live left | FAIL | 294 > 293 |
+| apex_bounce | left | live right | FAIL | 308 > 305 |
+| apex_bounce | right | live left | FAIL | 294 > 293 |
+
+Closed seams off the bottom stay 0 on Forge and Bounce, and the other H2 counters match the opposite live file (open ends 156=156 on left, 149=149 on right; layer changes 480=480). The runner exits `HANDEDNESS_GATES_FAIL`.
+
+## Regrade: run_gates.sh at 19dff419
+
+Same G-code as the first grade. H2 and H3 partners are opposite-side live files.
+
+```
+PASS H1_handedness_apex_core PASS H1 left-input->LEFT right-input->RIGHT
+PASS H2_seam_bottom_apex_core_left
+PASS H3_surface_equal_apex_core_left W_median=0.0 W_frac_le_0.30=1.0 E 29191.36/29192.86 F_mean 1508.91/1508.91
+PASS H2_seam_bottom_apex_core_right
+PASS H3_surface_equal_apex_core_right W_median=0.0 W_frac_le_0.30=1.0 E 29273.50/29271.99 F_mean 1509.49/1509.49
+PASS H1_handedness_apex_light
+PASS H2_seam_bottom_apex_light_left
+PASS H3_surface_equal_apex_light_left W_median=0.0 W_frac_le_0.30=0.9543 E 24873.59/24869.09 F_mean 1466.67/1466.67
+PASS H2_seam_bottom_apex_light_right
+PASS H3_surface_equal_apex_light_right W_median=0.0 W_frac_le_0.30=0.968 E 24918.89/24915.89 F_mean 1467.31/1467.31
+PASS H1_handedness_apex_forge
+FAIL H2_seam_bottom_apex_forge_left open_only_layer_changes_off_bottom 308 > 305
+PASS H3_surface_equal_apex_forge_left W_median=0.0 W_frac_le_0.30=0.9666 E 1538054.85/1533852.19 F_mean 1824.70/1824.71
+FAIL H2_seam_bottom_apex_forge_right open_only_layer_changes_off_bottom 294 > 293
+PASS H3_surface_equal_apex_forge_right W_median=0.0 W_frac_le_0.30=0.9624 E 1542719.98/1542985.65 F_mean 1823.77/1823.77
+PASS H1_handedness_apex_bounce
+FAIL H2_seam_bottom_apex_bounce_left open_only_layer_changes_off_bottom 308 > 305
+PASS H3_surface_equal_apex_bounce_left W_median=0.0 W_frac_le_0.30=0.9666 E 1538054.85/1533852.19 F_mean 1824.70/1824.71
+FAIL H2_seam_bottom_apex_bounce_right open_only_layer_changes_off_bottom 294 > 293
+PASS H3_surface_equal_apex_bounce_right W_median=0.0 W_frac_le_0.30=0.9624 E 1542719.98/1542985.65 F_mean 1823.77/1823.77
+PASS H1h_heel_first_left LEFT
+materials gated: 4
+HANDEDNESS_GATES_FAIL
+```
+
+H2 counts that pass, cand vs opposite live: ApexCore both sides closed off bottom 0=0, layer-change off bottom 0=0, open ends 2=2, open-only layer changes 1=1, closed loops 436=436, layer changes 438=438. ApexLight left: closed off bottom 68=68, layer-change off bottom 53≤55, open ends 2=2, loops 436=436. ApexLight right: closed off bottom 76=76, layer-change off bottom 40=40. Config blocks are byte-identical on every H3 v3 pair. Layers 439/439 (core, light) and 481/481 (forge, bounce).
+
+### Independent path check
+
+`path_equal.py` expands modal G0/G1 to absolute extrusion XYZ and compares candidate left with live right (and the reverse) with no mirror. Belt-contact X centres match with shift 0.000 mm on every pair. Median nearest-extrusion distance is 0. The paths are not identical: extrusion counts differ by 1 to 5, and the farthest extrusion is 0.72–2.39 mm from the other file. At least 99.93% of extrusions are within 0.05 mm.
+
+| Pair | Extrusions cand/live | X centre mm | max nn mm (cand→live / live→cand) | fraction ≤ 0.05 mm |
+| --- | --- | --- | --- | --- |
+| core left vs live right | 84643/84642 | 140.375 | 1.090 / 0.956 | 0.9998 |
+| core right vs live left | 84957/84954 | 139.692 | 0.716 / 0.692 | 0.9999 |
+| light left vs live right | 69894/69890 | 140.314 | 1.325 / 1.094 | 0.9993 |
+| light right vs live left | 69917/69916 | 139.697 | 1.319 / 1.125 | 0.9996 |
+| forge left vs live right | 80529/80530 | 140.375 | 1.234 / 2.391 | 0.9995 |
+| forge right vs live left | 80445/80442 | 139.623 | 1.358 / 1.204 | 0.9996 |
+| bounce left vs live right | 80529/80530 | 140.375 | 1.234 / 2.391 | 0.9995 |
+| bounce right vs live left | 80445/80442 | 139.623 | 1.358 / 1.204 | 0.9996 |
+
+Heel-first ApexCore left matches toe-first candidate left on this check (84643 extrusions, max 1.090 mm vs live right). It is still the toe-first toolpath plus a timestamp.
+
+## History: first grade against a7d2d60 (H3 v1)
+
+The block below is the v1 runner. It compared each candidate with the mirror of the same-side live file. That measured Orca's own left/right non-equivariance. Kept as history. The v3 numbers above replace it as the verdict.
+
+H1 (physical foot) passes for apex_core, apex_light, apex_forge, and apex_bounce, toe-first left and right. The heel-first ApexCore left file also classifies LEFT. Under v1, H2 and H3 do not pass for every material.
 
 ## What was sliced
 
@@ -16,7 +80,7 @@ Independent production path, not the worker's G-code.
 - Gateway timeout overlay, copied from `validation/seam_fuse_gates/slice_all.sh`: `SLICE_GATEWAY_TIMEOUT_S` 260 → 880 in a throwaway `app.py` bind-mount only. The image, the repo, and production were not modified.
 - Forge and bounce were offered (HTTP 200) and were gated. Heel-first ApexCore left was accepted (HTTP 200, `X-Print-Direction: heel_first`).
 
-`bash validation/handedness_gates/run_gates.sh` on this checkout (gates match the worker tree; see below):
+v1 runner output, kept as history (`run_gates.sh` at `a7d2d60f`, same-side mirror comparison):
 
 ```
 PASS H1_handedness_apex_core
@@ -148,11 +212,11 @@ L1. Kendon 2026-10-24 9:33 PM MT (memory): he "confirmed the belt slicing chain 
 
 L2. Kendon 2026-10-24: "Text a user adds to a left or right foot must read correctly on screen and print correctly on that foot, which means true-handed STL export and no net mirror in the slicing chain." **PASS** on the sliced fixtures. H1 is LEFT for a left input and RIGHT for a right input on every material that was offered. No text-on-mesh fixture was in the frozen gates, so this line is scored from the foot the G-code classifier reports.
 
-L3. Kendon 2026-10-24: "No other fix, including the belt mirror fix, may change or lose any of his ApexLight settings." **PASS** for settings. The diff does not touch ApexLight presets or postprocess. H3 `C_config_identical` is true for both ApexLight sides. ApexLight surface geometry still fails H3 (median 1.06 mm); that is L5 / H3, and the config block itself matches live.
+L3. Kendon 2026-10-24: "No other fix, including the belt mirror fix, may change or lose any of his ApexLight settings." **PASS.** The diff does not touch ApexLight presets or postprocess. H3 v3 config blocks are byte-identical on both ApexLight sides, and the outer-wall median against the opposite live file is 0.0 mm.
 
-L4. Kendon 2026-11-20 11:38 AM MT: "The seams have always been on the bottom it's been a permanent rule since the beginning". **FAIL.** H2 fails ApexLight left (`layer_changes_off_bottom` 53 > 40), ApexLight right (`closed_off_bottom` 76 > 68), and Forge and Bounce left (open ends 156 > 149 and open-only layer changes 308 > 293). ApexCore both sides stay at 0 closed seams off the bottom.
+L4. Kendon 2026-11-20 11:38 AM MT: "The seams have always been on the bottom it's been a permanent rule since the beginning". **FAIL** under v3, on a narrower measurement than v1. Closed seams off the bottom are 0 for ApexCore, Forge, and Bounce, and ApexLight matches the opposite live file (68 and 76). H2 still fails Forge and Bounce because open-only layer changes off the bottom are 308 > 305 (left vs live right) and 294 > 293 (right vs live left). The v1 same-side failures (ApexLight 53 > 40 and 76 > 68) were the mirror pairing; they are history.
 
-L5. Kendon standing rule: locked surface quality, seams and layer changes (bottom only); no scope growth; copy Cura's method. **FAIL.** File scope stays inside placement, tests, and one CI job. The sliced surface is not the live file's belt mirror: H3 W and F fail on all 8 slices, and H2 fails on 4 of 8.
+L5. Kendon standing rule: locked surface quality, seams and layer changes (bottom only); no scope growth; copy Cura's method. **FAIL.** File scope stays inside placement, tests, and one CI job. H3 v3 passes all eight slices (outer-wall median 0.0 mm). H2 still fails four Forge/Bounce sides, so layer changes off the bottom are not held to the opposite live file. The full extrusion cloud is not identical either: median distance 0, but 1–5 extra or missing extrusions and a farthest point of 0.72–2.39 mm (`path_equal.py`).
 
 L6. Kendon 2026-11-24 4:18 PM MT (P0): MCP belt G-code labelled left is physically a right foot. Correct handedness is mandatory. **PASS** on these slices. Live no-op is still RIGHT for a left input. The candidate is LEFT for a left input and RIGHT for a right input, every offered material.
 
@@ -160,8 +224,8 @@ L7. Kendon 2026-11-24 4:28 PM MT: "(a) An automated handedness check in the gene
 
 L8. No merge or deploy without Kendon's explicit go. Draft PR only. **PASS** for this grade. This PR is a draft. The worker branch was not merged, deployed, or edited. No Railway change.
 
-L9. Frozen gate files are byte-identical to the PM's (SHA256SUMS); never edit, re-hash or skip a gate. If a gate cannot pass, stop and report why. **PASS.** SHA256SUMS checked out on the worker head and again in `run_gates.sh`. H2 and H3 cannot pass on this head; this report stops there and does not edit a gate.
+L9. Frozen gate files are byte-identical to the PM's (SHA256SUMS); never edit, re-hash or skip a gate. If a gate cannot pass, stop and report why. **PASS.** `sha256sum -c` at `19dff419` is OK. This regrade did not edit or re-hash the gates. H2 cannot pass on Forge and Bounce; that is reported above and the gate file was left as issued.
 
 ## Verdict
 
-**GRADE: FAIL** against the pinned gates at `a7d2d60f`. H1 passes and the placement diff is in the allowed files, with every config block byte-identical to live. H2 fails on ApexLight (both sides) and on Forge and Bounce left. H3 v1 fails on all eight toe-first slices. H3 v2, which landed on the gates branch during this grade and was not used as the pinned runner, passes ApexCore (median 0.0884 mm) and still fails ApexLight, Forge, and Bounce on wall distance. The frozen files on this branch were left at the pinned hashes.
+**GRADE: FAIL** on `run_gates.sh` at `19dff419`. H1, H1h, and H3 v3 pass for every offered material. H2 passes ApexCore and ApexLight and fails ApexForge and ApexBounce by 3 and 1 open-only layer changes off the bottom (308 > 305, 294 > 293) against the opposite live file. v1 and v2 numbers above are history. Frozen files were not edited. Do not merge.
