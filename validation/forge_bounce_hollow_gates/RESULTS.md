@@ -63,3 +63,32 @@ The seam-fuse job already fails on main `d935197976b7cdd2fa89ced4ff43930b0212959
 Same slice failures as main: G3 seam joint (orthocad J2 6 and J3 165 of 436; insole2 J3 1 of 92), G4 outer match vs pre-29 (orthocad perimeter p99 0.1682 mm and 15798.53 mm moved; insole2 175.52 mm moved), G7 orthocad print budget (91.29 min vs pre-29 86.46 min, filament 28686.5 mm vs 27008.2 mm). G1, G5, G6, and insole2 G7 pass. G8 compares `6d01dff5b6a174ec37468671579ee7d3bbafb230` to the head, not main to the head. On main it already rejects `server/` files from #48 and one workflow line main replaced (`python -m unittest ...` gained `tests.test_slice_jobs` and `tests.test_job_store`). On this head it also rejects the new `validation/forge_bounce_hollow_gates/` files because they are outside that frozen allow-list. `validation/seam_fuse_gates` and `validation/ref` are identical to that base.
 
 Not retried. The hashed gate files were not edited. Widening the frozen seam-fuse allow-list would change a gate this PR is not allowed to touch.
+
+## Worker `3225c7e6dd403f778cd4699d1a678048b81aaf2f`
+
+Overall **FAIL**. Draft [PR #51](https://github.com/kdho77/VertexSlice/pull/51) head after `baa2c087`. Graded with the frozen gates. Hashed gate files were not edited. `sha256sum -c SHA256SUMS` passed before this log line was added.
+
+This commit does not change the fill. Against `baa2c087` it edits only `tests/test_forefoot_hollow_band.py` and `.github/workflows/docker-server-proof.yml`. `server/forefoot_hollow_band.py` and `server/slice_engine.py` are the same bytes as `baa2c087`. Candidate slices are `server.slice_stl` on the orca-slicer binary from Actions run 45295959179, using this SHA's `server/`. Fixture `validation/test_models/orthocad_sample_top_insole.stl`, `apex-v2-insole-95a`, wall_loops 1, infill 26, toe_first, belt_insole_place. Live slices are the same binary and the live `server/` at `d935197`.
+
+ApexForge and ApexBounce produced the same gate numbers. ApexCore is the live residual and is byte-identical.
+
+| Gate | ApexForge | ApexBounce | ApexCore |
+|---|---|---|---|
+| Hollow L<=165 / L<=181 | PASS 0 / 0 | PASS 0 / 0 | reported 131 / 131 (not a pass line) |
+| G1 | FAIL 1474/5833 | FAIL 1474/5833 | reported 3/15493 (not a pass line) |
+| G2 | FAIL 2440/2968, belt 54.0%, dorsal 71.7% | FAIL, same | PASS 0/8406 |
+| Surface | PASS | PASS | PASS |
+| Filament | FAIL 24392.72 mm / 70.41 g -> 25401.40 mm / 73.32 g | FAIL, same | PASS 29857.71 mm / 86.18 g, increase 0 |
+| Slice time | PASS 4.387 s | PASS 4.17 s | PASS 8.681 s |
+| Identity | — | — | PASS |
+| Shared path | PASS | PASS | — |
+
+Hollow remaining after layer 165 is 4297 on both materials, max air 15.918 mm. That air is outside the required window.
+
+G1 is the live count, unchanged, and equal to `baa2c087` (1474/5833). It is not worse than live and it is not a regression against `baa2c087`. The frozen pass line is still 0, so the gate is FAIL. First residuals: layer 125 x-bin 265, layer 150 x-bin 214. G2 is 2440/2968. That is below the live 2776/2968 and equal to `baa2c087`, so it is not worse than live and not a regression against `baa2c087`. The frozen pass line is still 0. Belt air 54.009434%, dorsal air 71.731806%. First residuals: layer 165 x-bin 216, layer 151 x-bin 281, layer 141 x-bin 273.
+
+Filament increased 1008.68 mm / 2.91 g. Added extrusions are sparse infill (5384, none of another type, none more than 0.02 mm outside the live outline). 5097 of them are outside a previously hollow section of at least 3 mm. First samples: layer 129 sparse infill at (128.5, 0.747), (129.0, 0.749), (129.5, 0.750). The filament rule is still FAIL. This head did not confine the added fill.
+
+Surface lock holds: 36125 locked segments, delta 0, no closed-loop start moved, no layer change moved. ApexCore surface is 52857 locked segments, delta 0. ApexCore is 3349500 bytes after the stamp line is ignored (one stamp line on each file). The diff against `d935197` names both materials in one `apex_forge` / `apex_bounce` block, and both hollow pass lines match.
+
+Slice wall-clock on this machine is under the 260 s cap. ApexBounce on this slice is still M109 S225 and M190 S60. ApexForge is M109 S245 with no bed wait. This grade did not retune temperature or speed.
