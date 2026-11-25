@@ -65,6 +65,23 @@ Exit 1. Overall FAIL.
 | C ApexCore | PASS | Stamp-stripped SHA256 `0557d875933ce16a24151b2e4c6e88275528d44ce7b5b1b19cdd6bf6e12d7107` matches live. |
 | Overall | FAIL | G1 and G2. Forefoot hollow is 0 and the outer surface is unchanged. |
 
+## Second run of the same SHA
+
+A second host ran `fill_forefoot_hollow` from `83c943ba` on the same live file `f0b78d8dc4f57b8acee18cf9929f60ca4eaa44b8b796a9cbba608c30cdcab3e1`. Fill time 1.357 s. Candidate sha256 `88e926421e938e212eecc8340d526063998a1ffd54bc3741f2c09bea2bd04dd9`, 3117489 bytes. The function reported hollow_before 1387, hollow_after 0, 35 layers, added 71.14956 mm. `run_gates.py` with `--slice-seconds 160.029` (158.672 + 1.357) exited 1. The gate counts match the table above: H 0 / 0 / total 4296 / max air 11.633 mm; G1 14377 / 14813, median gap 0.340 mm; G2 8604 / 9003, belt air 91.236%, dorsal air 81.806%; S 30774 walls, 436 seams, 0 moved; F 26298.90 mm, 75.91 g, increase 71.15 mm, 1630 added extrusions; C normalized sha256 `0557d875933ce16a24151b2e4c6e88275528d44ce7b5b1b19cdd6bf6e12d7107`.
+
+Line check on that candidate, outside the frozen script: 0 live non-footer lines missing, in order. 878 `G1 Z` / `;LAYER_CHANGE` / `;Z:` lines byte-identical. 312 first Outer wall and Overhang wall extrusions byte-identical. 2186 inserted lines: 70 `;TYPE:Sparse infill`, 70 `;WIDTH` comments, 2043 `G1`, and the three filament footer lines. Added extrusion events 1630, 0 with a sample outside a hollow column. Added travel events 194, all typed Sparse infill, 0 change Z. 98 of those travels have a sample outside a previously hollow column. Layer 130 travels from (149.13, 2.12) to (119.48, 1.52), and 97 of 119 samples on that segment are outside.
+
+| Required bar | Result | Evidence |
+|---|---|---|
+| Every live seam and layer-change station byte-identical | PASS | Station lines and first outer extrusions above. Surface gate: 0 seams added or missing, 0 layer changes moved. |
+| No new off-bottom layer changes | PASS | `layer_changes_moved` 0. `layer_changes_off_bottom` 0. No added travel changes Z. |
+| Forefoot hollow 0 at the frozen layers | PASS | `forefoot_165` 0. `physical_count` 0. 4296 hollow columns remain above layer 165. |
+| Added or altered moves only infill or bond inside previously hollow forefoot sections | FAIL | No live motion line was altered. Added extrusions stay inside hollow columns. 98 of 194 added Sparse infill travels do not. |
+| Filament rule | PASS | Frozen F. Increase 71.15 mm. 0 outside the outline. |
+| G1 / G2 no worse than live (14377/14813 and 8648/9003) | PASS | G1 equal. G2 8604 / 9003. The frozen gates still fail both, because their pass line is 0. |
+| Slice time not worse than 260 s | PASS | 159.956 s on the first host. 160.029 s on the second. PM-host equivalent 177.343 s. |
+| ApexCore byte-identical to live, stamp exempt | PASS | Frozen C. The SHA does not change `server/chains/apex_core.py`. |
+
 ## Rule compliance
 
 This agent wrote gates only. It did not implement a hollow fill and did not change any G-code that would be printed.
@@ -124,3 +141,71 @@ PASS. No fill was implemented.
 **Header: FINISH A draft gates PR, B this rule report, C worker grade when the worker exists.**
 
 A and B are this PR. C is the worker table above: SHA `83c943ba9d36549703ad5f7d57ad177ce5022be7` overall FAIL. G1 and G2 remain unbonded. H, S, F, T, and C pass.
+
+## Rule compliance for the grade of 83c943ba
+
+This section is the grade turn. It did not implement a fill and it did not edit a hashed gate file.
+
+**HARD PROHIBITION.** "you may not change the outer surface, seams, layer-change placement, or surface quality. Seams and layer changes stay on the bottom (plantar/belt) face. You may not deteriorate surface quality. If the fix would require changing any of those, STOP and report; do not work around it."
+
+PASS for this grader. The only edit on this branch is `RESULTS.md`. The candidate leaves the locked surface in place: 30774 wall segments unchanged, 436 seams unchanged, 0 layer changes moved, 878 station lines byte-identical. The fill does not widen skins. G1 staying at 14377 is the residual of not doing that widen.
+
+**Kendon 2026-11-20 11:38 AM MT:** "The seams have always been on the bottom it's been a permanent rule since the beginning"
+
+PASS. The candidate's 436 closed seam starts match live. 0 are newly off the plantar face.
+
+**Kendon 2026-11-20 12:59 PM MT:** "print surface quality is locked permanently. Never let any agent or change put seams or layer changes on the top surface or sides, and never touch surface quality."
+
+PASS. 0 layer changes moved. 0 layer changes off the plantar face. Outer-wall paths: 0 missing, 0 added. The inserted lines are Sparse infill headers, width comments, G1 moves, and the three filament footer lines.
+
+**Kendon 2026-11-18 t2268u:** "Surface quality cannot be deteriorated"
+
+PASS. The wall, seam, and layer-change stations match live.
+
+**Kendon 2026-11-18:** "no production G-code goes out while hollow spots remain; every top skin must bond to the bottom skin either by direct contact or through infill/solid between them (infill is acceptable)."
+
+FAIL as a finished bond. This draft is not production G-code. Forefoot hollow on layers <= 165 is 0. G1 is still 14377 / 14813 unbonded. G2 is still 8604 / 9003 unbonded. 4296 hollow columns remain above layer 165. Nothing was merged.
+
+**Kendon 2026-11-21 8:41-8:45 PM MT:** "slicer and geometry briefs must not grow scope. Solve only the defect Kendon has observed; anything else comes to him as a question first. Copy Cura's known method rather than inventing new constructions."
+
+PASS for scope. The worker copied `_band_paths` and `_band_block` and applied them only on the ApexLight orthocad forefoot. ApexCore, Apex Bounce settings, and `insole_sample` are not on this path. The question this leaves is that G1 does not reach 0 unless skins are widened, and widening is the change that moves the bottom edge. This grader did not invent a second construction.
+
+**Kendon 2026-11-06:** "Apex Bounce = settings identical to Apex Core except extruder 220 C (Core 225 C), print speed 0.8x Core, heated bed 70 C."
+
+PASS. No profile was edited. Bounce was not resliced.
+
+**Header:** "MODEL: grok-4.7 fast=false context 256k (slicer geometry: independent grade of the ApexLight retry against frozen #50 gates)"
+
+PASS. This turn graded. It did not implement the fill.
+
+**Header:** "REPO: kdho77/VertexSlice"
+
+PASS. The grade is in this repository.
+
+**Header:** "BASE: draft PR #50, frozen hashed gates at cb4741c5d623307eda085a8aa217eb792933afde (SHA256SUMS). Do not rewind or rewrite those hashed files. A new ApexLight worker will open a draft PR from main d935197976b7cdd2fa89ced4ff43930b0212959f. Grade that new head. If the worker STOPs with no PR, record that as the grade (infeasible without moving layer changes) without inventing a candidate."
+
+PASS. The hashed files are the freeze at `cb4741c5`. `sha256sum -c SHA256SUMS` in `validation/apexlight_hollow_gates/` passes, and `RESULTS.md` is not in that list. The worker opened draft PR #54 from that main SHA. It did not STOP. No candidate was invented.
+
+**Header:** "PUSH: commits on the existing #50 branch only, keep the PR draft and the title \"[GATES ONLY - DO NOT MERGE]\". Only RESULTS.md (and a handoff comment) may change. Never edit hashed gate files under validation/apexlight_hollow_gates/ or whatever tree #50 froze (prove SHA256SUMS still passes excluding RESULTS.md). Never push to the worker branch or to #49/#51, never push/merge main, deploy, Railway, printers. Do not merge."
+
+PASS. This commit changes only `RESULTS.md`. The push is this branch. PR #50 stays draft and keeps that title.
+
+**Header:** "MUST-MATCH: hashed #50 gates stay frozen and unmodified; no-op and bad-change proofs already recorded stay valid; the new ApexLight head (if any) is graded with those same gates. Required bars: every live seam and layer-change station byte-identical; no new off-bottom layer changes; forefoot hollow 0 at the frozen layers; added/altered moves only infill/bond inside previously hollow forefoot sections; filament rule; G1/G2 no worse than live (14377/14813 and 8648/9003); slice time not worse than 260 s; ApexCore byte-identical to live (stamp exempt)."
+
+PASS for the freeze and the method. The no-op table was not rewritten. The required-bar table is above. The move bar fails: 98 added travels are not inside previously hollow columns. The frozen script's overall result is FAIL because G1 and G2 are not 0.
+
+**Header:** "FILES: RESULTS.md on PR #50 only (grade log, not hashed). Read-only everything else, including all hashed gate scripts. Don't explore beyond. Do not modify server/, tests/, or the worker's code."
+
+PASS. The worker tree was read from a detached worktree at `83c943ba`. Nothing under `server/` or `tests/` was written on this branch.
+
+**Header:** "TESTS: targeted only; CI is the full run. Run the frozen #50 gates on the new worker SHA. Record PASS/FAIL per gate with measured values vs thresholds in RESULTS.md. If the worker has not opened a PR yet, wait for it (poll; do not edit hashed files). If it STOPs with no PR, write that outcome into RESULTS.md and stop."
+
+PASS. The PR was open. `run_gates.py` exit 1 is recorded above.
+
+**Header:** "CAP: 0/3"
+
+PASS. No fill attempt was made by this agent.
+
+**Header:** "ONE: Independent grade of the new ApexLight worker head (or a documented STOP) using the already frozen #50 gates at cb4741c5; do not edit those gates; do not implement the fill."
+
+PASS. One grade of `83c943ba`. No fill was written by this agent.
