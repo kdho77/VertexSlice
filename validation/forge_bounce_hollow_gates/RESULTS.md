@@ -44,10 +44,6 @@ Filament increased 1008.68 mm / 2.91 g. Added extrusions are sparse infill (5384
 
 Surface lock holds: 36125 locked segments, delta 0, no closed-loop start moved, no layer change moved. ApexCore is 3349500 bytes after the stamp line is ignored. The diff names both materials in one `apex_forge` / `apex_bounce` block, and both hollow pass lines match.
 
-## Worker `3225c7e6dd403f778cd4699d1a678048b81aaf2f`
-
-Overall **FAIL**, same grade. This commit is one ahead of `baa2c087` on [#51](https://github.com/kdho77/VertexSlice/pull/51). It changes `.github/workflows/docker-server-proof.yml` and `tests/test_forefoot_hollow_band.py` only. `server/forefoot_hollow_band.py`, `server/slice_engine.py`, `server/chains/`, and `scripts/g2b_heelmod/` are identical to `baa2c087`, so the slices graded above are the slices this head produces. Shared path still PASS on the diff against `d935197`. Hashed gate files were not edited.
-
 ## CI on the gates head
 
 Tested commit `e359a446d8e382c8d9472bf12e63090cc303daf2`. Actions run [45508570872](https://github.com/kdho77/VertexSlice/actions/runs/45508570872).
