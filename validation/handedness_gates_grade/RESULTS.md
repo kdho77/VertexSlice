@@ -64,6 +64,40 @@ H2 counts that pass, cand vs opposite live: ApexCore both sides closed off botto
 
 Heel-first ApexCore left matches toe-first candidate left on this check (84643 extrusions, max 1.090 mm vs live right). It is still the toe-first toolpath plus a timestamp.
 
+## Noise floor
+
+Live image only (`ghcr.io/kdho77/vertexslice-server@sha256:8cac1d54c5e1a12f4693412c32fe40dd9c5682b9279e2b1d38f1225760aca579`). No candidate. Frozen `h2_seam_bottom.sh` at `19dff419`. This does not change the verdict: **GRADE: FAIL** still, because Forge and Bounce H2 fail the frozen rule by 308 > 305 and 294 > 293.
+
+PR #52's head at the time of this measurement is `e1d535910758c8dff731efe6489eab7d0ccde510`. These slices do not regrade that head. The FAIL above is still the v3 result on `0415b656`.
+
+### (a) Identical requests, sliced twice
+
+Each repeat is byte-identical to its first run, including the timestamp, and the body matches the live file used in the v3 grade. H2 is run2 against run1. Open-only layer changes off the bottom do not move. Extrusion counts do not move.
+
+| Material | Side | open-only layer changes run2 / run1 | Extrusions run2 / run1 | total E run2 / run1 | H2 |
+| --- | --- | --- | --- | --- | --- |
+| apex_forge | left | 293 / 293 | 80442 / 80442 | 24454.58748 / 24454.58748 | PASS |
+| apex_forge | right | 305 / 305 | 80530 / 80530 | 24353.18722 / 24353.18722 | PASS |
+| apex_bounce | left | 293 / 293 | 80442 / 80442 | 24454.58748 / 24454.58748 | PASS |
+| apex_bounce | right | 305 / 305 | 80530 / 80530 | 24353.18722 / 24353.18722 | PASS |
+
+The grade's live partners are these same counts: live right is 305, live left is 293. A second identical slice does not produce +3 or +1.
+
+### (b) Float noise, +1e-5 mm on every vertex X
+
+RIGHT fixture, winding unchanged. Packed as float32, 210099 of 224820 vertex X values actually change. Sliced on live and compared with that material's right run1.
+
+| Material | open-only layer changes perturbed / run1 | open ends | Extrusions perturbed / run1 | total E perturbed / run1 | H2 |
+| --- | --- | --- | --- | --- | --- |
+| apex_forge | 305 / 305 | 156 / 156 | 80524 / 80530 (Δ −6) | 24352.02774 / 24353.18722 (Δ −1.15948) | PASS |
+| apex_bounce | 305 / 305 | 156 / 156 | 80524 / 80530 (Δ −6) | 24352.02774 / 24353.18722 (Δ −1.15948) | PASS |
+
+The open-only counter stays 305. Extrusion count does move, by 6.
+
+### (c) ApexBounce is a separate profile
+
+It is not byte-identical to ApexForge. The new live files differ in the config block (Forge: nozzle 245 °C, bed off; Bounce: nozzle 225 °C, bed 60 °C, plus `M190 S60`). G0/G1 motion is identical (left 98476 lines, right 99375 lines). H2 counters and extrusion counts match Forge on every row above, so the Bounce noise floor is the same measurement.
+
 ## History: first grade against a7d2d60 (H3 v1)
 
 The block below is the v1 runner. It compared each candidate with the mirror of the same-side live file. That measured Orca's own left/right non-equivariance. Kept as history. The v3 numbers above replace it as the verdict.
@@ -228,4 +262,4 @@ L9. Frozen gate files are byte-identical to the PM's (SHA256SUMS); never edit, r
 
 ## Verdict
 
-**GRADE: FAIL** on `run_gates.sh` at `19dff419`. H1, H1h, and H3 v3 pass for every offered material. H2 passes ApexCore and ApexLight and fails ApexForge and ApexBounce by 3 and 1 open-only layer changes off the bottom (308 > 305, 294 > 293) against the opposite live file. v1 and v2 numbers above are history. Frozen files were not edited. Do not merge.
+**GRADE: FAIL** on `run_gates.sh` at `19dff419`. H1, H1h, and H3 v3 pass for every offered material. H2 passes ApexCore and ApexLight and fails ApexForge and ApexBounce by 3 and 1 open-only layer changes off the bottom (308 > 305, 294 > 293) against the opposite live file. The live-only noise floor of that counter is 0 on a repeated identical slice and 0 under a +1e-5 mm X perturbation (extrusion count does move, by 6). v1 and v2 numbers above are history. Frozen files were not edited. Do not merge.
