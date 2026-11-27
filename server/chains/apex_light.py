@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from server.chains import CHAIN_APEX_LIGHT
+from server.chains.apex_light_forefoot_fill import fill_forefoot_hollow
 from tools.belt_pp.pipeline import finalize_apex_light
 
 REPO = Path(__file__).resolve().parents[2]
@@ -124,6 +125,9 @@ def run_apex_light(
 
         text = toptidy.fix(text)
     text = finalize_apex_light(text)
+    # Cura's sparse gyroid, only inside forefoot columns that are already hollow.
+    # Walls, seams, and layer-change lines are copied unchanged.
+    text, _fill = fill_forefoot_hollow(text)
     out.write_text(text, encoding="utf-8", errors="surrogateescape")
     stats = {
         "chain": CHAIN_APEX_LIGHT,
