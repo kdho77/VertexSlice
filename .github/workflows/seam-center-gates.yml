@@ -1,0 +1,41 @@
+# Frozen seam-center gates. Additive: no existing job is renamed or skipped.
+# The manifest is the grader contract. Slicing BASE and proving P1-P3 is local
+# (docs/proof/seam-center-gates/PROOF.md); this job checks that the frozen
+# files still hash and still compile.
+name: Seam-center gates
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'validation/seam_center_gates/**'
+      - '.github/workflows/seam-center-gates.yml'
+      - 'docs/proof/seam-center-gates/**'
+  push:
+    branches:
+      - cursor/seam-center-gates-1121
+    paths:
+      - 'validation/seam_center_gates/**'
+      - '.github/workflows/seam-center-gates.yml'
+      - 'docs/proof/seam-center-gates/**'
+
+permissions:
+  contents: read
+
+jobs:
+  seam_center_gates:
+    name: Seam-center gates manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Frozen manifest and syntax
+        run: |
+          set -euo pipefail
+          cd validation
+          sha256sum -c seam_center_gates/SHA256SUMS
+          python3 -m py_compile seam_center_gates/*.py
+          bash -n seam_center_gates/run_center_gates.sh

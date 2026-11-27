@@ -1,0 +1,25 @@
+== manifest
+seam_center_gates/a1_center.py: OK
+seam_center_gates/a2_forefoot.py: OK
+seam_center_gates/a3_smooth.py: OK
+seam_center_gates/a4_layer_change.py: OK
+seam_center_gates/a5_sample.py: OK
+seam_center_gates/a6_path.py: OK
+seam_center_gates/a7_time.py: OK
+seam_center_gates/a8_apexlight.py: OK
+seam_center_gates/a9_crossings.py: OK
+seam_center_gates/g1_bottom.py: OK
+seam_center_gates/run_center_gates.sh: OK
+seam_center_gates/scg_common.py: OK
+FAIL A1 orthocad_max_dx_mm=1.5595 orthocad_off=1 orthocad_exempt=0 orthocad_base_exempt=0 orthocad_loops=436 insole2_max_dx_mm=0.0000 insole2_off=0 insole2_exempt=0 insole2_base_exempt=0 insole2_loops=92
+PASS A2 mode=layer loops=39 off=0 max_dx_mm=0.0005 exempt=0 base_exempt=0 along_min=71.7600 along_max=106.7194
+FAIL A3 orthocad_fail_pairs=1 orthocad_max_seam_step_mm=22.4790 orthocad_max_excess_mm=0.2165 orthocad_scored=435 insole2_fail_pairs=0 insole2_max_seam_step_mm=0.0000 insole2_max_excess_mm=0.0000 insole2_scored=91
+PASS A4 orthocad_fail=0 orthocad_open_off=1 orthocad_base_open_off=1 orthocad_max_dx_mm=0.0000 orthocad_max_bottom_mm=2.7987 orthocad_n=438 insole2_fail=0 insole2_open_off=0 insole2_base_open_off=0 insole2_max_dx_mm=0.0000 insole2_max_bottom_mm=0.4000 insole2_n=94
+PASS A5 loops=92 base_loops=92 max_dx_mm=0.0000 moved=0 base_x_set=140.0
+FAIL A6 orthocad_off_path=0 orthocad_missing=1453 orthocad_e_bad=1069 orthocad_f_bad=352 orthocad_seq_bad=10 orthocad_inner_off=0 orthocad_fan_diff=-1 insole2_off_path=0 insole2_missing=0 insole2_e_bad=0 insole2_f_bad=0 insole2_seq_bad=0 insole2_inner_off=0 insole2_fan_diff=-1
+PASS A7 orthocad_time_pct=-0.0175 orthocad_filament_pct=-0.0000 orthocad_time_s=5326.0495 orthocad_base_time_s=5326.9806 insole2_time_pct=0.0000 insole2_filament_pct=0.0000 insole2_time_s=2044.3135 insole2_base_time_s=2044.3135
+PASS A8 orthocad_diff_byte=-1 insole2_diff_byte=-1
+PASS A9 orthocad_perimeter_crossings=0 orthocad_surface_crossings=0 orthocad_seam_block_crossings=0 insole2_perimeter_crossings=0 insole2_surface_crossings=0 insole2_seam_block_crossings=0
+PASS G1 orthocad_closed_off=0 orthocad_lc_off=0 orthocad_open_off=2 insole2_closed_off=0 insole2_lc_off=0 insole2_open_off=0
+SEAM-CENTER GATES: FAIL
+EXIT:1
