@@ -71,15 +71,16 @@ def slice_stl(
     """
     Run headless slice. Returns (gcode_path, stats dict with elapsed_s, peak_rss_kb).
 
-    ApexCore and ApexLight with an explicit ``material`` run the production
-    chain. Callers that omit ``material`` (h_curaE's inner slice) stay on the
-    single orca-slicer path so the chain cannot recurse.
+    ApexCore, ApexBounce, and ApexLight with an explicit ``material`` run the
+    production chain. ApexBounce is the ApexCore g2b chain plus nozzle, bed,
+    and print-speed overrides. Callers that omit ``material`` (h_curaE's inner
+    slice) stay on the single orca-slicer path so the chain cannot recurse.
     """
     stl_path = Path(stl_path).resolve()
     if not stl_path.is_file():
         raise FileNotFoundError(stl_path)
 
-    if material in ("apex_core", "apex_light"):
+    if material in ("apex_core", "apex_bounce", "apex_light"):
         from server.chains import run_material_chain
 
         return run_material_chain(

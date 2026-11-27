@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -67,7 +68,7 @@ def test_registry_and_api_contract() -> list[str]:
     expect = {
         "apex_core": ("ApexCore", 225, 0),
         "apex_forge": ("ApexForge", 245, 0),
-        "apex_bounce": ("ApexBounce", 225, 60),
+        "apex_bounce": ("ApexBounce", 220, 70),
         "apex_light": ("ApexLight", 260, 0),
     }
     if set(mats) != set(expect):
@@ -111,6 +112,28 @@ def test_registry_and_api_contract() -> list[str]:
         fails.append("apex_light did not select ApexLight.json")
     elif not light.process_overrides or light.process_overrides.get("wall_loops") != "2":
         fails.append("apex_light missing 2-wall process override")
+    bounce = get_profile("apex-v2-insole-hard", material="apex_bounce")
+    core_hard = get_profile("apex-v2-insole-hard", material="apex_core")
+    bounce_spec = resolve_material("apex_bounce")
+    core_spec = resolve_material("apex_core")
+    if bounce is None or core_hard is None:
+        fails.append("missing bounce or core hard profile")
+    elif bounce.filament != FILAMENT_95A or bounce.filament != core_hard.filament:
+        fails.append("apex_bounce must use the Core filament (ApexBounce.json is bed 60)")
+    elif bounce.process_overrides != core_hard.process_overrides:
+        fails.append("apex_bounce process overrides differ from apex_core")
+    elif bounce.filament_overrides != core_hard.filament_overrides:
+        fails.append("apex_bounce filament overrides differ from apex_core")
+    elif bounce.machine_overrides != core_hard.machine_overrides:
+        fails.append("apex_bounce machine overrides differ from apex_core")
+    elif bounce.target_first_layer_y_mm != core_hard.target_first_layer_y_mm:
+        fails.append("apex_bounce first-layer target differs from apex_core")
+    elif bounce.gcode_postprocess != core_hard.gcode_postprocess:
+        fails.append("apex_bounce post-process differs from apex_core")
+    if bounce_spec.default_wall_loops != core_spec.default_wall_loops:
+        fails.append("apex_bounce wall loops differ from apex_core")
+    if (bounce_spec.nozzle_c, bounce_spec.bed_c) != (220, 70):
+        fails.append(f"apex_bounce spec temps {bounce_spec.nozzle_c}/{bounce_spec.bed_c}")
     return fails
 
 
@@ -189,7 +212,15 @@ def test_profile_temps_and_print_start() -> list[str]:
         spec = resolve_material(mid)
         flat = _flatten(spec.filament)
         nozzle, bed = filament_temps(flat)
-        if (nozzle, bed) != (spec.nozzle_c, spec.bed_c):
+        if mid == "apex_bounce":
+            # ApexBounce.json conflicts with Core (bed 60, notes 225/60).
+            # The registry filament is Core 95A; the chain applies 220/70.
+            if spec.filament != FILAMENT_95A:
+                fails.append("apex_bounce flatten target is not the Core filament")
+            if (nozzle, bed) != (225, 0):
+                fails.append(f"apex_bounce base filament temps {nozzle}/{bed} != Core 225/0")
+            nozzle, bed = spec.nozzle_c, spec.bed_c
+        elif (nozzle, bed) != (spec.nozzle_c, spec.bed_c):
             fails.append(f"{mid} flatten temps {nozzle}/{bed} != {spec.nozzle_c}/{spec.bed_c}")
         start_for_mid = spec.machine_overrides.get("machine_start_gcode") or start
         rendered = render_expected_start_gcode(start_for_mid, nozzle, bed, str(machine.get("gcode_flavor") or ""))
@@ -201,6 +232,45 @@ def test_profile_temps_and_print_start() -> list[str]:
             fails.append(f"{mid} leftover nozzle placeholder")
         if not start_for_mid.startswith("PRINT_START\n"):
             fails.append(f"{mid} start gcode PRINT_START call line changed")
+    return fails
+
+
+def _slice_bounce_chain(spec) -> list[str]:
+    """Live Bounce slice through the Core g2b script, with after-lock overrides."""
+    from server.chains.apex_core import bounce_after_lock
+
+    fails: list[str] = []
+    out_name = "bounce.gcode"
+    with tempfile.TemporaryDirectory(prefix="mat_apex_bounce_") as td:
+        outdir = Path(td)
+        dest = outdir / out_name
+        env = os.environ.copy()
+        env["VS_AFTER_LOCK_JSON"] = json.dumps(bounce_after_lock())
+        env["PYTHONPATH"] = str(REPO) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+        r = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "scripts/g2b_heelmod/slice_apexcore_g2b.py"),
+                "core",
+                str(outdir),
+                str(MODEL),
+                str(dest),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            env=env,
+            cwd=str(REPO),
+            errors="replace",
+        )
+        if r.returncode != 0:
+            return [f"apex_bounce slice exit {r.returncode}: {(r.stdout + r.stderr)[-800:]}"]
+        if not dest.is_file():
+            return ["apex_bounce no gcode"]
+        text = dest.read_text(encoding="utf-8", errors="replace")
+        fails.extend(f"apex_bounce: {f}" for f in assert_material_temps_in_gcode(text, spec.nozzle_c, spec.bed_c))
+        if f"M104 S{spec.nozzle_c}" not in text and f"M109 S{spec.nozzle_c}" not in text:
+            fails.append(f"apex_bounce sliced gcode missing M104/M109 S{spec.nozzle_c}")
     return fails
 
 
@@ -218,6 +288,9 @@ def test_sliced_gcode_temps() -> list[str]:
     core_text = None
     for mid in ("apex_core", "apex_forge", "apex_bounce", "apex_light"):
         spec = resolve_material(mid)
+        if mid == "apex_bounce":
+            fails.extend(_slice_bounce_chain(spec))
+            continue
         with tempfile.TemporaryDirectory(prefix=f"mat_{mid}_") as td:
             outdir = Path(td)
             flat_m = flatten_profile(MACHINE, outdir / "machine.json")
