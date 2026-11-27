@@ -1,0 +1,169 @@
+{
+ "layer_change_off_bottom": {
+  "gate": "surface",
+  "locked_segments": 36125,
+  "live_locked_segments": 36125,
+  "locked_delta": 0,
+  "closed_off_bottom": 0,
+  "starts_moved": 0,
+  "layer_changes_bad": 1,
+  "examples_off_bottom": [],
+  "examples_layer_change": [
+   {
+    "layer": 10,
+    "x": 116.202,
+    "y": 25.0,
+    "above_plantar_mm": 25.0
+   }
+  ],
+  "result": "FAIL",
+  "failures": [
+   "1 layer changes left the plantar face or the live station"
+  ]
+ },
+ "outer_wall_moved": {
+  "gate": "surface",
+  "locked_segments": 36125,
+  "live_locked_segments": 36125,
+  "locked_delta": 4,
+  "closed_off_bottom": 0,
+  "starts_moved": 0,
+  "layer_changes_bad": 0,
+  "examples_off_bottom": [],
+  "examples_layer_change": [],
+  "result": "FAIL",
+  "failures": [
+   "4 locked wall/skin segments differ from live (outer, overhang, inner)"
+  ]
+ },
+ "core_byte_flipped": {
+  "gate": "core_identity",
+  "cand_bytes": 3349500,
+  "live_bytes": 3349500,
+  "stamp_lines_cand": 1,
+  "stamp_lines_live": 1,
+  "result": "FAIL",
+  "failures": [
+   "ApexCore differs from live at line 223 after the stamp strip (3349438 vs 3349438 bytes)"
+  ]
+ },
+ "bead_outside_outline": {
+  "gate": "filament",
+  "live_mm": 24392.72,
+  "live_g": 70.41,
+  "cand_mm": 24392.72,
+  "cand_g": 70.41,
+  "increase_mm": 0.0,
+  "increase_g": 0.0,
+  "outside_samples": 12,
+  "outline_tol_mm": 0.02,
+  "added_extrusions": 1,
+  "added_bad_type": 0,
+  "added_outside_hollow": 1,
+  "examples_outside": [
+   {
+    "layer": 145,
+    "x": 103.789,
+    "y": 13.9892,
+    "dist_mm": 12.0653,
+    "line": 8246,
+    "type": "Sparse infill",
+    "why": "outward of the BASE outer edge"
+   },
+   {
+    "layer": 145,
+    "x": 103.7034,
+    "y": 13.8548,
+    "dist_mm": 11.9369,
+    "line": 8246,
+    "type": "Sparse infill",
+    "why": "outward of the BASE outer edge"
+   },
+   {
+    "layer": 145,
+    "x": 104.2099,
+    "y": 13.7212,
+    "dist_mm": 11.7778,
+    "line": 8246,
+    "type": "Sparse infill",
+    "why": "outward of the BASE outer edge"
+   },
+   {
+    "layer": 145,
+    "x": 104.1243,
+    "y": 13.5867,
+    "dist_mm": 11.6463,
+    "line": 8246,
+    "type": "Sparse infill",
+    "why": "outward of the BASE outer edge"
+   },
+   {
+    "layer": 145,
+    "x": 104.6308,
+    "y": 13.4531,
+    "dist_mm": 11.5003,
+    "line": 8246,
+    "type": "Sparse infill",
+    "why": "outward of the BASE outer edge"
+   },
+   {
+    "layer": 145,
+    "x": 104.5451,
+    "y": 13.3187,
+    "dist_mm": 11.3678,
+    "line": 8246,
+    "type": "Sparse infill",
+    "why": "outward of the BASE outer edge"
+   }
+  ],
+  "examples_bad_type": [],
+  "examples_outside_hollow": [
+   {
+    "layer": 145,
+    "type": "Sparse infill",
+    "x": 123.317,
+    "y": 1.457
+   }
+  ],
+  "result": "FAIL",
+  "failures": [
+   "12 forefoot bead samples lie more than 0.02 mm outside the live outer outline",
+   "1 added forefoot extrusions are outside a previously hollow >=3 mm section"
+  ]
+ },
+ "slice_time_261": {
+  "gate": "slice_time",
+  "seconds": 261.0,
+  "cap_s": 260.0,
+  "result": "FAIL",
+  "failures": [
+   "slice time 261.000 s is worse than 260 s"
+  ]
+ },
+ "forge_only_hollow_pass": {
+  "gate": "shared_path",
+  "forge_hollow_pass": true,
+  "bounce_hollow_pass": false,
+  "result": "FAIL",
+  "failures": [
+   "hollow pass line reached on ApexForge only; the fill is not on the shared path"
+  ]
+ },
+ "forge_only_diff": {
+  "gate": "shared_path",
+  "forge_hollow_pass": false,
+  "bounce_hollow_pass": false,
+  "result": "FAIL",
+  "failures": [
+   "added lines name ApexForge and not ApexBounce"
+  ]
+ },
+ "both_hollow_pass": {
+  "gate": "shared_path",
+  "forge_hollow_pass": true,
+  "bounce_hollow_pass": true,
+  "result": "PASS",
+  "failures": []
+ },
+ "result": "REJECTED"
+}

@@ -1,0 +1,417 @@
+{
+ "materials": {
+  "apex_forge": {
+   "hollow": {
+    "gate": "hollow",
+    "tool_mm": 0.25,
+    "section_min_mm": 3.0,
+    "air_min_mm": 1.0,
+    "layer_height_mm": 0.42,
+    "window_165": 165,
+    "window_equivalent": 181,
+    "hollow_l165": 177,
+    "max_air_l165_mm": 1.627476,
+    "hollow_equivalent": 361,
+    "max_air_equivalent_mm": 3.520268,
+    "hollow_total": 4658,
+    "hollow_after_165": 4481,
+    "max_air_total_mm": 15.918268,
+    "result": "FAIL",
+    "failures": [
+     "forefoot hollow L<=165 is 177; 0 required",
+     "forefoot hollow L<=181 (physical equivalent) is 361; 0 required"
+    ]
+   },
+   "G1_thin_bond": {
+    "gate": "G1_thin_bond",
+    "forefoot_layers": "1-165",
+    "bead_height_envelope_mm": 0.46,
+    "thin_columns": 5833,
+    "unbonded": 1474,
+    "bonded": 4359,
+    "examples": [
+     {
+      "layer": 125,
+      "x_bin": 265
+     },
+     {
+      "layer": 150,
+      "x_bin": 214
+     },
+     {
+      "layer": 129,
+      "x_bin": 276
+     },
+     {
+      "layer": 132,
+      "x_bin": 281
+     },
+     {
+      "layer": 145,
+      "x_bin": 220
+     },
+     {
+      "layer": 125,
+      "x_bin": 278
+     },
+     {
+      "layer": 143,
+      "x_bin": 295
+     },
+     {
+      "layer": 136,
+      "x_bin": 292
+     }
+    ],
+    "result": "FAIL",
+    "failures": [
+     "1474 unbonded thin columns (skin overlap < 0.05 mm); 0 required"
+    ]
+   },
+   "G2_thick_bond": {
+    "gate": "G2_thick_bond",
+    "forefoot_layers": "1-165",
+    "bead_height_envelope_mm": 0.46,
+    "thick_columns": 2968,
+    "unbonded": 2776,
+    "belt_air_pct": 65.431267,
+    "dorsal_air_pct": 80.896226,
+    "examples": [
+     {
+      "layer": 132,
+      "x_bin": 268
+     },
+     {
+      "layer": 165,
+      "x_bin": 216
+     },
+     {
+      "layer": 151,
+      "x_bin": 281
+     },
+     {
+      "layer": 141,
+      "x_bin": 273
+     },
+     {
+      "layer": 133,
+      "x_bin": 269
+     },
+     {
+      "layer": 152,
+      "x_bin": 282
+     },
+     {
+      "layer": 144,
+      "x_bin": 278
+     },
+     {
+      "layer": 157,
+      "x_bin": 217
+     }
+    ],
+    "result": "FAIL",
+    "failures": [
+     "2776 of 2968 columns 3-6 mm are unbonded (need overlap >= 0.15 mm through the stack)"
+    ]
+   },
+   "surface": {
+    "gate": "surface",
+    "locked_segments": 36125,
+    "live_locked_segments": 36125,
+    "locked_delta": 0,
+    "closed_off_bottom": 0,
+    "starts_moved": 0,
+    "layer_changes_bad": 0,
+    "examples_off_bottom": [],
+    "examples_layer_change": [],
+    "result": "PASS",
+    "failures": []
+   },
+   "filament": {
+    "gate": "filament",
+    "live_mm": 24392.72,
+    "live_g": 70.41,
+    "cand_mm": 24392.72,
+    "cand_g": 70.41,
+    "increase_mm": 0.0,
+    "increase_g": 0.0,
+    "outside_samples": 0,
+    "outline_tol_mm": 0.02,
+    "added_extrusions": 0,
+    "added_bad_type": 0,
+    "added_outside_hollow": 0,
+    "examples_outside": [],
+    "examples_bad_type": [],
+    "examples_outside_hollow": [],
+    "result": "PASS",
+    "failures": []
+   }
+  },
+  "apex_bounce": {
+   "hollow": {
+    "gate": "hollow",
+    "tool_mm": 0.25,
+    "section_min_mm": 3.0,
+    "air_min_mm": 1.0,
+    "layer_height_mm": 0.42,
+    "window_165": 165,
+    "window_equivalent": 181,
+    "hollow_l165": 177,
+    "max_air_l165_mm": 1.627476,
+    "hollow_equivalent": 361,
+    "max_air_equivalent_mm": 3.520268,
+    "hollow_total": 4658,
+    "hollow_after_165": 4481,
+    "max_air_total_mm": 15.918268,
+    "result": "FAIL",
+    "failures": [
+     "forefoot hollow L<=165 is 177; 0 required",
+     "forefoot hollow L<=181 (physical equivalent) is 361; 0 required"
+    ]
+   },
+   "G1_thin_bond": {
+    "gate": "G1_thin_bond",
+    "forefoot_layers": "1-165",
+    "bead_height_envelope_mm": 0.46,
+    "thin_columns": 5833,
+    "unbonded": 1474,
+    "bonded": 4359,
+    "examples": [
+     {
+      "layer": 125,
+      "x_bin": 265
+     },
+     {
+      "layer": 150,
+      "x_bin": 214
+     },
+     {
+      "layer": 129,
+      "x_bin": 276
+     },
+     {
+      "layer": 132,
+      "x_bin": 281
+     },
+     {
+      "layer": 145,
+      "x_bin": 220
+     },
+     {
+      "layer": 125,
+      "x_bin": 278
+     },
+     {
+      "layer": 143,
+      "x_bin": 295
+     },
+     {
+      "layer": 136,
+      "x_bin": 292
+     }
+    ],
+    "result": "FAIL",
+    "failures": [
+     "1474 unbonded thin columns (skin overlap < 0.05 mm); 0 required"
+    ]
+   },
+   "G2_thick_bond": {
+    "gate": "G2_thick_bond",
+    "forefoot_layers": "1-165",
+    "bead_height_envelope_mm": 0.46,
+    "thick_columns": 2968,
+    "unbonded": 2776,
+    "belt_air_pct": 65.431267,
+    "dorsal_air_pct": 80.896226,
+    "examples": [
+     {
+      "layer": 132,
+      "x_bin": 268
+     },
+     {
+      "layer": 165,
+      "x_bin": 216
+     },
+     {
+      "layer": 151,
+      "x_bin": 281
+     },
+     {
+      "layer": 141,
+      "x_bin": 273
+     },
+     {
+      "layer": 133,
+      "x_bin": 269
+     },
+     {
+      "layer": 152,
+      "x_bin": 282
+     },
+     {
+      "layer": 144,
+      "x_bin": 278
+     },
+     {
+      "layer": 157,
+      "x_bin": 217
+     }
+    ],
+    "result": "FAIL",
+    "failures": [
+     "2776 of 2968 columns 3-6 mm are unbonded (need overlap >= 0.15 mm through the stack)"
+    ]
+   },
+   "surface": {
+    "gate": "surface",
+    "locked_segments": 36125,
+    "live_locked_segments": 36125,
+    "locked_delta": 0,
+    "closed_off_bottom": 0,
+    "starts_moved": 0,
+    "layer_changes_bad": 0,
+    "examples_off_bottom": [],
+    "examples_layer_change": [],
+    "result": "PASS",
+    "failures": []
+   },
+   "filament": {
+    "gate": "filament",
+    "live_mm": 24392.72,
+    "live_g": 70.41,
+    "cand_mm": 24392.72,
+    "cand_g": 70.41,
+    "increase_mm": 0.0,
+    "increase_g": 0.0,
+    "outside_samples": 0,
+    "outline_tol_mm": 0.02,
+    "added_extrusions": 0,
+    "added_bad_type": 0,
+    "added_outside_hollow": 0,
+    "examples_outside": [],
+    "examples_bad_type": [],
+    "examples_outside_hollow": [],
+    "result": "PASS",
+    "failures": []
+   }
+  },
+  "apex_core": {
+   "hollow": {
+    "gate": "hollow",
+    "tool_mm": 0.25,
+    "section_min_mm": 3.0,
+    "air_min_mm": 1.0,
+    "layer_height_mm": 0.46,
+    "window_165": 165,
+    "window_equivalent": 165,
+    "hollow_l165": 131,
+    "max_air_l165_mm": 4.539585,
+    "hollow_equivalent": 131,
+    "max_air_equivalent_mm": 4.539585,
+    "hollow_total": 27185,
+    "hollow_after_165": 27054,
+    "max_air_total_mm": 18.459129,
+    "result": "FAIL",
+    "failures": [
+     "forefoot hollow L<=165 is 131; 0 required",
+     "forefoot hollow L<=165 (physical equivalent) is 131; 0 required"
+    ]
+   },
+   "G1_thin_bond": {
+    "gate": "G1_thin_bond",
+    "forefoot_layers": "1-165",
+    "bead_height_envelope_mm": 0.46,
+    "thin_columns": 15493,
+    "unbonded": 3,
+    "bonded": 15490,
+    "examples": [
+     {
+      "layer": 111,
+      "x_bin": 224
+     },
+     {
+      "layer": 113,
+      "x_bin": 319
+     },
+     {
+      "layer": 113,
+      "x_bin": 318
+     }
+    ],
+    "result": "FAIL",
+    "failures": [
+     "3 unbonded thin columns (skin overlap < 0.05 mm); 0 required"
+    ]
+   },
+   "G2_thick_bond": {
+    "gate": "G2_thick_bond",
+    "forefoot_layers": "1-165",
+    "bead_height_envelope_mm": 0.46,
+    "thick_columns": 8406,
+    "unbonded": 0,
+    "belt_air_pct": 0.0,
+    "dorsal_air_pct": 0.0,
+    "examples": [],
+    "result": "PASS",
+    "failures": []
+   },
+   "surface": {
+    "gate": "surface",
+    "locked_segments": 52857,
+    "live_locked_segments": 52857,
+    "locked_delta": 0,
+    "closed_off_bottom": 0,
+    "starts_moved": 0,
+    "layer_changes_bad": 0,
+    "examples_off_bottom": [],
+    "examples_layer_change": [],
+    "result": "PASS",
+    "failures": []
+   },
+   "filament": {
+    "gate": "filament",
+    "live_mm": 29857.71,
+    "live_g": 86.18,
+    "cand_mm": 29857.71,
+    "cand_g": 86.18,
+    "increase_mm": 0.0,
+    "increase_g": 0.0,
+    "outside_samples": 0,
+    "outline_tol_mm": 0.02,
+    "added_extrusions": 0,
+    "added_bad_type": 0,
+    "added_outside_hollow": 0,
+    "examples_outside": [],
+    "examples_bad_type": [],
+    "examples_outside_hollow": [],
+    "result": "PASS",
+    "failures": []
+   }
+  }
+ },
+ "apex_core_identity": {
+  "gate": "core_identity",
+  "cand_bytes": 3349500,
+  "live_bytes": 3349500,
+  "stamp_lines_cand": 1,
+  "stamp_lines_live": 1,
+  "result": "PASS",
+  "failures": []
+ },
+ "slice_time_7_218": {
+  "gate": "slice_time",
+  "seconds": 7.218,
+  "cap_s": 260.0,
+  "result": "PASS",
+  "failures": []
+ },
+ "shared_path": {
+  "gate": "shared_path",
+  "forge_hollow_pass": false,
+  "bounce_hollow_pass": false,
+  "result": "PASS",
+  "failures": []
+ },
+ "result": "FAIL"
+}
