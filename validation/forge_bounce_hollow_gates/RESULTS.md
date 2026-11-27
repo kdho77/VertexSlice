@@ -194,3 +194,26 @@ That main, sliced with the same binary and no forefoot band, is hollow FAIL 189 
 | Shared path | PASS | PASS | — |
 
 A second machine recorded slice time 14.845 s, 14.465 s, and 9.615 s, also under 260 s, with the same geometry. G1 equals this parent. G2's unbonded count equals this parent. Dorsal air is 80.942692% against the parent's 81.112241% at that same count. The frozen pass line is still 0, so G1 and G2 FAIL. The unbonded count 2766 is higher than `baa2c087`'s 2440/2968, which was measured on `d935197`. Filament increased 31.32 mm / 0.09 g: 240 added sparse-infill extrusions, none of another type, none outside the 0.02 mm outline, none outside a previously hollow >=3 mm section. Hollow after layer 165 is 4473, max air 16.007 mm. Surface lock holds against this parent: 36247 locked segments, delta 0, no seam start moved, no layer change moved. ApexBounce is still M109 S225 and M190 S60. This grade did not move a seam, a layer change, or a wall, and it did not retune temperature or speed.
+
+## Worker `a18c4fe08fc01adf23936bd728e42de254444e90`
+
+Overall **FAIL**. Draft [PR #51](https://github.com/kdho77/VertexSlice/pull/51) head, one commit after `4360a797`. It changes `server/forefoot_hollow_band.py` and `tests/test_forefoot_hollow_band.py`. `server/slice_engine.py` is unchanged from `4360a797`. Graded with the frozen gates. `sha256sum -c SHA256SUMS` matched the freeze. Hashed gate files were not edited.
+
+Candidate slices are a fresh `server.slice_stl` on the orca-slicer binary from Actions run 45295959179, using this SHA's `server/`. Live is parent main `d928bdbd53`, the same slices as the `4360a797` grade. ApexForge and ApexBounce match. File sizes are Forge 3172116 bytes, Bounce 3172189 bytes, Core 3331886 bytes.
+
+| Gate | ApexForge | ApexBounce | ApexCore |
+|---|---|---|---|
+| Hollow L<=165 / L<=181 | PASS 0 / 0 | PASS 0 / 0 | reported 136 / 136 (same as this parent) |
+| G1 | FAIL 1494/5828 | FAIL 1494/5828 | reported 1/15456 (same as this parent) |
+| G2 | FAIL 2766/2949, belt 65.683%, dorsal 80.943% | FAIL, same | reported 1/8423 (same as this parent) |
+| Surface | PASS, delta 0 | PASS, delta 0 | PASS, delta 0 |
+| Filament | PASS 24291.26 mm / 70.11 g -> 24322.58 mm / 70.20 g | PASS, same | PASS, increase 0 |
+| Slice time | PASS 16.572 s | PASS 14.999 s | PASS 9.366 s |
+| Identity | — | — | PASS, 3331886 bytes |
+| Shared path | PASS | PASS | — |
+
+G1 is 1494/5828, equal to this parent and equal to `4360a797`. The frozen pass line is still 0. First residuals: layer 132 x-bin 268, layer 129 x-bin 276, layer 132 x-bin 281. G2 is 2766/2949, belt air 65.683282%, dorsal air 80.942692%. The unbonded count equals this parent and equals `4360a797`. First residuals: layer 151 x-bin 281, layer 150 x-bin 322, layer 161 x-bin 331.
+
+Filament increased 31.32 mm / 0.09 g. Added extrusions are 240 sparse infill, none of another type, none more than 0.02 mm outside the live outline, none outside a previously hollow section of at least 3 mm. Hollow after layer 165 is 4473, max air 16.007 mm.
+
+Surface lock against this parent holds: 36247 locked segments, delta 0, no seam start moved, no layer change moved. Against the frozen `d935197` slice the surface delta is 72372 and 478 layer changes moved. That is the same delta as parent `d928bdbd53` against `d935197`, so this commit does not add it. ApexCore identity PASS against this parent, 3331886 bytes, one stamp line ignored. Shared path PASS. ApexBounce is still M109 S225 and M190 S60. ApexForge is M109 S245 with no bed wait. This grade did not retune temperature or speed.
