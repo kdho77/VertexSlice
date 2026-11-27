@@ -288,3 +288,154 @@ PASS. No fill attempt was made by this agent.
 **Header:** "ONE: Independent grade of the new ApexLight worker head (or a documented STOP) using the already frozen #50 gates at cb4741c5; do not edit those gates; do not implement the fill."
 
 PASS. One grade of `83c943ba`. No fill was written by this agent.
+
+## Grade of 098c389d
+
+This section grades the travel-confinement retry. The candidate is no longer `83c943ba`. Gate code was not edited. `sha256sum -c SHA256SUMS` from `validation/apexlight_hollow_gates/` still matches, and `RESULTS.md` is not in that checksum. The no-op table and the `83c943ba` table above are unchanged.
+
+Worker: draft [#54](https://github.com/kdho77/VertexSlice/pull/54), head `098c389d09b8a878783166826d12566a4de12999`, parent `06d442b4b3d06b8bfd14a2108a1cc82e16dfeee9`, then `83c943ba9d36549703ad5f7d57ad177ce5022be7`. Branch `cursor/find-an-apexlight-hollow-fill-method-that-keeps-every-layer-change-and-seam-station-byte-identical-t-c48a`. Diff against `d935197976` is `server/chains/apex_light.py`, `server/chains/apex_light_forefoot_fill.py`, and `tests/test_apex_light_forefoot_fill.py`. Diff against `83c943ba` is the fill module and its test only. `server/chains/apex_core.py` is not in the diff.
+
+Candidate ApexLight is `fill_forefoot_hollow` from this SHA applied to live `live_apex_light_orthocad.gcode` from Actions run 45295959179, sha256 `f0b78d8dc4f57b8acee18cf9929f60ca4eaa44b8b796a9cbba608c30cdcab3e1`. The function reported hollow_before 1387, hollow_after 0, last_layer 165, 35 layers, added 71.14956 mm, wall time 3.082 s. Candidate file sha256 `f800c5a8f4fe300f87369407d332081e760a595ce3b9320c20cb09f70677dc90`, 3254273 bytes. Candidate ApexCore is the frozen README's #46 file `cand_apex_core_orthocad.gcode` compared with itself, because this SHA does not change the ApexCore chain.
+
+Slice seconds passed to the gate: 161.754 = main docker-proof slicer clock 158.672 s plus the measured fill 3.082 s. The PM host clock 176.059 s plus the same fill is 179.141 s. Both are under 260 s.
+
+Command:
+
+```bash
+python3 validation/apexlight_hollow_gates/run_gates.py \
+  --light-base live_apex_light_orthocad.gcode \
+  --light-cand cand_apex_light_098c389d.gcode \
+  --core-base cand_apex_core_orthocad.gcode \
+  --core-cand cand_apex_core_orthocad.gcode \
+  --slice-seconds 161.754
+```
+
+Exit 1. Frozen-script overall FAIL, because G1 and G2 are not 0. Those two bars of 0 are the live residuals. They are not the PM acceptance line.
+
+| Gate | Frozen bar | Measured | Frozen result |
+|---|---|---|---|
+| H hollow | 0 on layers <= 165 and on the physical window | Forefoot 0. Physical window 0. Total 4296, all on layers > 165. Max air 11.633 mm. | PASS |
+| G1 thin bond | 0 unbonded | 14377 / 14813. Median gap +0.340 mm. Equal to live and to `83c943ba`. | FAIL |
+| G2 thick bond | 0 unbonded | 8604 / 9003. Belt air 91.236%. Dorsal air 81.806%. Equal to `83c943ba`. Live was 8648 / 9003. | FAIL |
+| S surface | Walls, seams, and layer changes identical to live. None off the plantar face. | 30774 wall segments, 0 missing, 0 added. 436 seams, 0 missing, 0 added, 0 off the bottom. 0 layer changes moved. 0 off the bottom. | PASS |
+| F filament | Added plastic is sparse or solid inside a previously hollow section. None more than 0.02 mm outside the outline. | Live 26227.75 mm, 75.70 g. Candidate 26298.90 mm, 75.91 g. Increase 71.15 mm. 1630 added extrusions, 0 bad type, 0 outside a hollow section, 0 outside the outline. | PASS |
+| T slice time | <= 260 s | 161.754 s. PM-host equivalent 179.141 s. | PASS |
+| C ApexCore | Byte-identical to live after the stamp strip. | Stamp-stripped SHA256 `0557d875933ce16a24151b2e4c6e88275528d44ce7b5b1b19cdd6bf6e12d7107` matches the #46 file. | PASS |
+| Frozen script | Every gate PASS | Exit 1. Failed gates: G1, G2. | FAIL |
+
+### Added-move bar
+
+Counted outside the frozen script. An added travel is a candidate Sparse infill XY travel whose rounded endpoints are not already in the live multiset. A travel is inside a previously hollow column when every sample at 0.25 mm spacing sits in a live hollow column of layers <= 165 (air span, 0.05 mm slack), the same column test as frozen F. A remainder lies on a live combing/travel path when every sample that is outside those columns is within 0.02 mm of a live non-extruding XY travel on that layer. 0.02 mm is the frozen outline tolerance. Wall beads and extrusion centerlines are reported and are not counted as combing/travel paths.
+
+| Added-move measure | Threshold | Measured | Result |
+|---|---|---|---|
+| Added Sparse infill XY travels | report | 7370 | — |
+| Entirely inside a previously hollow >= 3 mm forefoot column | report | 360 | — |
+| Outside those columns | 0, or each one on a live combing/travel path | 7010 | — |
+| Outside, and on a live combing/travel within 0.02 mm | the allowed remainder | 1280 | — |
+| Outside, and not on a live combing/travel path | 0 | 5730 | FAIL |
+| Of those 5730, on an outer or overhang wall bead | report | 2504 | — |
+| Of those 5730, on a non-wall extrusion centerline | report | 3226 | — |
+| Of those 5730, on no live travel, wall, or centerline | report | 0 | — |
+| Added travels that change Z | 0 | 0 | PASS |
+| Layer 130 chord (149.13, 2.12) to (119.48, 1.52) from `83c943ba` | absent | absent | PASS |
+
+Example that fails the bar: layer 139 from (96.185, 0.016) to (139.995, 0.017), 43.810 mm, 176 samples, all outside the hollow columns, all on an Outer wall bead. The nearest live travel along that chord is 1.302 mm away. Example that passes the remainder clause: layer 130 from (120.241, 1.983) to (120.241, 2.383), on a live travel.
+
+Line check on the same candidate: 0 live non-footer lines missing, in order. 878 `G1 Z` / `;LAYER_CHANGE` / `;Z:` lines byte-identical. Inserted lines 9429: 70 `;TYPE:Sparse infill`, 70 `;WIDTH`, 125 retracts, 7405 travel `G1` lines, 125 primes, 1630 extrusions, and 4 filament footer lines. The 7370 count is the travel events that are new. The other inserted travel lines repeat a live endpoint key.
+
+### Footer consistency
+
+| Footer | Live | Candidate | Result |
+|---|---|---|---|
+| `; filament used [mm]` | 26227.75 | 26298.90 | increase 71.15 mm, matches frozen F |
+| `; filament used [g]` | 75.70 | 75.91 | — |
+| `; total filament used [g]` | 75.70 | 75.91 | PASS. The two gram lines are the same text, `75.91`. |
+
+On `83c943ba` the total line stayed 75.70 while `; filament used [g]` was 75.91.
+
+### PM acceptance
+
+Senior architect, 2026-11-24 5:44 PM MT. Observed-defect set. The frozen G1 and G2 bars of 0 stay in the table above and are not this line.
+
+| PM check | Threshold | Measured | Result |
+|---|---|---|---|
+| Hollow | 0 | Forefoot 0. Physical window 0. | PASS |
+| G1 no worse than live | <= 14377 / 14813 | 14377 / 14813 | PASS |
+| G2 no worse than live | <= 8648 / 9003 | 8604 / 9003 | PASS |
+| G2 no worse than `83c943ba` | <= 8604 / 9003 | 8604 / 9003 | PASS |
+| Surface, seams, layer-change stations | byte-identical to live | S gate PASS. 878 station lines identical. 0 live non-footer lines missing. | PASS |
+| Filament confinement | sparse or solid inside previously hollow sections, none > 0.02 mm outside the outline | Frozen F PASS. 1630 added, 0 outside hollow, 0 outside the outline. | PASS |
+| ApexCore identity | byte-identical, stamp exempt | Frozen C PASS. | PASS |
+| Gram footer | `; total filament used [g]` matches `; filament used [g]` | both `75.91` | PASS |
+| Slice time | <= 260 s | 161.754 s | PASS |
+| Added-move bar | 0 outside hollow, or each remainder on a live combing/travel path | 5730 outside and off every live combing/travel path | FAIL |
+| PM acceptance | every row PASS | Added-move bar fails. | FAIL |
+
+## Rule compliance for the grade of 098c389d
+
+This agent wrote the grade log only. It did not implement a fill, did not edit a hashed gate file, and did not push the worker branch, PR #50, or main.
+
+**HARD PROHIBITION.** "you may not change the outer surface, seams, layer-change placement, or surface quality. Seams and layer changes stay on the bottom (plantar/belt) face. You may not deteriorate surface quality. If the fix would require changing any of those, STOP and report; do not work around it."
+
+PASS for this grader. The only edit on this branch for this grade is `RESULTS.md`. The candidate's locked stations stay the live bytes: 30774 wall segments, 436 seams, 0 layer changes moved, 878 station lines byte-identical. 2504 added travels ride an outer or overhang wall bead. Those travels are the added-move failure above. They do not rewrite a wall, a seam, or a layer change.
+
+**Kendon 2026-11-20 11:38 AM MT:** "The seams have always been on the bottom it's been a permanent rule since the beginning"
+
+PASS. The candidate's 436 closed seam starts match live. 0 are off the plantar face.
+
+**Kendon 2026-11-20 12:59 PM MT:** "print surface quality is locked permanently. Never let any agent or change put seams or layer changes on the top surface or sides, and never touch surface quality."
+
+PASS. 0 layer changes moved. 0 layer changes off the plantar face. Outer-wall paths: 0 missing, 0 added. This grader did not edit a profile or a toolpath.
+
+**Kendon 2026-11-18 t2268u:** "Surface quality cannot be deteriorated"
+
+PASS. The wall, seam, and layer-change stations match live.
+
+**Kendon 2026-11-18:** "no production G-code goes out while hollow spots remain; every top skin must bond to the bottom skin either by direct contact or through infill/solid between them (infill is acceptable)."
+
+FAIL as a finished bond, and this draft is not production G-code. Forefoot hollow on layers <= 165 is 0. G1 is still 14377 / 14813 unbonded. G2 is still 8604 / 9003 unbonded. 4296 hollow columns remain above layer 165. Nothing was merged.
+
+**Kendon 2026-11-21 8:41-8:45 PM MT:** "slicer and geometry briefs must not grow scope. Solve only the defect Kendon has observed; anything else comes to him as a question first. Copy Cura's known method rather than inventing new constructions."
+
+PASS for this grader's scope. The grade covers the frozen gates, the added-move bar, and the gram footer. No second construction was written here. The candidate's 5730 travels follow a wall bead or an extrusion centerline rather than a live combing travel. That is the added-move failure, and it is the question already sitting on the worker handoff.
+
+**Kendon 2026-11-06:** "Apex Bounce = settings identical to Apex Core except extruder 220 C (Core 225 C), print speed 0.8x Core, heated bed 70 C."
+
+PASS. No profile was edited. Bounce was not resliced.
+
+**Header:** "MODEL: grok-4.7 fast=false context 256k (slicer geometry: independent grade of the #54 travel-confinement retry against frozen #50 gates plus the added-move bar)"
+
+PASS. This turn graded `098c389d`. It did not implement the fill.
+
+**Header:** "REPO: kdho77/VertexSlice"
+
+PASS. The grade is in this repository.
+
+**Header:** "BASE: new branch from the frozen #50 gates at cb4741c5d623307eda085a8aa217eb792933afde (hashed SHA256SUMS). You may start from #50 head 1fec058f4e24af9f192d8aae82ec0beed0967129, which only adds RESULTS.md. Do not rewind or rewrite hashed gate files. Worker retry will push a new SHA on draft PR #54 after 83c943ba. Grade that new head. Do not grade 83c943ba again as the candidate once the new SHA exists."
+
+PASS. This branch starts at `1fec058f`. The hashed files are the freeze at `cb4741c5`. `sha256sum -c SHA256SUMS` passes. The graded head is `098c389d`, which is after `83c943ba`. The earlier section remains the record of `83c943ba` and is not this candidate.
+
+**Header:** "PUSH: ONE new draft PR titled \"[GATES ONLY - DO NOT MERGE] grade of #54 travel confinement\". Only a grade log (RESULTS.md or an appended RESULTS section) may change. Never edit hashed gate files under validation/apexlight_hollow_gates/ (prove SHA256SUMS still passes excluding RESULTS.md). Never push to PR #50, PR #54, or the worker branch. Never push/merge main, deploy, Railway, printers. Do not merge. Do not implement the fill."
+
+PASS for the file set. This commit changes `RESULTS.md` only. The push is this grade branch. PR #50, PR #54, and the worker branch were not pushed.
+
+**Header:** "MUST-MATCH: hashed #50 gates stay frozen and unmodified; no-op and bad-change proofs already recorded on #50 stay valid; the new #54 head is graded with those same gates PLUS the added-move bar (every added travel is inside a previously hollow >=3 mm forefoot column, or follows an existing live Cura-style combing/travel path). Also report the PM acceptance set separately: hollow 0; G1/G2 no worse than live (14377/14813 and 8648/9003) and no worse than 83c943ba (G2 8604/9003); surface, seams, layer-change stations byte-identical; filament confinement; identity; `; total filament used [g]` matches `; filament used [g]`; slice time <= 260 s. Frozen G1/G2 bars of 0 remain in the table but are live residuals; do not treat them as the observed-defect acceptance line, and do not edit those gate files to change the bar."
+
+PASS for the freeze and the method. The no-op table was not rewritten. The frozen G1/G2 bars of 0 stay in the frozen table and were not edited. The PM table is separate. The candidate fails the added-move bar: 5730 added Sparse infill travels are outside the hollow columns and off every live combing/travel path.
+
+**Header:** "FILES: a grade log only (RESULTS.md on the new draft PR, not hashed). Read-only everything else, including all hashed #50 gate scripts and the worker's code. Don't explore beyond. Do not modify server/, tests/, or PR #50/#54 branches."
+
+PASS. The worker tree was read from a detached worktree at `098c389d`. Nothing under `server/` or `tests/` was written on this branch.
+
+**Header:** "TESTS: targeted only; CI is the full run. Run the frozen #50 gates on the new #54 SHA, and measure the added-move bar (count added Sparse infill travels outside previously hollow columns; must be 0, or each remainder must lie on an existing live combing/travel path). Record PASS/FAIL per gate with measured values vs thresholds. If the new worker SHA is not on #54 yet, wait for it (poll; do not edit hashed files). If the worker STOPs with no new SHA, record that and stop."
+
+PASS. The new head was on #54. `run_gates.py` exit 1 and the added-move count 5730 are recorded above. The worker did not STOP.
+
+**Header:** "CAP: 0/3"
+
+PASS. No fill attempt was made by this agent.
+
+**Header:** "ONE: Independent grade of the new PR #54 head (the travel-confinement retry after 83c943ba) using the already frozen #50 gates plus the added-move bar; do not edit those gates; do not implement the fill."
+
+PASS. One grade of `098c389d`. No fill was written by this agent.
