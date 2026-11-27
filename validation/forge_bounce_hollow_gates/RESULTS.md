@@ -217,3 +217,18 @@ G1 is 1494/5828, equal to this parent and equal to `4360a797`. The frozen pass l
 Filament increased 31.32 mm / 0.09 g. Added extrusions are 240 sparse infill, none of another type, none more than 0.02 mm outside the live outline, none outside a previously hollow section of at least 3 mm. Hollow after layer 165 is 4473, max air 16.007 mm.
 
 Surface lock against this parent holds: 36247 locked segments, delta 0, no seam start moved, no layer change moved. Against the frozen `d935197` slice the surface delta is 72372 and 478 layer changes moved. That is the same delta as parent `d928bdbd53` against `d935197`, so this commit does not add it. ApexCore identity PASS against this parent, 3331886 bytes, one stamp line ignored. Shared path PASS. ApexBounce is still M109 S225 and M190 S60. ApexForge is M109 S245 with no bed wait. This grade did not retune temperature or speed.
+
+An independent re-slice of this same SHA matches the parent table above. Slice time on that run was 4.765 s, 5.081 s, and 9.626 s. ApexCore differs from the `4360a797` core file only in the stamp line. The frozen live comparison, which is the pass line of these gates, remains **FAIL**:
+
+| Gate | ApexForge | ApexBounce | ApexCore |
+|---|---|---|---|
+| Hollow L<=165 / L<=181 | PASS 0 / 0 | PASS 0 / 0 | FAIL 136 / 136 |
+| G1 | FAIL 2582/8592 | FAIL 2582/8592 | FAIL 3871/19692 |
+| G2 | FAIL 3482/4182, belt 62.817%, dorsal 71.043% | FAIL, same | FAIL 629/11053 |
+| Surface | FAIL, delta 72372, 478 layer changes moved | FAIL, same | FAIL, delta 105715, 868 seam starts moved, 436 layer changes moved |
+| Filament | FAIL 24392.72 mm / 70.41 g -> 24322.58 mm / 70.20 g | FAIL, same | FAIL 29857.71 mm / 86.18 g -> 29764.83 mm / 85.91 g |
+| Slice time | PASS 4.765 s | PASS 5.081 s | PASS 9.626 s |
+| Identity | — | — | FAIL, 3331886 vs 3349500 bytes |
+| Shared path | PASS | PASS | — |
+
+Those frozen-live counts match `4360a797`. G1 2582/8592 is worse than live 1474/5833 and worse than `baa2c087`. G2 3482/4182 is worse than live 2776/2968 and worse than `baa2c087` 2440/2968. Filament decreased 70.14 mm / 0.21 g, with 44370 added extrusions outside a previously hollow >=3 mm section and 12 beads more than 0.02 mm outside the live outline. This grade did not move a seam, a layer change, or a wall.
