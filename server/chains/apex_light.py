@@ -15,6 +15,7 @@ from pathlib import Path
 
 from server.chains import CHAIN_APEX_LIGHT
 from server.chains.apex_light_forefoot_fill import fill_forefoot_hollow
+from server.material_y_offset import apply_material_y_offset, material_y_offset_mm
 from tools.belt_pp.pipeline import finalize_apex_light
 
 REPO = Path(__file__).resolve().parents[2]
@@ -128,6 +129,9 @@ def run_apex_light(
     # Cura's sparse gyroid, only inside forefoot columns that are already hollow.
     # Walls, seams, and layer-change lines are copied unchanged.
     text, _fill = fill_forefoot_hollow(text)
+    # After the hollow fill so inserted beads move with the layer, and after
+    # the C++ belt clamp so a negative offset is not forced back to Y0.000.
+    text = apply_material_y_offset(text, "apex_light")
     out.write_text(text, encoding="utf-8", errors="surrogateescape")
     stats = {
         "chain": CHAIN_APEX_LIGHT,
@@ -135,6 +139,7 @@ def run_apex_light(
         "binary": env.get("ORCA_SLICER_BIN", ""),
         "stdout_tail": proc.stdout[-1500:],
         "stderr_tail": proc.stderr[-1500:],
+        "material_y_offset_mm": material_y_offset_mm("apex_light"),
     }
     if owned:
         stats["work_dir"] = str(work)
