@@ -1,10 +1,12 @@
 """Fill ApexLight forefoot hollows with Cura's sparse gyroid.
 
 This is the band fill already in ``postprocess_g2b`` (``_band_paths`` and
-``_band_block``): gyroid pieces in the empty columns. A straight connector
-that leaves those columns is replaced by Cura combing: stay inside the
-column, or walk a travel, wall bead, or extrusion centerline already in the
-file. Every existing line is copied unchanged. Nothing is extruded into a
+``_band_block``): gyroid pieces in the empty columns. Each pocket is inserted
+at the live non-extruding travel that already meets it, not at the layer-end
+wall point. An added travel stays inside those columns, or within 0.02 mm of
+a non-extruding XY travel already in the file. It does not ride an outer or
+overhang wall bead, follow an extrusion centerline, or cut a chord across
+open air. Every existing line is copied unchanged. Nothing is extruded into a
 section the 0.25 mm hollow tool does not already call empty (outer thickness
 >= 3 mm, air > 1 mm, no non-skin plastic in the air). Skins, seams, and
 layer-change lines are not rewritten, so their stations stay the bytes the
@@ -255,7 +257,6 @@ def _newline(lines: list[str]) -> str:
     return "\n"
 
 
-_WALLS = {"Outer wall", "Overhang wall"}
 _ON_PATH_MM = 0.02
 _HOLLOW_SLACK = 0.05
 
@@ -298,15 +299,13 @@ def _in_hollow(hollow, layer: int, x: float, y: float) -> bool:
 
 
 def _sample_confined(hollow, layer: int, x: float, y: float, net: dict) -> bool:
-    """Inside a hollow column, on a live travel, on a wall bead, or on a live centerline."""
+    """Inside a hollow column, or within 0.02 mm of a live non-extruding travel.
+
+    A wall bead and an extrusion centerline are not that travel.
+    """
     if _in_hollow(hollow, layer, x, y):
         return True
-    if _near_any(x, y, net["travels"], _ON_PATH_MM):
-        return True
-    for x0, y0, x1, y1, half in net["walls"]:
-        if _dist_seg(x, y, x0, y0, x1, y1) <= half + _ON_PATH_MM:
-            return True
-    return _near_any(x, y, net["centers"], _ON_PATH_MM)
+    return _near_any(x, y, net["travels"], _ON_PATH_MM)
 
 
 def _segment_confined(hollow, layer: int, x0: float, y0: float, x1: float, y1: float, net: dict) -> bool:
@@ -348,22 +347,6 @@ def _comp_of(hollow, bin_comp: dict[int, int], layer: int, x: float, y: float):
         if bb * _COLUMN_MM - _ON_PATH_MM <= x <= (bb + 1) * _COLUMN_MM + _ON_PATH_MM:
             return bin_comp[bb]
     return None
-
-
-def _closest_on_rect(x0, y0, x1, y1, xa, xb, ya, yb):
-    length = math.hypot(x1 - x0, y1 - y0)
-    n = max(1, int(math.ceil(length / 0.05)))
-    best = None
-    for i in range(n + 1):
-        t = i / n
-        px = x0 + (x1 - x0) * t
-        py = y0 + (y1 - y0) * t
-        cx = min(max(px, xa), xb)
-        cy = min(max(py, ya), yb)
-        dist = math.hypot(px - cx, py - cy)
-        if best is None or dist < best[0]:
-            best = (dist, (cx, cy), (px, py))
-    return best
 
 
 def _link(adj, a, b, cost: float) -> None:
@@ -447,7 +430,57 @@ def _straight_inside(hollow, layer, x0, y0, x1, y1) -> bool:
     return True
 
 
-def _layer_network(hollow, layer: int, travels, walls, centers) -> dict:
+def _best_dock(travels, hollow, layer: int, bins: list[int]):
+    """Closest live-travel point to this component, and a point inside it.
+
+    The link is a legal added travel only when that distance is within 0.02 mm.
+    Sampling is 0.01 mm so a travel that merely grazes a column is not missed.
+    """
+    wanted = set(bins)
+    xa0 = bins[0] * _COLUMN_MM - _ON_PATH_MM
+    xb0 = (bins[-1] + 1) * _COLUMN_MM + _ON_PATH_MM
+    ylo = min(hollow[(layer, b)][0] for b in bins) - _HOLLOW_SLACK - _ON_PATH_MM
+    yhi = max(hollow[(layer, b)][1] for b in bins) + _HOLLOW_SLACK + _ON_PATH_MM
+    best = None
+    for index, (x0, y0, x1, y1) in enumerate(travels):
+        if max(x0, x1) < xa0 or min(x0, x1) > xb0 or max(y0, y1) < ylo or min(y0, y1) > yhi:
+            continue
+        dx, dy = x1 - x0, y1 - y0
+        length = math.hypot(dx, dy)
+        steps = max(1, int(math.ceil(length / 0.01)))
+        for step in range(steps + 1):
+            t = step / steps
+            px = x0 + dx * t
+            py = y0 + dy * t
+            binn = int(math.floor(px / _COLUMN_MM))
+            for near in (binn - 1, binn, binn + 1):
+                if near not in wanted:
+                    continue
+                lo, hi = hollow[(layer, near)]
+                xa, xb = near * _COLUMN_MM, (near + 1) * _COLUMN_MM
+                ya, yb = lo - _HOLLOW_SLACK, hi + _HOLLOW_SLACK
+                qx = min(max(px, xa), xb)
+                qy = min(max(py, ya), yb)
+                dist = math.hypot(px - qx, py - qy)
+                if best is None or dist < best[0]:
+                    best = (dist, index, (px, py), (qx, qy), near)
+    if best is None or best[0] > _ON_PATH_MM:
+        return None
+    _dist, index, on_travel, clamped, near = best
+    lo, hi = hollow[(layer, near)]
+    xa, xb = near * _COLUMN_MM, (near + 1) * _COLUMN_MM
+    cx = min(max(clamped[0], xa + 1e-3), xb - 1e-3)
+    ya = lo - _HOLLOW_SLACK + 1e-3
+    yb = hi + _HOLLOW_SLACK - 1e-3
+    cy = min(max(clamped[1], ya), yb) if ya <= yb else 0.5 * (lo + hi)
+    if not _in_hollow(hollow, layer, cx, cy):
+        return None
+    if not _segment_confined(hollow, layer, on_travel[0], on_travel[1], cx, cy, {"travels": travels}):
+        return None
+    return index, on_travel, (cx, cy)
+
+
+def _layer_network(hollow, layer: int, travels, meta: list[dict]) -> dict:
     comps = _components(hollow, layer)
     bin_comp = {}
     for cid, bins in enumerate(comps):
@@ -456,75 +489,57 @@ def _layer_network(hollow, layer: int, travels, walls, centers) -> dict:
     adj: dict[tuple[float, float], list] = {}
     for x0, y0, x1, y1 in travels:
         _link(adj, _node(x0, y0), _node(x1, y1), math.hypot(x1 - x0, y1 - y0))
-    for x0, y0, x1, y1, _half in walls:
-        _link(adj, _node(x0, y0), _node(x1, y1), math.hypot(x1 - x0, y1 - y0))
-    # Existing extrusion centerlines are only the fallback that reaches a station
-    # the wall and travel graph does not already contain.
-    for x0, y0, x1, y1 in centers:
-        _link(adj, _node(x0, y0), _node(x1, y1), math.hypot(x1 - x0, y1 - y0) * 30.0)
     docks = {}
     for cid, bins in enumerate(comps):
-        best = None
-        for binn in bins:
-            lo, hi = hollow[(layer, binn)]
-            xa, xb = binn * _COLUMN_MM, (binn + 1) * _COLUMN_MM
-            for x0, y0, x1, y1, half in walls:
-                if max(x0, x1) < xa - 1.5 or min(x0, x1) > xb + 1.5:
-                    continue
-                if max(y0, y1) < lo - 1.5 or min(y0, y1) > hi + 1.5:
-                    continue
-                hit = _closest_on_rect(x0, y0, x1, y1, xa, xb, lo, hi)
-                if hit is None:
-                    continue
-                dist, c_pt, q_pt = hit
-                slack = dist - half
-                if best is None or slack < best[0]:
-                    best = (slack, c_pt, q_pt, (x0, y0, x1, y1), half, binn)
-        if best is None or best[0] > _ON_PATH_MM:
+        hit = _best_dock(travels, hollow, layer, bins)
+        if hit is None:
             continue
-        _slack, c_pt, q_pt, wall, half, binn = best
-        # The closest rectangle point sits on the closed edge. Step 0.001 mm
-        # into that same cell so the column test and the bead test both see it.
-        cx, cy = c_pt
-        lo, hi = hollow[(layer, binn)]
-        xa, xb = binn * _COLUMN_MM, (binn + 1) * _COLUMN_MM
-        cx = min(max(cx, xa + 1e-3), xb - 1e-3)
-        cy = min(max(cy, lo + 1e-3), hi - 1e-3)
-        qx, qy = q_pt
-        if not _in_hollow(hollow, layer, cx, cy):
-            continue
-        if _dist_seg(cx, cy, wall[0], wall[1], wall[2], wall[3]) > half + _ON_PATH_MM:
-            continue
-        _split_segment(adj, wall[0], wall[1], wall[2], wall[3], qx, qy, 1.0)
+        index, on_travel, inside = hit
+        qx, qy = on_travel
+        cx, cy = inside
+        x0, y0, x1, y1 = travels[index]
+        _split_segment(adj, x0, y0, x1, y1, qx, qy, 1.0)
         _link(adj, _node(cx, cy), _node(qx, qy), math.hypot(qx - cx, qy - cy))
-        docks[cid] = ((cx, cy), (qx, qy))
+        docks[cid] = (inside, on_travel, index)
     return {
         "adj": adj,
         "travels": travels,
-        "walls": walls,
-        "centers": centers,
         "docks": docks,
         "bin_comp": bin_comp,
+        "travel_meta": meta,
     }
 
 
 def _collect_networks(lines: list[str], segs: list[dict], hollow, last_layer: int) -> dict[int, dict]:
+    """Live non-extruding XY travels, with the line where each one starts.
+
+    ``segs`` is unused. Wall beads and extrusion centerlines are not a route.
+    """
+    del segs
     travels: dict[int, list] = {}
-    walls: dict[int, list] = {}
-    centers: dict[int, list] = {}
+    meta: dict[int, list] = {}
     layer = -1
     x = y = 0.0
-    for line in lines:
+    feed = 0.0
+    typ = ""
+    width = ""
+    for index, line in enumerate(lines):
         raw = line.strip()
         if raw.startswith(";LAYER_CHANGE"):
             layer += 1
+            continue
+        if raw.startswith(";TYPE:"):
+            typ = raw[6:].strip()
+            continue
+        if raw.startswith(";WIDTH:"):
+            width = raw
             continue
         body = raw.split(";", 1)[0].strip()
         if not (body.startswith("G0") or body.startswith("G1")):
             continue
         words = {}
         for tok in body.split():
-            if len(tok) > 1 and tok[0] in "XYZE":
+            if len(tok) > 1 and tok[0] in "XYZEF":
                 try:
                     words[tok[0]] = float(tok[1:])
                 except ValueError:
@@ -534,22 +549,18 @@ def _collect_networks(lines: list[str], segs: list[dict], hollow, last_layer: in
         moved = math.hypot(nx - x, ny - y) > 1e-6
         if 1 <= layer <= last_layer and moved and "E" not in words and "Z" not in words:
             travels.setdefault(layer, []).append((x, y, nx, ny))
+            meta.setdefault(layer, []).append(
+                {"index": index, "anchor": (x, y), "feed": feed, "typ": typ, "width": width}
+            )
+        if "F" in words:
+            feed = words["F"]
         x, y = nx, ny
-    for seg in segs:
-        lay = seg["layer"]
-        if lay < 1 or lay > last_layer:
-            continue
-        piece = (seg["x0"], seg["y0"], seg["x1"], seg["y1"])
-        centers.setdefault(lay, []).append(piece)
-        if seg.get("type") in _WALLS:
-            walls.setdefault(lay, []).append((*piece, seg["w"] * 0.5))
     out = {}
     layers = {lay for (lay, _b) in hollow if 1 <= lay <= last_layer}
-    layers.update(travels)
     for lay in layers:
         if lay < 1 or lay > last_layer:
             continue
-        out[lay] = _layer_network(hollow, lay, travels.get(lay, []), walls.get(lay, []), centers.get(lay, []))
+        out[lay] = _layer_network(hollow, lay, travels.get(lay, []), meta.get(lay, []))
     return out
 
 
@@ -561,7 +572,7 @@ def _connect_point(net, hollow, layer: int, pt) -> tuple[float, float]:
     dock = net["docks"].get(comp) if comp is not None else None
     if dock is None:
         return key
-    c_pt, _q_pt = dock
+    c_pt = dock[0]
     if math.hypot(pt[0] - c_pt[0], pt[1] - c_pt[1]) <= _ON_PATH_MM:
         _link(adj, key, _node(*c_pt), math.hypot(pt[0] - c_pt[0], pt[1] - c_pt[1]))
         return key
@@ -644,12 +655,12 @@ def _emit_travel(g2b, points, feed: str | None, nl: str) -> list[str]:
 def _confine_block(block: list[str], layer: int, start, net: dict, hollow, g2b, nl: str) -> list[str]:
     """Replace sparse-infill travels that leave the hollow columns.
 
-    A kept or replacement segment stays inside a hollow column, or on a live
-    travel, a live wall bead, or a live extrusion centerline. That is Cura's
-    comb: the straight hop when it fits, otherwise the path already in the file.
+    A kept segment stays inside a hollow column or within 0.02 mm of a live
+    non-extruding travel. There is no wall-bead or centerline fallback: a
+    pocket with no such route is left unfilled.
     """
     if not net:
-        return block
+        return None
     out: list[str] = []
     x, y = start
     i = 0
@@ -685,9 +696,7 @@ def _confine_block(block: list[str], layer: int, start, net: dict, hollow, g2b, 
             continue
         routed = _route(net, hollow, layer, (x, y), (cx, cy))
         if not routed or len(routed) < 2:
-            out.extend(seq)
-            x, y = cx, cy
-            continue
+            return None
         feed = None
         for line in seq:
             words = g2b._ff_words(line.split(";", 1)[0])
@@ -785,13 +794,11 @@ def fill_forefoot_hollow(text: str, last_layer: int | None = None) -> tuple[str,
     typ = ""
     width = ""
     z_at: dict[int, float] = {}
-    end_at: dict[int, int] = {}
     state: dict[int, tuple[float, float, float, str, str, bool]] = {}
-    for index, line in enumerate(lines):
+    for line in lines:
         raw = line.strip()
         if raw.startswith(";LAYER_CHANGE"):
             if layer >= 0:
-                end_at[layer] = index
                 state[layer] = (x, y, feed, typ, width, e_rel)
             layer += 1
             continue
@@ -812,8 +819,7 @@ def fill_forefoot_hollow(text: str, last_layer: int | None = None) -> tuple[str,
             absolute = True
             continue
         if body.startswith("G91"):
-            if layer >= 0 and layer not in end_at:
-                end_at[layer] = index
+            if layer >= 0 and layer not in state:
                 state[layer] = (x, y, feed, typ, width, e_rel)
             break
         if body.startswith("M83"):
@@ -831,8 +837,7 @@ def fill_forefoot_hollow(text: str, last_layer: int | None = None) -> tuple[str,
             y = float(words["Y"]) if absolute else y + float(words["Y"])
         if "F" in words:
             feed = float(words["F"])
-    if layer >= 0 and layer not in end_at:
-        end_at[layer] = len(lines)
+    if layer >= 0 and layer not in state:
         state[layer] = (x, y, feed, typ, width, e_rel)
 
     edges: dict[int, list[tuple[float, float, float, float]]] = {}
@@ -841,39 +846,54 @@ def fill_forefoot_hollow(text: str, last_layer: int | None = None) -> tuple[str,
             edges.setdefault(seg["layer"], []).append((seg["x0"], seg["y0"], seg["x1"], seg["y1"]))
     networks = _collect_networks(lines, parsed["segs"], hollow, last_layer)
 
-    blocks: dict[int, list[str]] = {}
+    blocks: dict[int, list[list[str]]] = {}
     added_mm = 0.0
     n_ext = 0
+    filled_layers: set[int] = set()
     for lay, cols in by_layer.items():
         if lay not in state:
             continue
-        ex, ey, fd, tp, wd, rel = state[lay]
+        _ex, _ey, _fd, _tp, _wd, rel = state[lay]
         if not rel or not absolute:
             stats["reason"] = "extrusion or positioning is not the ApexLight mode"
             return text, stats
-        paths = g2b._band_paths(z_at.get(lay), cols)
-        if not paths:
+        net = networks.get(lay)
+        if not net:
             continue
-        block = g2b._band_block(paths, ex, ey, fd, tp, wd, edges.get(lay, []), nl)
-        block = _confine_block(block, lay, (ex, ey), networks.get(lay), hollow, g2b, nl)
-        n_ext += sum(1 for line in block if " E" in line.split(";", 1)[0] and "E-" not in line.split(";", 1)[0])
-        added_mm += _block_e(g2b, block)
-        blocks[end_at[lay]] = block
+        # One pocket at a time, spliced onto the live travel that already meets it.
+        # The nozzle is put back on that travel's start, so the original line is unchanged.
+        for cid, bins in enumerate(_components(hollow, lay)):
+            dock = net["docks"].get(cid)
+            if dock is None:
+                continue
+            _inside, _on_travel, travel_i = dock
+            meta = net["travel_meta"][travel_i]
+            pocket = {binn: cols[binn] for binn in bins if binn in cols}
+            paths = g2b._band_paths(z_at.get(lay), pocket)
+            if not paths:
+                continue
+            ax, ay = meta["anchor"]
+            block = g2b._band_block(paths, ax, ay, meta["feed"], meta["typ"], meta["width"], edges.get(lay, []), nl)
+            block = _confine_block(block, lay, (ax, ay), net, hollow, g2b, nl)
+            if not block:
+                continue
+            n_ext += sum(1 for line in block if " E" in line.split(";", 1)[0] and "E-" not in line.split(";", 1)[0])
+            added_mm += _block_e(g2b, block)
+            blocks.setdefault(meta["index"], []).append(block)
+            filled_layers.add(lay)
     if not blocks:
         stats["reason"] = "nothing to insert"
         return text, stats
     out: list[str] = []
     for index, line in enumerate(lines):
-        if index in blocks:
-            out.extend(blocks[index])
+        for block in blocks.get(index, ()):
+            out.extend(block)
         out.append(line)
-    if len(lines) in blocks:
-        out.extend(blocks[len(lines)])
     joined = "".join(out)
     joined = _bump_filament(joined, added_mm, parsed["area"])
     after = g2b._parse_moves(joined.splitlines(keepends=True), reset_type=False)
     stats["applied"] = True
-    stats["layers"] = len(blocks)
+    stats["layers"] = len(filled_layers)
     stats["extrusions"] = n_ext
     stats["added_mm"] = round(added_mm, 5)
     stats["hollow_after"] = len(hollow_columns(after["segs"], last_layer))

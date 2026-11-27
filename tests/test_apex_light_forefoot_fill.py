@@ -62,11 +62,16 @@ def _program(layers: list[list[str]]) -> str:
 
 
 def _thick() -> list[str]:
-    return _loop(
+    # The loop is the wall. The two G1 lines are a live non-extruding travel
+    # through the hollow and back to the corner the wall already ended on.
+    lines = _loop(
         [(100.0, 0.40), (160.0, 0.40), (160.0, 8.40), (100.0, 8.40)],
         0.92,
         "Outer wall",
     )
+    lines.append("G1 X130.000 Y4.000 F12720\n")
+    lines.append("G1 X100.000 Y0.400\n")
+    return lines
 
 
 def _thin() -> list[str]:
@@ -209,24 +214,22 @@ class ForefootHollowFillTest(unittest.TestCase):
             self.assertLess(y, 7.9)
         self.assertTrue(saw)
 
-    def test_travel_between_disconnected_columns_stays_on_a_live_path(self) -> None:
-        # One outer wall, split by a non-skin bead, so the two hollows only meet
-        # along the wall. The straight chord through the middle is not a comb path.
-        body = _thick()
-        body.append(";TYPE:Sparse infill\n")
-        body.append(f"G1 X180.000 Y0.400 E{_e_for(80.0):.5f}\n")
-        body.append(f"G1 X180.000 Y8.400 E{_e_for(8.0):.5f}\n")
-        text = _program([[";LAYER_CHANGE\n", ";Z:0.46000\n"], body])
-        new, stats = fill_forefoot_hollow(text, last_layer=2)
+    def test_added_travels_stay_inside_hollow_or_on_a_live_travel(self) -> None:
+        # The layer ends on the wall. The fill has to splice onto the live
+        # travel that already crosses the hollow, not walk the wall bead back
+        # from that corner, and not follow the outer-wall extrusion.
+        text = _program([[";LAYER_CHANGE\n", ";Z:0.46000\n"], _thick()])
+        new, stats = fill_forefoot_hollow(text, last_layer=1)
         self.assertTrue(stats["applied"])
         self.assertEqual(stats["hollow_after"], 0)
         used, total = _grams(new)
         self.assertEqual(used, total)
+        self.assertNotEqual(used, "0.03")
         g2b = _g2b()
         lines = text.splitlines(keepends=True)
         parsed = g2b._parse_moves(lines, reset_type=False)
-        hollow = hollow_columns(parsed["segs"], 2)
-        nets = _collect_networks(lines, parsed["segs"], hollow, 2)
+        hollow = hollow_columns(parsed["segs"], 1)
+        nets = _collect_networks(lines, parsed["segs"], hollow, 1)
         travels = list(_added_travels(text, new))
         self.assertGreater(len(travels), 0)
         for layer, x0, y0, x1, y1 in travels:
@@ -234,7 +237,48 @@ class ForefootHollowFillTest(unittest.TestCase):
                 _segment_confined(hollow, layer, x0, y0, x1, y1, nets[layer]),
                 (layer, x0, y0, x1, y1),
             )
+        # The bottom outer-wall bead is not a combing path. Neither is an
+        # open chord that leaves the hollow and misses the live travel.
+        self.assertFalse(_segment_confined(hollow, 1, 100.0, 0.40, 160.0, 0.40, nets[1]))
         self.assertFalse(_segment_confined(hollow, 1, 140.0, 4.0, 220.0, 4.0, nets[1]))
+
+    def test_a_second_pocket_is_not_reached_along_the_wall(self) -> None:
+        # The live travel crosses only the left box. The right box is hollow
+        # too, and the two meet along nothing but open air. The fill must not
+        # ride the left wall, or cut that chord, to get there.
+        left = _thick()
+        right = [
+            line
+            for line in _loop(
+                [(180.0, 0.40), (220.0, 0.40), (220.0, 8.40), (180.0, 8.40)],
+                0.92,
+                "Outer wall",
+            )
+            if not line.startswith(";LAYER_CHANGE")
+        ]
+        text = _program([[";LAYER_CHANGE\n", ";Z:0.46000\n"], left + right])
+        new, stats = fill_forefoot_hollow(text, last_layer=1)
+        self.assertTrue(stats["applied"])
+        used, total = _grams(new)
+        self.assertEqual(used, total)
+        g2b = _g2b()
+        lines = text.splitlines(keepends=True)
+        parsed = g2b._parse_moves(lines, reset_type=False)
+        hollow = hollow_columns(parsed["segs"], 1)
+        nets = _collect_networks(lines, parsed["segs"], hollow, 1)
+        travels = list(_added_travels(text, new))
+        self.assertGreater(len(travels), 0)
+        for layer, x0, y0, x1, y1 in travels:
+            self.assertTrue(
+                _segment_confined(hollow, layer, x0, y0, x1, y1, nets[layer]),
+                (layer, x0, y0, x1, y1),
+            )
+            self.assertLess(max(x0, x1), 170.0, (x0, y0, x1, y1))
+        # The right pocket is still hollow: reaching it would leave the live travel.
+        right_bins = [key for key in hollow if key[0] == 1 and key[1] * 0.25 >= 180.0]
+        self.assertGreater(len(right_bins), 0)
+        after = hollow_columns(g2b._parse_moves(new.splitlines(keepends=True), reset_type=False)["segs"], 1)
+        self.assertTrue(any(key in after for key in right_bins))
 
     def test_layer_change_and_seam_lines_stay_byte_identical(self) -> None:
         text = _program([[";LAYER_CHANGE\n", ";Z:0.46000\n"], _thick()])
