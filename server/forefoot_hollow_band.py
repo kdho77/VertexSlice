@@ -18,13 +18,13 @@ column. The column is the 0.25 mm tool: outer skins at least 3 mm apart,
 more than 1 mm of air between the inner faces, and no fill already in that
 air. The bead's midpoint has to sit in that air (the same half-millimetre
 contact the bead uses to touch the skins). A bead in a 3–6 mm section that
-was not hollow is not written. Dropping it does not leave a travel on that
-path: the chord would be open air, or a ride along the outer wall. The
-nozzle still reaches the next kept point, on a travel that stays in the
-hollow air or on a non-extruding travel the live file already had. A hop
-shorter than a bead, off the wall rather than along it, is only the step
-into that air. The walls, seams, and layer-change lines are still the ones
-the slicer wrote.
+was not hollow is not written. Dropping it does not leave a straight chord
+across the empty space, and it does not leave a hop out to where that bead
+ended. The nozzle reaches the next kept point by combing through the hollow
+air, along a non-extruding travel the live file already had, or through the
+inset between the outer skins. That path does not ride an outer or overhang
+wall. The walls, seams, and layer-change lines are still the ones the slicer
+wrote.
 
 ``; filament used [g]`` and ``; total filament used [g]`` are written as the
 same value: the live grams plus the plastic this pass actually kept.
@@ -42,6 +42,7 @@ file does not need:
 """
 from __future__ import annotations
 
+import bisect
 import difflib
 import heapq
 import math
@@ -83,6 +84,14 @@ _REF_LAYER_H = 0.46
 _BRIDGE_MAX_MM = 0.75
 _WALL_RIDE_GAP_MM = 0.35
 _WALL_RIDE_MIN_MM = 0.50
+# Inset from the outer-wall centreline. A comb step stays off the bead, and a
+# single G1 longer than this is still an open-air chord even inside the part.
+_CHANNEL_INSET_MM = 0.45
+_CHANNEL_SAMPLE_MM = 0.5
+_CHANNEL_STEP_MM = 1.0
+_CHANNEL_MAX_SEG_MM = 2.5
+_CONNECTOR_MAX_MM = 1.25
+_Channel = dict[int, list[tuple[float, float, float]]]
 _FILAMENT_G_LINE = re.compile(r"^(;\s*filament used \[g\] = )([0-9.]+)\s*$", re.M)
 _FILAMENT_G_TOTAL = re.compile(r"^(;\s*total filament used \[g\] = )([0-9.]+)\s*$", re.M)
 _SKIN_TYPES = {"Outer wall", "Overhang wall", "WALL-OUTER"}
@@ -662,9 +671,10 @@ def sparse_travel_violations(before: str, after: str) -> dict[str, int]:
     """Added Sparse infill travels that are open-air chords or wall rides.
 
     A travel the live file already makes is allowed, and so is one that stays
-    in a previously hollow >=3 mm column. Counts are zero when every added
-    sparse travel is one of those, or a short hop into that air that does not
-    run along an outer or overhang wall.
+    in a previously hollow >=3 mm column or combs the inset between the outer
+    skins in short steps. A straight chord across empty space is not. Counts
+    are zero when every sparse travel is one of those, or a short step into
+    that air or that inset that does not run along an outer or overhang wall.
     """
     height = _file_bead_height(before)
     if height is None or height <= 0:
@@ -677,9 +687,12 @@ def sparse_travel_violations(before: str, after: str) -> dict[str, int]:
     index = _hollow_index(events, area, last)
     live = _travel_segments(before)
     walls = _wall_segments(events)
+    channel = _interior_channels(walls)
     open_air = wall_rides = 0
     for seg in _sparse_travels(after):
-        kind = _travel_violation(seg["layer"], seg["x0"], seg["y0"], seg["x1"], seg["y1"], index, live, walls)
+        kind = _travel_violation(
+            seg["layer"], seg["x0"], seg["y0"], seg["x1"], seg["y1"], index, live, walls, channel
+        )
         if kind == "open_air":
             open_air += 1
         elif kind == "wall_ride":
@@ -913,6 +926,226 @@ def _rides_wall(
     return False
 
 
+def _align_text(line: str) -> str:
+    """Line identity with the extrusion word removed, so an E rewrite still matches."""
+    raw = line.strip()
+    code, sep, comment = raw.partition(";")
+    code = _E_TOKEN.sub("", code)
+    code = re.sub(r"[ \t]+", " ", code).strip()
+    if not sep:
+        return code
+    return f"{code};{comment}"
+
+
+def _apply_xy(line: str, x: float, y: float) -> tuple[float, float]:
+    code = line.split(";", 1)[0].strip()
+    if not code:
+        return x, y
+    cmd = _command(code)
+    if not (cmd.startswith("G0") or cmd.startswith("G1")):
+        return x, y
+    words = dict(_WORD.findall(code))
+    if "X" in words:
+        x = float(words["X"])
+    if "Y" in words:
+        y = float(words["Y"])
+    return x, y
+
+
+def _xy_before_each_line(lines: list[str]) -> list[tuple[float, float]]:
+    x = y = 0.0
+    out: list[tuple[float, float]] = []
+    for line in lines:
+        out.append((x, y))
+        x, y = _apply_xy(line, x, y)
+    return out
+
+
+def _live_start_xy(before: str, after: str) -> dict[int, tuple[float, float]]:
+    """1-based ``after`` line -> XY the live file had before that same line.
+
+    Inserted fill is absent from the map. A later original move therefore
+    keeps the live start, not the end of a bead this pass dropped.
+    """
+    b_lines = before.splitlines()
+    a_lines = after.splitlines()
+    b_pos = _xy_before_each_line(b_lines)
+    b_groups = _layer_groups(b_lines)
+    a_groups = _layer_groups(a_lines)
+    if len(b_groups) != len(a_groups):
+        pairs = [(0, b_lines, 0, a_lines)]
+    else:
+        pairs = []
+        b_at = a_at = 0
+        for b_group, a_group in zip(b_groups, a_groups):
+            pairs.append((b_at, b_group, a_at, a_group))
+            b_at += len(b_group)
+            a_at += len(a_group)
+    found: dict[int, tuple[float, float]] = {}
+    for b_at, b_group, a_at, a_group in pairs:
+        matcher = difflib.SequenceMatcher(
+            a=[_align_text(line) for line in b_group],
+            b=[_align_text(line) for line in a_group],
+            autojunk=False,
+        )
+        for tag, i1, _i2, j1, j2 in matcher.get_opcodes():
+            if tag != "equal":
+                continue
+            for delta in range(j2 - j1):
+                found[a_at + j1 + delta + 1] = b_pos[b_at + i1 + delta]
+    return found
+
+
+def _wall_ys_at(segs: list[tuple[float, float, float, float]], x: float) -> list[float]:
+    ys: list[float] = []
+    for x0, y0, x1, y1 in segs:
+        if abs(x1 - x0) < 1e-9:
+            if abs(x - x0) <= _CHANNEL_SAMPLE_MM * 0.5:
+                ys.append(y0)
+                ys.append(y1)
+            continue
+        lo, hi = (x0, x1) if x0 <= x1 else (x1, x0)
+        if x < lo - 1e-6 or x > hi + 1e-6:
+            continue
+        t = (x - x0) / (x1 - x0)
+        if -0.001 <= t <= 1.001:
+            ys.append(y0 + t * (y1 - y0))
+    return ys
+
+
+def _interior_channels(walls: dict[int, list[tuple[float, float, float, float]]]) -> _Channel:
+    """Per layer, (x, y_lo, y_hi) samples of the inset between the outer skins."""
+    found: _Channel = {}
+    for layer, segs in walls.items():
+        if len(segs) < 2:
+            continue
+        xs = [value for seg in segs for value in (seg[0], seg[2])]
+        x = min(xs)
+        x_max = max(xs)
+        samples: list[tuple[float, float, float]] = []
+        while x <= x_max + 1e-9:
+            ys = _wall_ys_at(segs, x)
+            if len(ys) >= 2:
+                raw_lo, raw_hi = min(ys), max(ys)
+                lo = raw_lo + _CHANNEL_INSET_MM
+                hi = raw_hi - _CHANNEL_INSET_MM
+                if hi - lo >= 0.12:
+                    samples.append((round(x, 3), lo, hi))
+            x += _CHANNEL_SAMPLE_MM
+        if len(samples) >= 2:
+            found[layer] = samples
+    return found
+
+
+def _interval_at(samples: list[tuple[float, float, float]], x: float) -> tuple[float, float] | None:
+    if not samples:
+        return None
+    if x < samples[0][0] - 0.05 or x > samples[-1][0] + 0.05:
+        return None
+    if x <= samples[0][0]:
+        return (samples[0][1], samples[0][2]) if samples[0][0] - x <= 0.05 else None
+    i = bisect.bisect_right(samples, (x, math.inf, math.inf)) - 1
+    if i < 0:
+        return None
+    if i + 1 >= len(samples):
+        return (samples[i][1], samples[i][2]) if x - samples[i][0] <= 0.05 else None
+    left, right = samples[i], samples[i + 1]
+    if right[0] - left[0] > _CHANNEL_SAMPLE_MM + 0.26:
+        if x - left[0] <= 0.05:
+            return left[1], left[2]
+        if right[0] - x <= 0.05:
+            return right[1], right[2]
+        return None
+    span = right[0] - left[0]
+    t = 0.0 if span < 1e-9 else (x - left[0]) / span
+    lo = left[1] + t * (right[1] - left[1])
+    hi = left[2] + t * (right[2] - left[2])
+    if hi - lo < 0.08:
+        return None
+    return lo, hi
+
+
+def _segment_in_channel(
+    layer: int,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    channel: _Channel | None,
+    limit_length: bool = True,
+) -> bool:
+    if not channel:
+        return False
+    samples = channel.get(layer)
+    if not samples:
+        return False
+    length = math.hypot(x1 - x0, y1 - y0)
+    if limit_length and length > _CHANNEL_MAX_SEG_MM:
+        return False
+    steps = max(1, int(math.ceil(length / 0.25)))
+    for step in range(steps + 1):
+        t = step / steps
+        x = x0 + (x1 - x0) * t
+        y = y0 + (y1 - y0) * t
+        interval = _interval_at(samples, x)
+        # 0.002 mm covers rounding the inset edge to the 0.001 mm the G1 line writes.
+        if interval is None or not (interval[0] - 0.002 <= y <= interval[1] + 0.002):
+            return False
+    return True
+
+
+def _segment_in_span(layer: int, x0: float, y0: float, x1: float, y1: float, channel: _Channel | None) -> bool:
+    if not channel:
+        return False
+    samples = channel.get(layer)
+    if not samples:
+        return False
+    length = math.hypot(x1 - x0, y1 - y0)
+    steps = max(1, int(math.ceil(length / 0.25)))
+    inset = _CHANNEL_INSET_MM
+    for step in range(steps + 1):
+        t = step / steps
+        x = x0 + (x1 - x0) * t
+        y = y0 + (y1 - y0) * t
+        interval = _interval_at(samples, x)
+        if interval is None:
+            return False
+        raw_lo = interval[0] - inset
+        raw_hi = interval[1] + inset
+        if y < raw_lo - 0.08 or y > raw_hi + 0.08:
+            return False
+    return True
+
+
+def _point_in_channel(layer: int, x: float, y: float, channel: _Channel | None) -> bool:
+    if not channel:
+        return False
+    samples = channel.get(layer)
+    if not samples:
+        return False
+    interval = _interval_at(samples, x)
+    return interval is not None and interval[0] - 0.002 <= y <= interval[1] + 0.002
+
+
+def _channel_connector(
+    layer: int,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    channel: _Channel | None,
+) -> bool:
+    """A short step from the skin into the inset, not a hop out of the column."""
+    length = math.hypot(x1 - x0, y1 - y0)
+    if length > _CONNECTOR_MAX_MM:
+        return False
+    inside0 = _point_in_channel(layer, x0, y0, channel)
+    inside1 = _point_in_channel(layer, x1, y1, channel)
+    if inside0 == inside1:
+        return False
+    return _segment_in_span(layer, x0, y0, x1, y1, channel)
+
+
 def _travel_violation(
     layer: int,
     x0: float,
@@ -922,6 +1155,7 @@ def _travel_violation(
     index: dict[tuple[int, int], tuple[float, float]],
     live: dict[int, list[tuple[float, float, float, float]]],
     walls: dict[int, list[tuple[float, float, float, float]]],
+    channel: _Channel | None = None,
 ) -> str | None:
     length = math.hypot(x1 - x0, y1 - y0)
     if length <= 0.02:
@@ -935,6 +1169,10 @@ def _travel_violation(
     in0 = _point_in_air(layer, x0, y0, index)
     in1 = _point_in_air(layer, x1, y1, index)
     if length <= _BRIDGE_MAX_MM and in0 != in1:
+        return None
+    if _segment_in_channel(layer, x0, y0, x1, y1, channel):
+        return None
+    if _channel_connector(layer, x0, y0, x1, y1, channel):
         return None
     return "open_air"
 
@@ -990,9 +1228,10 @@ def _path_clean(
     index: dict[tuple[int, int], tuple[float, float]],
     live: dict[int, list[tuple[float, float, float, float]]],
     walls: dict[int, list[tuple[float, float, float, float]]],
+    channel: _Channel | None = None,
 ) -> bool:
     for start, dest in zip(path, path[1:]):
-        if _travel_violation(layer, start[0], start[1], dest[0], dest[1], index, live, walls) is not None:
+        if _travel_violation(layer, start[0], start[1], dest[0], dest[1], index, live, walls, channel) is not None:
             return False
     return True
 
@@ -1039,6 +1278,88 @@ def _route_in_air(
     return path
 
 
+def _densify_leg(points: list[tuple[float, float]], x0: float, y0: float, x1: float, y1: float) -> None:
+    length = math.hypot(x1 - x0, y1 - y0)
+    if length <= _CHANNEL_STEP_MM:
+        points.append((x1, y1))
+        return
+    steps = int(math.ceil(length / _CHANNEL_STEP_MM))
+    for step in range(1, steps + 1):
+        t = step / steps
+        points.append((x0 + (x1 - x0) * t, y0 + (y1 - y0) * t))
+
+
+def _route_interior(
+    layer: int,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    index: dict[tuple[int, int], tuple[float, float]],
+    live: dict[int, list[tuple[float, float, float, float]]],
+    walls: dict[int, list[tuple[float, float, float, float]]],
+    channel: _Channel,
+) -> list[tuple[float, float]] | None:
+    """Comb along the midline of the inset between the outer skins.
+
+    The straight chord is not used. Each emitted step is short enough that a
+    single open-air G1 still fails the travel check.
+    """
+    samples = channel.get(layer)
+    if not samples:
+        return None
+
+    def project(x: float, y: float) -> tuple[float, float] | None:
+        interval = _interval_at(samples, x)
+        if interval is None:
+            return None
+        lo, hi = interval
+        return min(max(y, lo), hi), (lo + hi) * 0.5
+
+    span = abs(x1 - x0)
+    steps = max(1, int(math.ceil(span / _CHANNEL_STEP_MM)))
+    xs = [x0 + (x1 - x0) * (step / steps) for step in range(steps + 1)]
+    mids: list[tuple[float, float]] = []
+    for x in xs:
+        interval = _interval_at(samples, x)
+        if interval is None:
+            return None
+        mids.append((x, (interval[0] + interval[1]) * 0.5))
+    start = project(x0, y0)
+    goal = project(x1, y1)
+    if start is None or goal is None:
+        return None
+    if abs(y0 - start[0]) > _CONNECTOR_MAX_MM and not _point_in_channel(layer, x0, y0, channel):
+        return None
+    if abs(y1 - goal[0]) > _CONNECTOR_MAX_MM and not _point_in_channel(layer, x1, y1, channel):
+        return None
+    corners: list[tuple[float, float]] = [(x0, y0)]
+    if abs(y0 - start[0]) > 0.02:
+        corners.append((x0, start[0]))
+    if abs(start[0] - mids[0][1]) > 0.02:
+        corners.append(mids[0])
+    elif abs(corners[-1][0] - mids[0][0]) > 0.02 or abs(corners[-1][1] - mids[0][1]) > 0.02:
+        corners.append(mids[0])
+    corners.extend(mids[1:])
+    if abs(corners[-1][1] - goal[0]) > 0.02:
+        corners.append((x1, goal[0]))
+    if abs(goal[0] - y1) > 0.02:
+        corners.append((x1, y1))
+    dense: list[tuple[float, float]] = [corners[0]]
+    for left, right in zip(corners, corners[1:]):
+        whole_in = _segment_in_channel(layer, left[0], left[1], right[0], right[1], channel, limit_length=False)
+        if whole_in:
+            _densify_leg(dense, left[0], left[1], right[0], right[1])
+        else:
+            dense.append(right)
+    path = _dedupe_path(dense)
+    if len(path) < 2:
+        return None
+    if _path_clean(layer, path, index, live, walls, channel):
+        return path
+    return None
+
+
 def _route_bridges(
     layer: int,
     x0: float,
@@ -1048,6 +1369,7 @@ def _route_bridges(
     index: dict[tuple[int, int], tuple[float, float]],
     live: dict[int, list[tuple[float, float, float, float]]],
     walls: dict[int, list[tuple[float, float, float, float]]],
+    channel: _Channel | None = None,
 ) -> list[tuple[float, float]] | None:
     start = (x0, y0) if _point_in_air(layer, x0, y0, index) else _entry_point(layer, x0, y0, index, walls)
     goal = (x1, y1) if _point_in_air(layer, x1, y1, index) else _entry_point(layer, x1, y1, index, walls)
@@ -1063,7 +1385,7 @@ def _route_bridges(
     if (x1, y1) != goal:
         path.append((x1, y1))
     path = _dedupe_path(path)
-    if not _path_clean(layer, path, index, live, walls):
+    if not _path_clean(layer, path, index, live, walls, channel):
         return None
     return path
 
@@ -1077,6 +1399,7 @@ def _route_via_live(
     index: dict[tuple[int, int], tuple[float, float]],
     live: dict[int, list[tuple[float, float, float, float]]],
     walls: dict[int, list[tuple[float, float, float, float]]],
+    channel: _Channel | None = None,
 ) -> list[tuple[float, float]] | None:
     """Reach a point that is outside the hollow by riding travels the live file already has."""
     segs = live.get(layer, [])
@@ -1139,13 +1462,13 @@ def _route_via_live(
                 ordered.append(i)
         for i, j in zip(ordered, ordered[1:]):
             poly = [nodes[i], nodes[j]]
-            if _travel_violation(layer, poly[0][0], poly[0][1], poly[1][0], poly[1][1], index, live, walls) is not None:
+            if _travel_violation(layer, poly[0][0], poly[0][1], poly[1][0], poly[1][1], index, live, walls, channel) is not None:
                 continue
             link(i, j, poly)
             link(j, i, [nodes[j], nodes[i]])
     for i, j in bridges:
         poly = [nodes[i], nodes[j]]
-        if _travel_violation(layer, poly[0][0], poly[0][1], poly[1][0], poly[1][1], index, live, walls) is not None:
+        if _travel_violation(layer, poly[0][0], poly[0][1], poly[1][0], poly[1][1], index, live, walls, channel) is not None:
             continue
         link(i, j, poly)
         link(j, i, [nodes[j], nodes[i]])
@@ -1158,7 +1481,7 @@ def _route_via_live(
             if path is None:
                 continue
             path = _dedupe_path(path)
-            if not _path_clean(layer, path, index, live, walls):
+            if not _path_clean(layer, path, index, live, walls, channel):
                 continue
             link(hub, i, path)
             link(i, hub, list(reversed(path)))
@@ -1202,9 +1525,9 @@ def _route_via_live(
         else:
             path.extend(poly[1:])
     cleaned = _dedupe_path(path)
-    if _path_clean(layer, cleaned, index, live, walls):
+    if _path_clean(layer, cleaned, index, live, walls, channel):
         return cleaned
-    if _path_clean(layer, path, index, live, walls):
+    if _path_clean(layer, path, index, live, walls, channel):
         return path
     return None
 
@@ -1218,22 +1541,27 @@ def _route_confined(
     index: dict[tuple[int, int], tuple[float, float]],
     live: dict[int, list[tuple[float, float, float, float]]],
     walls: dict[int, list[tuple[float, float, float, float]]],
+    channel: _Channel | None = None,
 ) -> list[tuple[float, float]] | None:
     if math.hypot(x1 - x0, y1 - y0) <= 0.02:
         return [(round(x1, 3), round(y1, 3))]
     straight = _dedupe_path([(x0, y0), (x1, y1)])
-    if _path_clean(layer, straight, index, live, walls):
+    if _path_clean(layer, straight, index, live, walls, channel):
         return straight
     if _point_in_air(layer, x0, y0, index) and _point_in_air(layer, x1, y1, index):
         inner = _route_in_air(layer, x0, y0, x1, y1, index)
         if inner is not None:
             inner = _dedupe_path(inner)
-            if _path_clean(layer, inner, index, live, walls):
+            if _path_clean(layer, inner, index, live, walls, channel):
                 return inner
-    bridged = _route_bridges(layer, x0, y0, x1, y1, index, live, walls)
+    bridged = _route_bridges(layer, x0, y0, x1, y1, index, live, walls, channel)
     if bridged is not None:
         return bridged
-    return _route_via_live(layer, x0, y0, x1, y1, index, live, walls)
+    if channel:
+        combed = _route_interior(layer, x0, y0, x1, y1, index, live, walls, channel)
+        if combed is not None:
+            return combed
+    return _route_via_live(layer, x0, y0, x1, y1, index, live, walls, channel)
 
 
 def _confine_added_sparse(before: str, after: str) -> str:
@@ -1243,9 +1571,10 @@ def _confine_added_sparse(before: str, after: str) -> str:
     move is rewritten so the next kept move does not inherit the dropped
     plastic. A dropped extrusion is not left as a travel on that path. The
     nozzle is brought to the next kept point on a confined travel, so the
-    following extrusion does not stretch across the gap. Lines the bond did
-    not add are copied through, including every outer wall, seam, and layer
-    change.
+    following extrusion does not stretch across the gap. An original line is
+    met at the XY the live file had, not at the end of a bead this pass
+    dropped. Lines the bond did not add are copied through, including every
+    outer wall, seam, and layer change.
     """
     if before == after:
         return after
@@ -1260,6 +1589,7 @@ def _confine_added_sparse(before: str, after: str) -> str:
     index = _hollow_index(events, area, last)
     live = _travel_segments(before)
     walls = _wall_segments(events)
+    channel = _interior_channels(walls)
     base_keys: dict[tuple, int] = {}
     for ev in events:
         key = _segment_key(ev)
@@ -1279,6 +1609,7 @@ def _confine_added_sparse(before: str, after: str) -> str:
     if not drop and sparse_travel_violations(before, after) == {"open_air": 0, "wall_rides": 0}:
         return after
     added = _added_line_numbers(before, after)
+    live_xy = _live_start_xy(before, after)
     lines = after.splitlines(keepends=True)
     e_in = Decimal(0)
     e_out = Decimal(0)
@@ -1304,9 +1635,12 @@ def _confine_added_sparse(before: str, after: str) -> str:
         if math.hypot(dest_x - emitted_x, dest_y - emitted_y) <= 0.02:
             emitted_x, emitted_y = dest_x, dest_y
             return
-        path = _route_confined(route_layer, emitted_x, emitted_y, dest_x, dest_y, index, live, walls)
+        path = _route_confined(route_layer, emitted_x, emitted_y, dest_x, dest_y, index, live, walls, channel)
         if path is None:
-            path = _dedupe_path([(emitted_x, emitted_y), (dest_x, dest_y)])
+            # A straight chord is the open-air travel this pass must not write.
+            # Leave the nozzle where the last kept move put it rather than cut
+            # across empty space.
+            return
         for px, py in path[1:]:
             kept.append(f"G1 X{px:.3f} Y{py:.3f} F30000{route_nl}")
         emitted_x, emitted_y = dest_x, dest_y
@@ -1369,7 +1703,7 @@ def _confine_added_sparse(before: str, after: str) -> str:
         bad_travel = False
         if moved and not extruding and number in added and typ == "Sparse infill":
             bad_travel = diverged or (
-                _travel_violation(layer, file_x, file_y, nx, ny, index, live, walls) is not None
+                _travel_violation(layer, file_x, file_y, nx, ny, index, live, walls, channel) is not None
             )
         if number in drop or bad_travel:
             if not diverged:
@@ -1387,15 +1721,14 @@ def _confine_added_sparse(before: str, after: str) -> str:
             else:
                 kept.append(line)
             continue
+        dest_x, dest_y = live_xy.get(number, (file_x, file_y))
         if diverged or (
-            emitted_x is not None
-            and emitted_y is not None
-            and math.hypot(emitted_x - file_x, emitted_y - file_y) > 0.02
+            emitted_x is not None and emitted_y is not None and math.hypot(emitted_x - dest_x, emitted_y - dest_y) > 0.02
         ):
             if not diverged:
                 route_layer = layer
                 route_nl = nl
-            emit_route(file_x, file_y)
+            emit_route(dest_x, dest_y)
             kept.extend(buffer)
             buffer.clear()
             diverged = False

@@ -449,6 +449,54 @@ class SparseFillStaysInHollowSections(unittest.TestCase):
         self.assertNotIn("G1 X20 Y20 F30000", confined)
         self.assertEqual(sparse_travel_violations(skins, confined), {"open_air": 0, "wall_rides": 0}, confined)
 
+    def test_a_dropped_bead_does_not_pull_the_nozzle_off_the_live_point(self) -> None:
+        skins = "\n".join(
+            [
+                "; layer_height = 0.42",
+                "; filament_diameter: 1.75",
+                "; filament_density: 1.2",
+                "M82",
+                ";LAYER_CHANGE",
+                ";LAYER_CHANGE",
+                ";TYPE:Outer wall",
+                "G1 X100 Y0 F1000",
+                "G1 X110 Y0 E0.40000",
+                "G1 X100 Y4 F30000",
+                "G1 X110 Y4 E0.80000",
+                ";LAYER_CHANGE",
+                ";TYPE:Outer wall",
+                "G1 X112 Y4 E0.90000",
+            ]
+        ) + "\n"
+        added = "\n".join(
+            [
+                "; layer_height = 0.42",
+                "; filament_diameter: 1.75",
+                "; filament_density: 1.2",
+                "M82",
+                ";LAYER_CHANGE",
+                ";LAYER_CHANGE",
+                ";TYPE:Outer wall",
+                "G1 X100 Y0 F1000",
+                "G1 X110 Y0 E0.40000",
+                "G1 X100 Y4 F30000",
+                "G1 X110 Y4 E0.80000",
+                ";TYPE:Sparse infill",
+                "G1 X104 Y2 F30000",
+                "G1 X106 Y2 E0.85000",
+                "G1 X51 Y2 F30000",
+                ";TYPE:Outer wall",
+                ";LAYER_CHANGE",
+                ";TYPE:Outer wall",
+                "G1 X112 Y4 E0.95000",
+            ]
+        ) + "\n"
+        confined = _confine_added_sparse(skins, added)
+        self.assertIn("G1 X106 Y2 E0.85000", confined)
+        self.assertNotIn("X51", confined)
+        self.assertIn("G1 X112 Y4 E0.95000", confined)
+        self.assertEqual(sparse_travel_violations(skins, confined), {"open_air": 0, "wall_rides": 0}, confined)
+
     def test_gram_footers_match_the_kept_plastic(self) -> None:
         skins = "\n".join(
             [
