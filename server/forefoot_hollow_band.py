@@ -18,8 +18,16 @@ column. The column is the 0.25 mm tool: outer skins at least 3 mm apart,
 more than 1 mm of air between the inner faces, and no fill already in that
 air. The bead's midpoint has to sit in that air (the same half-millimetre
 contact the bead uses to touch the skins). A bead in a 3–6 mm section that
-was not hollow is not written. The walls, seams, and layer-change lines are
-still the ones the slicer wrote.
+was not hollow is not written. Dropping it does not leave a travel on that
+path: the chord would be open air, or a ride along the outer wall. The
+nozzle still reaches the next kept point, on a travel that stays in the
+hollow air or on a non-extruding travel the live file already had. A hop
+shorter than a bead, off the wall rather than along it, is only the step
+into that air. The walls, seams, and layer-change lines are still the ones
+the slicer wrote.
+
+``; filament used [g]`` and ``; total filament used [g]`` are written as the
+same value: the live grams plus the plastic this pass actually kept.
 
 This module does not change the ApexCore file. Two adaptations the ApexCore
 file does not need:
@@ -34,6 +42,8 @@ file does not need:
 """
 from __future__ import annotations
 
+import difflib
+import heapq
 import math
 import re
 import sys
@@ -55,7 +65,6 @@ _DIAMETER = re.compile(r"^;\s*filament_diameter:\s*([0-9.]+)\s*$", re.M)
 _DENSITY = re.compile(r"^;\s*filament_density:\s*([0-9.]+)\s*$", re.M)
 _FILAMENT_MM = re.compile(r"^(;\s*filament used \[mm\] = )([0-9.]+)\s*$", re.M)
 _FILAMENT_CM3 = re.compile(r"^(;\s*filament used \[cm3\] = )([0-9.]+)\s*$", re.M)
-_FILAMENT_G = re.compile(r"^(;\s*(?:total )?filament used \[g\] = )([0-9.]+)\s*$", re.M)
 _E_TOKEN = re.compile(r"E([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)")
 _WORD = re.compile(r"([GMXYZEFS])([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)")
 _HEIGHT = re.compile(r"^;HEIGHT:([0-9.]+)")
@@ -70,6 +79,12 @@ _H_BEAD = 0.46
 _COS_MIN = 0.25
 _FOREFOOT_CAP = 165
 _REF_LAYER_H = 0.46
+# A hop into the hollow air, not a chord across the part. One bead is ~0.5 mm.
+_BRIDGE_MAX_MM = 0.75
+_WALL_RIDE_GAP_MM = 0.35
+_WALL_RIDE_MIN_MM = 0.50
+_FILAMENT_G_LINE = re.compile(r"^(;\s*filament used \[g\] = )([0-9.]+)\s*$", re.M)
+_FILAMENT_G_TOTAL = re.compile(r"^(;\s*total filament used \[g\] = )([0-9.]+)\s*$", re.M)
 _SKIN_TYPES = {"Outer wall", "Overhang wall", "WALL-OUTER"}
 _FILL_TYPES = {"Sparse infill", "Internal solid infill", "Solid infill", "Gap infill"}
 _LEADER_TYPES = {"Skirt", "Brim", "Support", "Support interface", "Prime tower", "Wipe tower"}
@@ -633,13 +648,604 @@ def added_sparse_outside_hollow(before: str, after: str) -> int:
     return outside
 
 
+def gram_footers(text: str) -> tuple[float | None, float | None]:
+    """``; filament used [g]`` and ``; total filament used [g]``, if present."""
+    used = _FILAMENT_G_LINE.search(text)
+    total = _FILAMENT_G_TOTAL.search(text)
+    return (
+        float(used.group(2)) if used else None,
+        float(total.group(2)) if total else None,
+    )
+
+
+def sparse_travel_violations(before: str, after: str) -> dict[str, int]:
+    """Added Sparse infill travels that are open-air chords or wall rides.
+
+    A travel the live file already makes is allowed, and so is one that stays
+    in a previously hollow >=3 mm column. Counts are zero when every added
+    sparse travel is one of those, or a short hop into that air that does not
+    run along an outer or overhang wall.
+    """
+    height = _file_bead_height(before)
+    if height is None or height <= 0:
+        return {"open_air": 0, "wall_rides": 0}
+    last = _equivalent_last(height)
+    diam = _DIAMETER.search(before)
+    diameter = float(diam.group(1)) if diam else 1.75
+    area = math.pi * (diameter * 0.5) ** 2
+    events = _gate_events(before)
+    index = _hollow_index(events, area, last)
+    live = _travel_segments(before)
+    walls = _wall_segments(events)
+    open_air = wall_rides = 0
+    for seg in _sparse_travels(after):
+        kind = _travel_violation(seg["layer"], seg["x0"], seg["y0"], seg["x1"], seg["y1"], index, live, walls)
+        if kind == "open_air":
+            open_air += 1
+        elif kind == "wall_ride":
+            wall_rides += 1
+    return {"open_air": open_air, "wall_rides": wall_rides}
+
+
+def _layer_groups(lines: list[str]) -> list[list[str]]:
+    groups: list[list[str]] = []
+    current: list[str] = []
+    for line in lines:
+        if line.startswith(";LAYER_CHANGE") and current:
+            groups.append(current)
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _added_line_numbers(before: str, after: str) -> set[int]:
+    """1-based line numbers in ``after`` that are not copied from ``before``."""
+    b_lines = before.splitlines()
+    a_lines = after.splitlines()
+    b_groups = _layer_groups(b_lines)
+    a_groups = _layer_groups(a_lines)
+    added: set[int] = set()
+    if len(b_groups) != len(a_groups):
+        pairs = [(0, b_lines, 0, a_lines)]
+    else:
+        pairs = []
+        b_at = a_at = 0
+        for b_group, a_group in zip(b_groups, a_groups):
+            pairs.append((b_at, b_group, a_at, a_group))
+            b_at += len(b_group)
+            a_at += len(a_group)
+    for _b_at, b_group, a_at, a_group in pairs:
+        matcher = difflib.SequenceMatcher(a=b_group, b=a_group, autojunk=False)
+        for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+            if tag in ("insert", "replace"):
+                for offset in range(j1, j2):
+                    added.add(a_at + offset + 1)
+    return added
+
+
+def _travel_segments(text: str) -> dict[int, list[tuple[float, float, float, float]]]:
+    """Non-extruding XY moves, keyed by the same layer numbers as ``_gate_events``."""
+    found: dict[int, list[tuple[float, float, float, float]]] = {}
+    for seg in _sparse_travels(text, sparse_only=False):
+        found.setdefault(seg["layer"], []).append((seg["x0"], seg["y0"], seg["x1"], seg["y1"]))
+    return found
+
+
+def _wall_segments(events: list[dict]) -> dict[int, list[tuple[float, float, float, float]]]:
+    found: dict[int, list[tuple[float, float, float, float]]] = {}
+    for ev in events:
+        if ev.get("type") not in _SKIN_TYPES:
+            continue
+        found.setdefault(ev["layer"], []).append((ev["x0"], ev["y0"], ev["x1"], ev["y1"]))
+    return found
+
+
+def _sparse_travels(text: str, sparse_only: bool = True) -> list[dict]:
+    x = y = e_abs = 0.0
+    relative = True
+    layer = -1
+    typ = None
+    out: list[dict] = []
+    for ln, raw in enumerate(text.splitlines(), 1):
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(";"):
+            if stripped.startswith(";LAYER:"):
+                try:
+                    layer = int(stripped.split(":", 1)[1])
+                except ValueError:
+                    layer += 1
+            elif stripped.startswith(";LAYER_CHANGE"):
+                layer += 1
+            elif stripped.startswith(";TYPE:"):
+                name = stripped[6:].strip()
+                typ = _TYPE_ALIAS.get(name, name)
+            continue
+        body = stripped.split(";", 1)[0].strip()
+        if not body:
+            continue
+        words = dict(_WORD.findall(body))
+        if "M" in words:
+            code = int(float(words["M"]))
+            if code == 82:
+                relative = False
+            elif code == 83:
+                relative = True
+            continue
+        if "G" not in words:
+            continue
+        g = int(float(words["G"]))
+        if g == 92:
+            if "E" in words:
+                e_abs = float(words["E"])
+            continue
+        if g not in (0, 1):
+            continue
+        nx = float(words["X"]) if "X" in words else x
+        ny = float(words["Y"]) if "Y" in words else y
+        de = 0.0
+        if "E" in words:
+            stated = float(words["E"])
+            de = stated if relative else stated - e_abs
+            if not relative:
+                e_abs = stated
+        moved = abs(nx - x) > 1e-9 or abs(ny - y) > 1e-9
+        if moved and de <= 1e-9 and (not sparse_only or typ == "Sparse infill"):
+            out.append({"line": ln, "layer": layer, "x0": x, "y0": y, "x1": nx, "y1": ny})
+        x, y = nx, ny
+    return out
+
+
+def _point_in_air(layer: int, x: float, y: float, index: dict[tuple[int, int], tuple[float, float]]) -> bool:
+    binn = int(math.floor(x / _TOOL_MM))
+    for b in range(binn - 1, binn + 2):
+        hit = index.get((layer, b))
+        if hit is None:
+            continue
+        xa = b * _TOOL_MM
+        xb = (b + 1) * _TOOL_MM
+        if x < xa - 1e-6 or x > xb + 1e-6:
+            continue
+        if hit[0] + 1e-6 < y < hit[1] - 1e-6:
+            return True
+    return False
+
+
+def _segment_in_air(
+    layer: int,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    index: dict[tuple[int, int], tuple[float, float]],
+) -> bool:
+    length = math.hypot(x1 - x0, y1 - y0)
+    if length < 1e-9:
+        return _point_in_air(layer, x0, y0, index)
+    steps = max(1, int(math.ceil(length / _TOOL_MM)))
+    for step in range(steps + 1):
+        t = step / steps
+        if not _point_in_air(layer, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, index):
+            return False
+    return True
+
+
+def _point_segment_distance(px: float, py: float, x0: float, y0: float, x1: float, y1: float) -> float:
+    dx, dy = x1 - x0, y1 - y0
+    len2 = dx * dx + dy * dy
+    if len2 < 1e-12:
+        return math.hypot(px - x0, py - y0)
+    t = ((px - x0) * dx + (py - y0) * dy) / len2
+    t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+    return math.hypot(px - (x0 + t * dx), py - (y0 + t * dy))
+
+
+def _overlap_length(
+    ax0: float, ay0: float, ax1: float, ay1: float, bx0: float, by0: float, bx1: float, by1: float
+) -> float:
+    dx, dy = bx1 - bx0, by1 - by0
+    length = math.hypot(dx, dy)
+    if length < 1e-9:
+        return 0.0
+    ux, uy = dx / length, dy / length
+
+    def project(x: float, y: float) -> float:
+        return (x - bx0) * ux + (y - by0) * uy
+
+    a0, a1 = project(ax0, ay0), project(ax1, ay1)
+    if a0 > a1:
+        a0, a1 = a1, a0
+    return max(0.0, min(a1, length) - max(a0, 0.0))
+
+
+def _on_live_travel(
+    layer: int,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    live: dict[int, list[tuple[float, float, float, float]]],
+) -> bool:
+    for sx0, sy0, sx1, sy1 in live.get(layer, ()):
+        if _point_segment_distance(x0, y0, sx0, sy0, sx1, sy1) > 0.05:
+            continue
+        if _point_segment_distance(x1, y1, sx0, sy0, sx1, sy1) > 0.05:
+            continue
+        dx, dy = x1 - x0, y1 - y0
+        sx, sy = sx1 - sx0, sy1 - sy0
+        if math.hypot(dx, dy) < 1e-9 or math.hypot(sx, sy) < 1e-9:
+            return True
+        cross = abs(dx * sy - dy * sx)
+        if cross <= 0.05 * math.hypot(dx, dy):
+            return True
+    return False
+
+
+def _rides_wall(
+    layer: int,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    walls: dict[int, list[tuple[float, float, float, float]]],
+) -> bool:
+    length = math.hypot(x1 - x0, y1 - y0)
+    if length < 0.2:
+        return False
+    dx, dy = (x1 - x0) / length, (y1 - y0) / length
+    for wx0, wy0, wx1, wy1 in walls.get(layer, ()):
+        wlen = math.hypot(wx1 - wx0, wy1 - wy0)
+        if wlen < 0.2:
+            continue
+        ux, uy = (wx1 - wx0) / wlen, (wy1 - wy0) / wlen
+        if abs(dx * ux + dy * uy) < 0.85:
+            continue
+        if _point_segment_distance(x0, y0, wx0, wy0, wx1, wy1) > _WALL_RIDE_GAP_MM:
+            continue
+        if _point_segment_distance(x1, y1, wx0, wy0, wx1, wy1) > _WALL_RIDE_GAP_MM:
+            continue
+        if _overlap_length(x0, y0, x1, y1, wx0, wy0, wx1, wy1) > _WALL_RIDE_MIN_MM:
+            return True
+    return False
+
+
+def _travel_violation(
+    layer: int,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    index: dict[tuple[int, int], tuple[float, float]],
+    live: dict[int, list[tuple[float, float, float, float]]],
+    walls: dict[int, list[tuple[float, float, float, float]]],
+) -> str | None:
+    length = math.hypot(x1 - x0, y1 - y0)
+    if length <= 0.02:
+        return None
+    if _on_live_travel(layer, x0, y0, x1, y1, live):
+        return None
+    if _rides_wall(layer, x0, y0, x1, y1, walls):
+        return "wall_ride"
+    if _segment_in_air(layer, x0, y0, x1, y1, index):
+        return None
+    in0 = _point_in_air(layer, x0, y0, index)
+    in1 = _point_in_air(layer, x1, y1, index)
+    if length <= _BRIDGE_MAX_MM and in0 != in1:
+        return None
+    return "open_air"
+
+
+def _entry_point(
+    layer: int,
+    x: float,
+    y: float,
+    index: dict[tuple[int, int], tuple[float, float]],
+    walls: dict[int, list[tuple[float, float, float, float]]],
+) -> tuple[float, float] | None:
+    if _point_in_air(layer, x, y, index):
+        return (x, y)
+    best: tuple[float, float] | None = None
+    best_d = _BRIDGE_MAX_MM + 1.0
+    binn = int(math.floor(x / _TOOL_MM))
+    span = int(math.ceil(_BRIDGE_MAX_MM / _TOOL_MM)) + 3
+    for b in range(binn - span, binn + span + 1):
+        hit = index.get((layer, b))
+        if hit is None:
+            continue
+        phigh, dlow = hit
+        if dlow - phigh < 0.08:
+            continue
+        inset = min(0.05, (dlow - phigh) * 0.15)
+        xa, xb = b * _TOOL_MM, (b + 1) * _TOOL_MM
+        cx = min(max(x, xa + 1e-3), xb - 1e-3)
+        cy = min(max(y, phigh + inset), dlow - inset)
+        if not _point_in_air(layer, cx, cy, index):
+            continue
+        dist = math.hypot(cx - x, cy - y)
+        if dist > _BRIDGE_MAX_MM or dist >= best_d:
+            continue
+        if _rides_wall(layer, x, y, cx, cy, walls):
+            continue
+        best_d = dist
+        best = (cx, cy)
+    return best
+
+
+def _dedupe_path(path: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    out: list[tuple[float, float]] = []
+    for point in path:
+        rounded = (round(point[0], 3), round(point[1], 3))
+        if not out or math.hypot(rounded[0] - out[-1][0], rounded[1] - out[-1][1]) > 0.02:
+            out.append(rounded)
+    return out
+
+
+def _path_clean(
+    layer: int,
+    path: list[tuple[float, float]],
+    index: dict[tuple[int, int], tuple[float, float]],
+    live: dict[int, list[tuple[float, float, float, float]]],
+    walls: dict[int, list[tuple[float, float, float, float]]],
+) -> bool:
+    for start, dest in zip(path, path[1:]):
+        if _travel_violation(layer, start[0], start[1], dest[0], dest[1], index, live, walls) is not None:
+            return False
+    return True
+
+
+def _route_in_air(
+    layer: int,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    index: dict[tuple[int, int], tuple[float, float]],
+) -> list[tuple[float, float]] | None:
+    if not (_point_in_air(layer, x0, y0, index) and _point_in_air(layer, x1, y1, index)):
+        return None
+    if _segment_in_air(layer, x0, y0, x1, y1, index):
+        return [(x0, y0), (x1, y1)]
+    xa, xb = (x0, x1) if x0 <= x1 else (x1, x0)
+    b0 = int(math.floor(xa / _TOOL_MM))
+    b1 = int(math.floor((xb - 1e-9) / _TOOL_MM))
+    lo_y, hi_y = -1e9, 1e9
+    for b in range(b0, b1 + 1):
+        hit = index.get((layer, b))
+        if hit is None:
+            return None
+        lo_y = max(lo_y, hit[0])
+        hi_y = min(hi_y, hit[1])
+    if hi_y - lo_y < 0.05:
+        return None
+    inset = min(0.02, (hi_y - lo_y) * 0.1)
+    target = min(max((y0 + y1) * 0.5, lo_y + inset), hi_y - inset)
+    if not _segment_in_air(layer, x0, y0, x0, target, index):
+        return None
+    if not _segment_in_air(layer, x0, target, x1, target, index):
+        return None
+    if not _segment_in_air(layer, x1, target, x1, y1, index):
+        return None
+    path = [(x0, y0)]
+    if abs(y0 - target) > 1e-6:
+        path.append((x0, target))
+    if abs(x0 - x1) > 1e-6:
+        path.append((x1, target))
+    if abs(path[-1][0] - x1) > 1e-6 or abs(path[-1][1] - y1) > 1e-6:
+        path.append((x1, y1))
+    return path
+
+
+def _route_bridges(
+    layer: int,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    index: dict[tuple[int, int], tuple[float, float]],
+    live: dict[int, list[tuple[float, float, float, float]]],
+    walls: dict[int, list[tuple[float, float, float, float]]],
+) -> list[tuple[float, float]] | None:
+    start = (x0, y0) if _point_in_air(layer, x0, y0, index) else _entry_point(layer, x0, y0, index, walls)
+    goal = (x1, y1) if _point_in_air(layer, x1, y1, index) else _entry_point(layer, x1, y1, index, walls)
+    if start is None or goal is None:
+        return None
+    mid = _route_in_air(layer, start[0], start[1], goal[0], goal[1], index)
+    if mid is None:
+        return None
+    path: list[tuple[float, float]] = []
+    if (x0, y0) != start:
+        path.append((x0, y0))
+    path.extend(mid)
+    if (x1, y1) != goal:
+        path.append((x1, y1))
+    path = _dedupe_path(path)
+    if not _path_clean(layer, path, index, live, walls):
+        return None
+    return path
+
+
+def _route_via_live(
+    layer: int,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    index: dict[tuple[int, int], tuple[float, float]],
+    live: dict[int, list[tuple[float, float, float, float]]],
+    walls: dict[int, list[tuple[float, float, float, float]]],
+) -> list[tuple[float, float]] | None:
+    """Reach a point that is outside the hollow by riding travels the live file already has."""
+    segs = live.get(layer, [])
+    if not segs or len(segs) > 4000:
+        return None
+    nodes: list[tuple[float, float]] = []
+    index_of: dict[tuple[float, float], int] = {}
+
+    def add(px: float, py: float) -> int:
+        key = (round(px, 3), round(py, 3))
+        found = index_of.get(key)
+        if found is not None:
+            return found
+        index_of[key] = len(nodes)
+        nodes.append(key)
+        return index_of[key]
+
+    start_i = add(x0, y0)
+    goal_i = add(x1, y1)
+    for sx0, sy0, sx1, sy1 in segs:
+        add(sx0, sy0)
+        add(sx1, sy1)
+        span = math.hypot(sx1 - sx0, sy1 - sy0)
+        steps = max(1, int(span))
+        for step in range(1, steps):
+            t = step / steps
+            mx = sx0 + (sx1 - sx0) * t
+            my = sy0 + (sy1 - sy0) * t
+            if _point_in_air(layer, mx, my, index):
+                add(mx, my)
+                break
+    bridges: list[tuple[int, int]] = []
+    for px, py in ((x0, y0), (x1, y1)):
+        if _point_in_air(layer, px, py, index):
+            continue
+        entry = _entry_point(layer, px, py, index, walls)
+        if entry is None:
+            continue
+        bridges.append((add(px, py), add(entry[0], entry[1])))
+
+    adj: list[list[tuple[int, list[tuple[float, float]]]]] = [[] for _ in nodes]
+
+    def link(i: int, j: int, poly: list[tuple[float, float]]) -> None:
+        if i != j:
+            adj[i].append((j, poly))
+
+    for sx0, sy0, sx1, sy1 in segs:
+        dx, dy = sx1 - sx0, sy1 - sy0
+        len2 = dx * dx + dy * dy
+        on: list[tuple[float, int]] = []
+        for i, (px, py) in enumerate(nodes):
+            if _point_segment_distance(px, py, sx0, sy0, sx1, sy1) > 0.05:
+                continue
+            t = 0.0 if len2 < 1e-12 else ((px - sx0) * dx + (py - sy0) * dy) / len2
+            on.append((t, i))
+        on.sort()
+        ordered: list[int] = []
+        for _t, i in on:
+            if not ordered or ordered[-1] != i:
+                ordered.append(i)
+        for i, j in zip(ordered, ordered[1:]):
+            poly = [nodes[i], nodes[j]]
+            if _travel_violation(layer, poly[0][0], poly[0][1], poly[1][0], poly[1][1], index, live, walls) is not None:
+                continue
+            link(i, j, poly)
+            link(j, i, [nodes[j], nodes[i]])
+    for i, j in bridges:
+        poly = [nodes[i], nodes[j]]
+        if _travel_violation(layer, poly[0][0], poly[0][1], poly[1][0], poly[1][1], index, live, walls) is not None:
+            continue
+        link(i, j, poly)
+        link(j, i, [nodes[j], nodes[i]])
+    portals = [i for i, point in enumerate(nodes) if _point_in_air(layer, point[0], point[1], index)]
+    if len(portals) >= 2:
+        hub = portals[0]
+        hx, hy = nodes[hub]
+        for i in portals[1:]:
+            path = _route_in_air(layer, hx, hy, nodes[i][0], nodes[i][1], index)
+            if path is None:
+                continue
+            path = _dedupe_path(path)
+            if not _path_clean(layer, path, index, live, walls):
+                continue
+            link(hub, i, path)
+            link(i, hub, list(reversed(path)))
+
+    dist = [1e18] * len(nodes)
+    dist[start_i] = 0.0
+    prev: list[tuple[int, list[tuple[float, float]]] | None] = [None] * len(nodes)
+    heap = [(0.0, start_i)]
+    while heap:
+        cost, i = heapq.heappop(heap)
+        if cost != dist[i]:
+            continue
+        if i == goal_i:
+            break
+        for j, poly in adj[i]:
+            length = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(poly, poly[1:]))
+            nxt = cost + length
+            if nxt < dist[j]:
+                dist[j] = nxt
+                prev[j] = (i, poly)
+                heapq.heappush(heap, (nxt, j))
+    if dist[goal_i] >= 1e17:
+        return None
+    pieces: list[list[tuple[float, float]]] = []
+    cursor = goal_i
+    guard = 0
+    while cursor != start_i:
+        item = prev[cursor]
+        if item is None:
+            return None
+        parent, poly = item
+        pieces.append(poly)
+        cursor = parent
+        guard += 1
+        if guard > len(nodes):
+            return None
+    path: list[tuple[float, float]] = []
+    for poly in reversed(pieces):
+        if not path:
+            path.extend(poly)
+        else:
+            path.extend(poly[1:])
+    cleaned = _dedupe_path(path)
+    if _path_clean(layer, cleaned, index, live, walls):
+        return cleaned
+    if _path_clean(layer, path, index, live, walls):
+        return path
+    return None
+
+
+def _route_confined(
+    layer: int,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    index: dict[tuple[int, int], tuple[float, float]],
+    live: dict[int, list[tuple[float, float, float, float]]],
+    walls: dict[int, list[tuple[float, float, float, float]]],
+) -> list[tuple[float, float]] | None:
+    if math.hypot(x1 - x0, y1 - y0) <= 0.02:
+        return [(round(x1, 3), round(y1, 3))]
+    straight = _dedupe_path([(x0, y0), (x1, y1)])
+    if _path_clean(layer, straight, index, live, walls):
+        return straight
+    if _point_in_air(layer, x0, y0, index) and _point_in_air(layer, x1, y1, index):
+        inner = _route_in_air(layer, x0, y0, x1, y1, index)
+        if inner is not None:
+            inner = _dedupe_path(inner)
+            if _path_clean(layer, inner, index, live, walls):
+                return inner
+    bridged = _route_bridges(layer, x0, y0, x1, y1, index, live, walls)
+    if bridged is not None:
+        return bridged
+    return _route_via_live(layer, x0, y0, x1, y1, index, live, walls)
+
+
 def _confine_added_sparse(before: str, after: str) -> str:
     """Drop added sparse infill that is not inside a previously hollow >=3 mm column.
 
     Kept moves keep their own extrusion length. Absolute E after a dropped
     move is rewritten so the next kept move does not inherit the dropped
-    plastic. Lines before the first drop, and lines after the next G92, stay
-    the bytes the bond already restored.
+    plastic. A dropped extrusion is not left as a travel on that path. The
+    nozzle is brought to the next kept point on a confined travel, so the
+    following extrusion does not stretch across the gap. Lines the bond did
+    not add are copied through, including every outer wall, seam, and layer
+    change.
     """
     if before == after:
         return after
@@ -650,9 +1256,12 @@ def _confine_added_sparse(before: str, after: str) -> str:
     diam = _DIAMETER.search(before)
     diameter = float(diam.group(1)) if diam else 1.75
     area = math.pi * (diameter * 0.5) ** 2
-    index = _hollow_index(_gate_events(before), area, last)
+    events = _gate_events(before)
+    index = _hollow_index(events, area, last)
+    live = _travel_segments(before)
+    walls = _wall_segments(events)
     base_keys: dict[tuple, int] = {}
-    for ev in _gate_events(before):
+    for ev in events:
         key = _segment_key(ev)
         base_keys[key] = base_keys.get(key, 0) + 1
     drop: set[int] = set()
@@ -667,14 +1276,60 @@ def _confine_added_sparse(before: str, after: str) -> str:
         if 1 <= ev["layer"] <= last and _in_hollow(ev, index):
             continue
         drop.add(ev["line"])
-    if not drop:
+    if not drop and sparse_travel_violations(before, after) == {"open_air": 0, "wall_rides": 0}:
         return after
+    added = _added_line_numbers(before, after)
     lines = after.splitlines(keepends=True)
     e_in = Decimal(0)
     e_out = Decimal(0)
     relative = False
+    layer = -1
+    typ: str | None = None
+    x = y = 0.0
+    emitted_x: float | None = None
+    emitted_y: float | None = None
+    diverged = False
+    route_layer = -1
+    route_nl = "\n"
+    buffer: list[str] = []
     kept: list[str] = []
+
+    def emit_route(dest_x: float, dest_y: float) -> None:
+        nonlocal emitted_x, emitted_y
+        if emitted_x is None or emitted_y is None:
+            # No XY has been written yet, so the nozzle is still at the origin
+            # this parser uses. Snapping without a travel would make the next
+            # extrusion start at that origin.
+            emitted_x, emitted_y = 0.0, 0.0
+        if math.hypot(dest_x - emitted_x, dest_y - emitted_y) <= 0.02:
+            emitted_x, emitted_y = dest_x, dest_y
+            return
+        path = _route_confined(route_layer, emitted_x, emitted_y, dest_x, dest_y, index, live, walls)
+        if path is None:
+            path = _dedupe_path([(emitted_x, emitted_y), (dest_x, dest_y)])
+        for px, py in path[1:]:
+            kept.append(f"G1 X{px:.3f} Y{py:.3f} F30000{route_nl}")
+        emitted_x, emitted_y = dest_x, dest_y
+
     for number, line in enumerate(lines, 1):
+        stripped = line.strip()
+        nl = _newline(line) or "\n"
+        if stripped.startswith(";"):
+            if stripped.startswith(";LAYER:"):
+                try:
+                    layer = int(stripped.split(":", 1)[1])
+                except ValueError:
+                    layer += 1
+            elif stripped.startswith(";LAYER_CHANGE"):
+                layer += 1
+            elif stripped.startswith(";TYPE:"):
+                name = stripped[6:].strip()
+                typ = _TYPE_ALIAS.get(name, name)
+            if diverged:
+                buffer.append(line)
+            else:
+                kept.append(line)
+            continue
         code = _split(line)[0]
         cmd = _command(code)
         if cmd.startswith("M83"):
@@ -685,43 +1340,76 @@ def _confine_added_sparse(before: str, after: str) -> str:
         if _is_g92(code) and value is not None:
             e_in = value
             e_out = value
-            kept.append(line)
+            if diverged:
+                buffer.append(line)
+            else:
+                kept.append(line)
             continue
-        if value is not None and (cmd.startswith("G0") or cmd.startswith("G1")):
+        is_move = cmd.startswith("G0") or cmd.startswith("G1")
+        if not is_move:
+            if diverged:
+                buffer.append(line)
+            else:
+                kept.append(line)
+            continue
+        words = dict(_WORD.findall(code))
+        nx = float(words["X"]) if "X" in words else x
+        ny = float(words["Y"]) if "Y" in words else y
+        delta: Decimal | None = None
+        if value is not None:
             if relative:
                 delta = value
             else:
                 delta = value - e_in
                 e_in = value
-            if number in drop:
-                # Keep the XY move as a travel. Deleting it would make the next
-                # extrusion span the gap and lay a thin bead through columns
-                # that were already bonded.
-                if _move_has_xy(code):
-                    kept.append(_strip_e(line))
-                continue
+        moved = abs(nx - x) > 1e-9 or abs(ny - y) > 1e-9
+        extruding = delta is not None and delta > Decimal("0.0000001") and moved
+        file_x, file_y = x, y
+        x, y = nx, ny
+        bad_travel = False
+        if moved and not extruding and number in added and typ == "Sparse infill":
+            bad_travel = diverged or (
+                _travel_violation(layer, file_x, file_y, nx, ny, index, live, walls) is not None
+            )
+        if number in drop or bad_travel:
+            if not diverged:
+                diverged = True
+                route_layer = layer
+                route_nl = nl
+            continue
+        if not moved:
+            if delta is not None:
+                e_out = e_out + delta
+                if not relative and value is not None and e_out != value:
+                    line = _set_e(line, e_out)
+            if diverged:
+                buffer.append(line)
+            else:
+                kept.append(line)
+            continue
+        if diverged or (
+            emitted_x is not None
+            and emitted_y is not None
+            and math.hypot(emitted_x - file_x, emitted_y - file_y) > 0.02
+        ):
+            if not diverged:
+                route_layer = layer
+                route_nl = nl
+            emit_route(file_x, file_y)
+            kept.extend(buffer)
+            buffer.clear()
+            diverged = False
+        elif emitted_x is None:
+            emitted_x, emitted_y = file_x, file_y
+        if delta is not None:
             e_out = e_out + delta
-            if not relative and e_out != value:
+            if not relative and value is not None and e_out != value:
                 line = _set_e(line, e_out)
-            kept.append(line)
-            continue
-        if number in drop:
-            continue
         kept.append(line)
+        emitted_x, emitted_y = nx, ny
+    if buffer:
+        kept.extend(buffer)
     return "".join(kept)
-
-
-def _move_has_xy(code: str) -> bool:
-    words = dict(_WORD.findall(code))
-    return "X" in words or "Y" in words
-
-
-def _strip_e(line: str) -> str:
-    """Remove the extrusion word and leave the XY travel."""
-    code, sep, comment, nl = _split(line)
-    code = _E_TOKEN.sub("", code, count=1)
-    code = re.sub(r"[ \t]{2,}", " ", code).strip()
-    return code + sep + comment + nl
 
 
 def _deposited_mm_scan(text: str) -> Decimal:
@@ -778,5 +1466,21 @@ def _with_filament(before: str, after: str) -> str:
 
     after = _FILAMENT_MM.sub(lambda m: add_to(m, added, "0.01"), after, count=1)
     after = _FILAMENT_CM3.sub(lambda m: add_to(m, added_cm3, "0.01"), after, count=1)
-    after = _FILAMENT_G.sub(lambda m: add_to(m, added_g, "0.01"), after)
+    # One value for both gram lines. Adding the extra to each line separately
+    # can leave `; filament used [g]` and `; total filament used [g]` apart
+    # when their live values were not already the same hundredth.
+    used = _FILAMENT_G_LINE.search(after)
+    total = _FILAMENT_G_TOTAL.search(after)
+    base = Decimal(used.group(2)) if used else (Decimal(total.group(2)) if total else None)
+    if base is None:
+        return after
+    shared = format((base + added_g).quantize(Decimal("0.01")), "f")
+
+    def put(match: re.Match[str]) -> str:
+        return match.group(1) + shared
+
+    if used:
+        after = _FILAMENT_G_LINE.sub(put, after, count=1)
+    if total:
+        after = _FILAMENT_G_TOTAL.sub(put, after, count=1)
     return after

@@ -16,6 +16,7 @@ import sys
 import time
 import unittest
 from collections import Counter, defaultdict
+from decimal import Decimal
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -24,10 +25,13 @@ sys.path.insert(0, str(REPO))
 from server.forefoot_hollow_band import (  # noqa: E402
     _confine_added_sparse,
     _deposited_mm_scan,
+    _with_filament,
     added_sparse_outside_hollow,
     apply_forefoot_hollow_band,
+    gram_footers,
     hollow_column_count,
     scaled_forefoot_window,
+    sparse_travel_violations,
 )
 from server.profile_registry import applied_infill_density, get_profile  # noqa: E402
 from server.slice_engine import slice_stl  # noqa: E402
@@ -36,7 +40,7 @@ from server.slice_overrides import parse_slice_overrides  # noqa: E402
 ORTHOCAD = REPO / "validation" / "test_models" / "orthocad_sample_top_insole.stl"
 SAMPLE = REPO / "validation" / "test_models" / "insole_sample.stl"
 PROFILE = "apex-v2-insole-95a"
-BASE = "d935197976b7cdd2fa89ced4ff43930b0212959f"
+BASE = "d928bdbd53cf0a45ce9a91b275bdc5cd51a77df7"
 SKIN = {"Outer wall", "Overhang wall"}
 Ere = re.compile(r"([XYZEF])([+-]?(?:\d+\.?\d*|\.\d+))")
 FILAMENT_MM = re.compile(r"; filament used \[mm\] = ([0-9.]+)")
@@ -323,12 +327,174 @@ class SparseFillStaysInHollowSections(unittest.TestCase):
             ]
         ) + "\n"
         confined = _confine_added_sparse(skins, added)
-        self.assertEqual(added_sparse_outside_hollow(skins, confined), 0)
-        self.assertIn("X106", confined)
+        self.assertEqual(added_sparse_outside_hollow(skins, confined), 0, confined)
+        self.assertIn("G1 X106 Y2 E0.90000", confined)
         self.assertNotIn("E1.00000", confined)
         self.assertNotIn("E1.10000", confined)
-        self.assertIn("X51", confined)
-        self.assertIn("X106 Y10", confined)
+        self.assertNotIn("X51", confined)
+        self.assertNotIn("X106 Y10", confined)
+        self.assertEqual(sparse_travel_violations(skins, confined), {"open_air": 0, "wall_rides": 0}, confined)
+
+    def test_wall_ride_and_open_air_travels_stay_off_the_outer_wall(self) -> None:
+        skins = "\n".join(
+            [
+                "; layer_height = 0.42",
+                "; filament_diameter: 1.75",
+                "; filament_density: 1.2",
+                "; filament used [mm] = 10.00",
+                "; filament used [cm3] = 1.00",
+                "; filament used [g] = 1.00",
+                "; total filament used [g] = 1.00",
+                "M82",
+                ";LAYER_CHANGE",
+                ";LAYER_CHANGE",
+                ";TYPE:Outer wall",
+                "G1 X100 Y0 F1000",
+                "G1 X110 Y0 E0.40000",
+                "G1 X100 Y4 F30000",
+                "G1 X110 Y4 E0.80000",
+                ";LAYER_CHANGE",
+                ";TYPE:Outer wall",
+                "G1 X112 Y4 E0.90000",
+            ]
+        ) + "\n"
+        # The continuation's absolute E already includes the kept bead (0.05).
+        # The wall-ride and the open-air chord are the travels that must not survive.
+        added = "\n".join(
+            [
+                "; layer_height = 0.42",
+                "; filament_diameter: 1.75",
+                "; filament_density: 1.2",
+                "; filament used [mm] = 10.00",
+                "; filament used [cm3] = 1.00",
+                "; filament used [g] = 1.00",
+                "; total filament used [g] = 1.00",
+                "M82",
+                ";LAYER_CHANGE",
+                ";LAYER_CHANGE",
+                ";TYPE:Outer wall",
+                "G1 X100 Y0 F1000",
+                "G1 X110 Y0 E0.40000",
+                "G1 X100 Y4 F30000",
+                "G1 X110 Y4 E0.80000",
+                ";TYPE:Sparse infill",
+                "G1 X104 Y2 F30000",
+                "G1 X106 Y2 E0.85000",
+                "G1 X100 Y0 F30000",
+                "G1 X110 Y0 F30000",
+                "G1 X50 Y20 F30000",
+                "G1 X110 Y4 F30000",
+                ";TYPE:Outer wall",
+                ";LAYER_CHANGE",
+                ";TYPE:Outer wall",
+                "G1 X112 Y4 E0.95000",
+            ]
+        ) + "\n"
+        confined = _confine_added_sparse(skins, added)
+        self.assertIn("G1 X112 Y4 E0.95000", confined)
+        self.assertIn("G1 X110 Y0 E0.40000", confined)
+        self.assertNotIn("G1 X110 Y0 F30000", confined)
+        self.assertNotIn("X50 Y20", confined)
+        self.assertEqual(added_sparse_outside_hollow(skins, confined), 0, confined)
+        self.assertEqual(sparse_travel_violations(skins, confined), {"open_air": 0, "wall_rides": 0}, confined)
+        self.assertIn(";LAYER_CHANGE", confined)
+
+    def test_a_far_return_follows_a_live_travel(self) -> None:
+        skins = "\n".join(
+            [
+                "; layer_height = 0.42",
+                "; filament_diameter: 1.75",
+                "; filament_density: 1.2",
+                "M82",
+                ";LAYER_CHANGE",
+                ";LAYER_CHANGE",
+                ";TYPE:Outer wall",
+                "G1 X100 Y0 F1000",
+                "G1 X110 Y0 E0.40000",
+                "G1 X100 Y4 F30000",
+                "G1 X110 Y4 E0.80000",
+                "G1 X105 Y2 F15000",
+                "G1 X20 Y20 F15000",
+                ";LAYER_CHANGE",
+                ";TYPE:Outer wall",
+                "G1 X22 Y20 E0.90000",
+            ]
+        ) + "\n"
+        added = "\n".join(
+            [
+                "; layer_height = 0.42",
+                "; filament_diameter: 1.75",
+                "; filament_density: 1.2",
+                "M82",
+                ";LAYER_CHANGE",
+                ";LAYER_CHANGE",
+                ";TYPE:Outer wall",
+                "G1 X100 Y0 F1000",
+                "G1 X110 Y0 E0.40000",
+                "G1 X100 Y4 F30000",
+                "G1 X110 Y4 E0.80000",
+                ";TYPE:Sparse infill",
+                "G1 X104 Y2 F30000",
+                "G1 X106 Y2 E0.85000",
+                "G1 X20 Y20 F30000",
+                ";TYPE:Outer wall",
+                ";LAYER_CHANGE",
+                ";TYPE:Outer wall",
+                "G1 X22 Y20 E0.95000",
+            ]
+        ) + "\n"
+        confined = _confine_added_sparse(skins, added)
+        self.assertIn("G1 X22 Y20 E0.95000", confined)
+        self.assertIn("G1 X110 Y0 E0.40000", confined)
+        self.assertNotIn("G1 X20 Y20 F30000", confined)
+        self.assertEqual(sparse_travel_violations(skins, confined), {"open_air": 0, "wall_rides": 0}, confined)
+
+    def test_gram_footers_match_the_kept_plastic(self) -> None:
+        skins = "\n".join(
+            [
+                "; layer_height = 0.42",
+                "; filament_diameter: 1.75",
+                "; filament_density: 1.2",
+                "; filament used [mm] = 10.00",
+                "; filament used [cm3] = 1.00",
+                "; filament used [g] = 1.00",
+                "; total filament used [g] = 1.01",
+                "M82",
+                ";LAYER_CHANGE",
+                ";LAYER_CHANGE",
+                ";TYPE:Outer wall",
+                "G1 X100 Y0 F1000",
+                "G1 X110 Y0 E0.40000",
+                "G1 X100 Y4 F30000",
+                "G1 X110 Y4 E0.80000",
+            ]
+        ) + "\n"
+        added = skins + "\n".join(
+            [
+                ";TYPE:Sparse infill",
+                "G1 X104 Y2 F30000",
+                "G1 X106 Y2 E10.80000",
+                "G1 X49 Y2 F30000",
+                "G1 X51 Y2 E20.80000",
+            ]
+        ) + "\n"
+        confined = _confine_added_sparse(skins, added)
+        updated = _with_filament(skins, confined)
+        used, total = gram_footers(updated)
+        self.assertIsNotNone(used)
+        self.assertEqual(used, total)
+        kept_mm = _deposited_mm_scan(confined) - _deposited_mm_scan(skins)
+        self.assertEqual(kept_mm, Decimal("10"))
+        added_g = kept_mm * Decimal(str(math.pi)) * (Decimal("1.75") / 2) ** 2 / Decimal(1000) * Decimal("1.2")
+        expected = (Decimal("1.00") + added_g).quantize(Decimal("0.01"))
+        # Live `; total filament used [g]` was 1.01, one hundredth above the
+        # per-filament line. Both footers are rewritten to the same value.
+        self.assertEqual(used, float(expected))
+        rendered = format(expected, "f")
+        self.assertIn(f"; filament used [g] = {rendered}", updated)
+        self.assertIn(f"; total filament used [g] = {rendered}", updated)
+        self.assertIn("; filament used [mm] = 20.00", updated)
+        self.assertNotIn("E20.80000", updated)
 
 
 class ForefootWindow(unittest.TestCase):
@@ -401,6 +567,9 @@ class GenericForefootHollowBand(unittest.TestCase):
             self.assertEqual(row["off_bottom_live"], row["off_bottom_cand"])
             self.assertLessEqual(row["outline_beyond_mm"], 0.02, row)
             self.assertEqual(row["added_sparse_outside_hollow"], 0, row)
+            self.assertEqual(row["travel_open_air"], 0, row)
+            self.assertEqual(row["travel_wall_rides"], 0, row)
+            self.assertEqual(row["filament_g_cand"], row["filament_g_total_cand"], row)
             self.assertGreater(row["filament_mm_cand"], row["filament_mm_live"])
             self.assertFalse(row["vsabs"])
         self.assertTrue(any(line.startswith("M109 S245") for line in forge["temps"]))
@@ -461,6 +630,8 @@ class GenericForefootHollowBand(unittest.TestCase):
         hollow_181, air_181 = _hollow(after, height, 181)
         mm_live, g_live = _filament(before)
         mm_cand, g_cand = _filament(after)
+        _used_g, total_g = gram_footers(after)
+        travels = sparse_travel_violations(before, after)
         row = {
             "material": material,
             "stl": stl.name,
@@ -485,6 +656,9 @@ class GenericForefootHollowBand(unittest.TestCase):
             "filament_mm_cand": mm_cand,
             "filament_g_live": g_live,
             "filament_g_cand": g_cand,
+            "filament_g_total_cand": total_g,
+            "travel_open_air": travels["open_air"],
+            "travel_wall_rides": travels["wall_rides"],
             "bond_165_live": _bond_columns(before, height, 165),
             "bond_165": _bond_columns(after, height, 165),
             "byte_identical": before == after,
