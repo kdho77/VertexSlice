@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "validation"))
 from orca_profile_flatten import flatten_profile  # noqa: E402
 
+from server.material_y_offset import apply_material_y_offset, material_y_offset_mm
 from server.profile_registry import SliceProfile
 
 
@@ -329,6 +330,9 @@ def slice_stl(
         text = gcode_path.read_text(encoding="utf-8", errors="replace")
         text = clear_perimeter_crossings(text)
         text = apply_forefoot_hollow_band(text)
+        # After the band so inserted beads are included, and after the C++ belt
+        # clamp so a negative offset is not forced back to Y0.000.
+        text = apply_material_y_offset(text, material)
         gcode_path.write_text(text, encoding="utf-8")
     gcodes = [gcode_path]
 
@@ -340,6 +344,8 @@ def slice_stl(
         "stderr_tail": proc.stderr[-1500:],
         **placement_stats,
     }
+    if material in ("apex_forge", "apex_bounce"):
+        stats["material_y_offset_mm"] = material_y_offset_mm(material)
     if tmp_owned:
         stats["work_dir"] = str(work_dir)
     return gcodes[0], stats

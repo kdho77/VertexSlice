@@ -22,6 +22,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+from server.material_y_offset import apply_material_y_offset  # noqa: E402
 from server.forefoot_hollow_band import (  # noqa: E402
     _confine_added_sparse,
     _deposited_mm_scan,
@@ -49,9 +50,11 @@ TEMP = re.compile(r"^(M104|M109|M140|M190)\b.*$")
 LAYER_H = re.compile(r"^;\s*layer_height\s*=\s*([0-9.]+)\s*$", re.M)
 
 
+# apex_light.py is not frozen against BASE. The hollow fill already changed it,
+# and the belt Y offset is applied after fill_forefoot_hollow. That call order
+# is locked in tests/test_material_y_offset.py and below.
 _CHAIN_FILES = (
     "server/chains/apex_core.py",
-    "server/chains/apex_light.py",
     "scripts/g2b_heelmod/postprocess_g2b.py",
 )
 
@@ -665,7 +668,9 @@ class GenericForefootHollowBand(unittest.TestCase):
         elapsed = time.perf_counter() - started
         before = seen["before"]
         after = seen["after"]
-        self.assertEqual(produced, after)
+        # The band result is not the file on disk: the nozzle-height shift runs
+        # after apply_forefoot_hollow_band.
+        self.assertEqual(produced, apply_material_y_offset(after, material))
         height = _layer_height(after)
         live_segs = _extrusions(before, height)
         cand_segs = _extrusions(after, height)
@@ -760,6 +765,11 @@ class ApexCoreSources(unittest.TestCase):
             self.skipTest("git is not installed")
         for row in rows:
             self.assertTrue(row["identical_to_base"], row["path"])
+        light = (REPO / "server/chains/apex_light.py").read_text(encoding="utf-8")
+        self.assertLess(
+            light.index("fill_forefoot_hollow(text)"),
+            light.index("apply_material_y_offset("),
+        )
 
 
 if __name__ == "__main__":

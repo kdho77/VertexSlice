@@ -25,6 +25,8 @@ from validation.apex_core import (  # noqa: E402
     PROCESS_OVERRIDES as APEX_CORE_PROCESS_OVERRIDES,
     TARGET_FIRST_LAYER_Y_MM as APEX_CORE_TARGET_FIRST_LAYER_Y_MM,
 )
+from server.material_y_offset import MATERIAL_Y_OFFSET_MM  # noqa: E402
+
 PROFILES = REPO_ROOT / "resources" / "profiles" / "IdeaFormer"
 MACHINE = PROFILES / "machine" / "Vertex Apex V2 1.0 nozzle.json"
 FILAMENT_95A = PROFILES / "filament" / "VERTEX_APEX_CORE_95A.json"
@@ -44,6 +46,8 @@ class MaterialSpec:
     filament_overrides: dict = field(default_factory=dict)
     default_wall_loops: int | None = None
     target_first_layer_y_mm: float | None = None
+    # Physical belt-Y change applied in final G-code. 0 leaves the file untouched.
+    material_y_offset_mm: float = 0.0
     gcode_postprocess: Callable[[str], str] | None = None
 
 
@@ -59,6 +63,7 @@ _MATERIALS: dict[str, MaterialSpec] = {
         filament_overrides=dict(APEX_CORE_FILAMENT_OVERRIDES),
         default_wall_loops=APEX_CORE_WALL_LOOPS,
         target_first_layer_y_mm=APEX_CORE_TARGET_FIRST_LAYER_Y_MM,
+        material_y_offset_mm=0.0,
     ),
     "apex_forge": MaterialSpec(
         material_id="apex_forge",
@@ -66,6 +71,7 @@ _MATERIALS: dict[str, MaterialSpec] = {
         filament=PROFILES / "filament" / "ApexForge.json",
         nozzle_c=245,
         bed_c=0,
+        material_y_offset_mm=MATERIAL_Y_OFFSET_MM["apex_forge"],
     ),
     "apex_bounce": MaterialSpec(
         material_id="apex_bounce",
@@ -73,6 +79,7 @@ _MATERIALS: dict[str, MaterialSpec] = {
         filament=PROFILES / "filament" / "ApexBounce.json",
         nozzle_c=225,
         bed_c=60,
+        material_y_offset_mm=MATERIAL_Y_OFFSET_MM["apex_bounce"],
     ),
     "apex_light": MaterialSpec(
         material_id="apex_light",
@@ -84,6 +91,7 @@ _MATERIALS: dict[str, MaterialSpec] = {
         machine_overrides=dict(APEX_LIGHT_MACHINE_OVERRIDES),
         default_wall_loops=APEX_LIGHT_WALL_LOOPS,
         target_first_layer_y_mm=APEX_LIGHT_TARGET_FIRST_LAYER_Y_MM,
+        material_y_offset_mm=MATERIAL_Y_OFFSET_MM["apex_light"],
     ),
 }
 
