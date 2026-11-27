@@ -120,6 +120,47 @@ Candidate ApexLight is this SHA's `fill_forefoot_hollow` on the same live file `
 | C ApexCore | PASS | Stamp-stripped SHA256 `0557d875933ce16a24151b2e4c6e88275528d44ce7b5b1b19cdd6bf6e12d7107` matches the #46 file. |
 | Overall | FAIL | H, G1, and G2. Forefoot hollow is no longer 0. |
 
+## Worker grade of `ac1a4103`
+
+Draft #54 moved again. New head `ac1a4103712c9688f2d8ccc7a6aa2544ff930c39` (`Comb every forefoot hollow through the inset interior of the insole`). The commit changes `server/chains/apex_light_forefoot_fill.py` and its test. Against the worker base `d928bdbd53` the branch is still only `server/chains/apex_light.py`, `server/chains/apex_light_forefoot_fill.py`, and `tests/test_apex_light_forefoot_fill.py`. `scripts/g2b_heelmod` matches `d935197`. ApexCore is not in the fill commits. Hashed gate files were not edited. `sha256sum -c SHA256SUMS` still matches.
+
+Candidate ApexLight is this SHA's `fill_forefoot_hollow` on the same live file `f0b78d8dc4f57b8acee18cf9929f60ca4eaa44b8b796a9cbba608c30cdcab3e1`. The function reported hollow_before 1387, hollow_after 0, 35 layers, added 71.14956 mm, wall time 3.969 s. Its own extrusion counter is 1730, which is the 1630 extrusion events below plus 100 primes. Output 3121156 bytes, sha256 `a2b8af2e68f5ce29a67149bee7cf684ff0d292c7c284f8e713a807300c974c0c`. Slice clock 162.641 s = 158.672 + 3.969. PM-host equivalent 180.028 s. Candidate ApexCore is the #46 file. A fresh slice of the rebased tree was not run.
+
+```bash
+python3 validation/apexlight_hollow_gates/run_gates.py \
+  --light-base live_apex_light_orthocad.gcode \
+  --light-cand cand_apex_light_ac1a4103.gcode \
+  --core-base cand_apex_core_orthocad.gcode \
+  --core-cand cand_apex_core_orthocad.gcode \
+  --slice-seconds 162.641
+```
+
+Exit 1. Overall FAIL. Hollow is closed again. The frozen counts match `83c943ba` and `098c389d`.
+
+| Gate | Result | Residual |
+|---|---|---|
+| H hollow | PASS | Forefoot layers <= 165: 0 (previous head 841, live 1387). Physical window 165: 0. Total 4296, all on layers > 165. Max air 11.633 mm. |
+| G1 | FAIL | 14377 / 14813 unbonded. Median gap +0.340 mm. Equal to live and to `098c389d`. |
+| G2 | FAIL | 8604 / 9003 unbonded. Live was 8648. Previous head was 8627. Belt air 91.236%. Dorsal air 81.806%. |
+| S surface | PASS | 30774 wall segments, 436 seams, 0 missing, 0 added, 0 off the bottom. 0 layer changes moved. |
+| F filament | PASS | Live 26227.75 mm, 75.70 g. Candidate 26298.90 mm, 75.91 g. Increase 71.15 mm. 1630 added extrusions, 0 bad type, 0 outside a hollow section, 0 outside the outline. |
+| T slice time | PASS | 162.641 s (cap 260 s). |
+| C ApexCore | PASS | Stamp-stripped SHA256 `0557d875933ce16a24151b2e4c6e88275528d44ce7b5b1b19cdd6bf6e12d7107` matches the #46 file. |
+| Overall | FAIL | G1 and G2. Forefoot hollow is 0 again. |
+
+Line check outside the frozen script: 0 live lines before the end `G91` are missing, in order (116681 live, 119094 candidate). 878 `;LAYER_CHANGE` / `;Z:` / `G1 Z` station lines byte-identical. Added retracts 100, added primes 100, 0 removed. Added travels 268, all Sparse infill, 0 change Z, 0 removed. 107 of 268 have a sample outside a previously hollow column at the gate's 0.25 mm step. 117 of 268 do at 0.01 mm. Both gram lines read 75.91.
+
+| Required bar | Result | Evidence |
+|---|---|---|
+| Every live seam and layer-change station byte-identical | PASS | 878 station lines equal. Surface gate: 0 seams added or missing, 0 layer changes moved. |
+| No new off-bottom layer changes | PASS | `layer_changes_moved` 0. `layer_changes_off_bottom` 0. No added travel changes Z. |
+| Forefoot hollow 0 at the frozen layers | PASS | `forefoot_165` 0. `physical_count` 0. 4296 hollow columns remain above layer 165. |
+| Added or altered moves only infill or bond inside previously hollow forefoot sections | FAIL | No live motion line was removed. Added extrusions stay inside hollow columns. 107 of 268 added Sparse infill travels do not, at 0.25 mm. |
+| Filament rule | PASS | Frozen F. Increase 71.15 mm. 0 outside the outline. Gram lines agree at 75.91. |
+| G1 and G2 no worse than live | PASS | G1 equal to live. G2 8604 is below live 8648. Neither is 0. |
+| Slice time not worse than 260 s | PASS | 162.641 s. |
+| ApexCore byte-identical to live, stamp exempt | PASS | Normalized sha256 matches. |
+
 ## Rule compliance
 
 This agent wrote gates only. It did not implement a hollow fill and did not change any G-code that would be printed.
@@ -178,7 +219,7 @@ PASS. No fill was implemented.
 
 **Header: FINISH A draft gates PR, B this rule report, C worker grade when the worker exists.**
 
-A and B are this PR. C for `83c943ba` and `098c389d` are the earlier tables. C for the current head `513f924c936b090b2e053ece7ab79bc0697ccd4d` is the latest table: overall FAIL. Forefoot hollow is 841, G1 is 14377 / 14813, and G2 is 8627 / 9003. S, F, T, and C pass.
+A and B are this PR. C for `83c943ba`, `098c389d`, and `513f924c` are the earlier tables. C for the current head `ac1a4103712c9688f2d8ccc7a6aa2544ff930c39` is the latest table: overall FAIL. Forefoot hollow is 0, G1 is 14377 / 14813, and G2 is 8604 / 9003. S, F, T, and C pass.
 
 ## Rule compliance for the grade of 83c943ba
 
