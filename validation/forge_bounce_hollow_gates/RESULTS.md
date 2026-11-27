@@ -154,3 +154,34 @@ Actions run [45517874520](https://github.com/kdho77/VertexSlice/actions/runs/455
 | Seam-fuse gates G1 G3-G8 | FAIL |
 
 Same seam-fuse failures already recorded for `e359a446` and for main run [45295959179](https://github.com/kdho77/VertexSlice/actions/runs/45295959179): G3, G4, and orthocad G7, plus G8 because `validation/forge_bounce_hollow_gates/` is outside the frozen allow-list. G8 also reports one existing workflow line removed or edited, which main already reports. Not retried. The hashed gate files were not edited.
+
+## Worker `4360a79762c7b6c0b8f4c93b435d8a13d27b8a9e`
+
+Overall **FAIL**. Draft [PR #51](https://github.com/kdho77/VertexSlice/pull/51) head. The branch was rebased onto main `d928bdbd53cf0a45ce9a91b275bdc5cd51a77df7`. This commit changes `server/forefoot_hollow_band.py` and `tests/test_forefoot_hollow_band.py`. Against that main, the PR diff is those two files plus `server/slice_engine.py`. Graded with the frozen gates. `sha256sum -c SHA256SUMS` matched the freeze. Hashed gate files were not edited.
+
+Candidate and live slices are `server.slice_stl` on the orca-slicer binary from Actions run 45295959179. Live is this main's `server/` at `d928bdbd53`, which does not contain the forefoot band. Same fixture and overrides as the earlier grades. ApexForge and ApexBounce match. Between `d935197` and `d928bdbd53`, `server/slice_engine.py` is unchanged; the main delta under `server/` is `app.py`, `build_info.py`, and `threemf_modifiers.py`. The live G-code from this main is not the same size as the `d935197` slices, so the bond counts below are against this main, not against the earlier 1474/5833 and 2776/2968 figures.
+
+This main, unsliced, is hollow FAIL 189 at L<=165 and 275 at L<=181, G1 FAIL 1494/5828, G2 FAIL 2766/2949 (belt air 65.683%, dorsal air 81.112%).
+
+| Gate | ApexForge | ApexBounce | ApexCore |
+|---|---|---|---|
+| Hollow L<=165 / L<=181 | PASS 0 / 0 | PASS 0 / 0 | reported 136 / 136 (not a pass line) |
+| G1 | FAIL 1494/5828 | FAIL 1494/5828 | reported 1/15456 (not a pass line) |
+| G2 | FAIL 2766/2949, belt 65.683%, dorsal 80.943% | FAIL, same | reported 1/8423 (not a pass line) |
+| Surface | PASS | PASS | PASS |
+| Filament | PASS 24291.26 mm / 70.11 g -> 24322.58 mm / 70.20 g | PASS, same | PASS 29764.83 mm / 85.91 g, increase 0 |
+| Slice time | PASS 14.845 s | PASS 14.465 s | PASS 9.615 s |
+| Identity | — | — | PASS |
+| Shared path | PASS | PASS | — |
+
+Hollow remaining after layer 165 is 4473 on both materials, max air 16.007 mm. That air is outside the required window.
+
+G1 is 1494/5828. That equals this main's live count. The frozen pass line is still 0. First residuals: layer 132 x-bin 268, layer 129 x-bin 276, layer 132 x-bin 281.
+
+G2 is 2766/2949, belt air 65.683282%, dorsal air 80.942692%. The unbonded count equals this main. Dorsal air on the unsliced main is 81.112241% at that same count. The frozen pass line is still 0. First residuals: layer 151 x-bin 281, layer 150 x-bin 322, layer 161 x-bin 331. The earlier `baa2c087` count of 2440/2968 was measured on `d935197` and is not the same live file.
+
+Filament increased 31.32 mm / 0.09 g. Added extrusions are sparse infill (240, none of another type, none more than 0.02 mm outside the live outline, none outside a previously hollow section of at least 3 mm). The filament rule PASSes.
+
+Surface lock holds: 36247 locked segments, delta 0, no closed-loop start moved, no layer change moved. ApexCore surface is 52858 locked segments, delta 0. ApexCore identity PASS, 3331886 bytes on both files, one stamp line ignored. The ApexCore G1 residual of 1 and G2 residual of 1 are on the live file as well. Shared path PASS: both hollow pass lines match, and the diff against `d928bdbd53` names both materials.
+
+Slice wall-clock is under the 260 s cap. ApexBounce is still M109 S225 and M190 S60. ApexForge is M109 S245 with no bed wait. This grade did not retune temperature or speed.
