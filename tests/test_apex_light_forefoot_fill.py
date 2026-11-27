@@ -14,8 +14,10 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from server.chains.apex_light_forefoot_fill import (  # noqa: E402
+    _CHECK_MM,
     _collect_networks,
     _g2b,
+    _sample_confined,
     _segment_confined,
     fill_forefoot_hollow,
     hollow_columns,
@@ -90,6 +92,17 @@ def _grams(body: str) -> tuple[str | None, str | None]:
         elif line.startswith("; total filament used [g] = "):
             total = line.split("=", 1)[1].strip()
     return used, total
+
+
+def _dense_confined(hollow, layer, x0, y0, x1, y1, net) -> bool:
+    """Every 0.01 mm sample is in a hollow column, the inset interior, or on a live travel."""
+    length = math.hypot(x1 - x0, y1 - y0)
+    count = max(1, int(math.ceil(length / _CHECK_MM)))
+    for index in range(count):
+        t = (index + 0.5) / count
+        if not _sample_confined(hollow, layer, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, net):
+            return False
+    return True
 
 
 def _added_travels(original: str, new: str):
@@ -234,13 +247,16 @@ class ForefootHollowFillTest(unittest.TestCase):
         self.assertGreater(len(travels), 0)
         for layer, x0, y0, x1, y1 in travels:
             self.assertTrue(
-                _segment_confined(hollow, layer, x0, y0, x1, y1, nets[layer]),
+                _dense_confined(hollow, layer, x0, y0, x1, y1, nets[layer]),
                 (layer, x0, y0, x1, y1),
             )
         # The bottom outer-wall bead is not a combing path. Neither is an
         # open chord that leaves the hollow and misses the live travel.
         self.assertFalse(_segment_confined(hollow, 1, 100.0, 0.40, 160.0, 0.40, nets[1]))
         self.assertFalse(_segment_confined(hollow, 1, 140.0, 4.0, 220.0, 4.0, nets[1]))
+        # 0.073 mm outside the column face is inside the wall bead, not a route.
+        gap = hollow[(1, int(math.floor(130.0 / 0.25)))]
+        self.assertFalse(_dense_confined(hollow, 1, 120.0, gap[0] - 0.073, 125.0, gap[0] - 0.073, nets[1]))
 
     def test_a_second_pocket_is_not_reached_along_the_wall(self) -> None:
         # The live travel crosses only the left box. The right box is hollow
@@ -279,6 +295,47 @@ class ForefootHollowFillTest(unittest.TestCase):
         self.assertGreater(len(right_bins), 0)
         after = hollow_columns(g2b._parse_moves(new.splitlines(keepends=True), reset_type=False)["segs"], 1)
         self.assertTrue(any(key in after for key in right_bins))
+
+    def test_offset_pocket_is_filled_and_travels_stay_inside(self) -> None:
+        # The live travel never enters the left-hand hollow. It comes up inside
+        # the same outer wall, through columns an infill bead already closed.
+        # The fill has to comb across that interior. Open air and the wall bead
+        # are still not a route. Samples are every 0.01 mm.
+        wall = _loop(
+            [(100.0, 0.40), (220.0, 0.40), (220.0, 8.40), (100.0, 8.40)],
+            0.92,
+            "Outer wall",
+        )
+        wall.append(";TYPE:Sparse infill\n")
+        wall.append(";WIDTH:1\n")
+        # Along the bottom bead, then up at x=170, which the infill bead closes.
+        # The hollow to the left of that bead is not on this travel.
+        wall.append("G1 X170.000 Y0.400 F12720\n")
+        wall.append("G1 X170.000 Y4.000\n")
+        wall.append(f"G1 X210.000 Y4.000 E{_e_for(40.0):.5f}\n")
+        text = _program([[";LAYER_CHANGE\n", ";Z:0.46000\n"], wall])
+        new, stats = fill_forefoot_hollow(text, last_layer=1)
+        self.assertTrue(stats["applied"])
+        self.assertGreater(stats["hollow_before"], 0)
+        self.assertEqual(stats["hollow_after"], 0)
+        used, total = _grams(new)
+        self.assertEqual(used, total)
+        self.assertNotEqual(used, "0.03")
+        g2b = _g2b()
+        lines = text.splitlines(keepends=True)
+        parsed = g2b._parse_moves(lines, reset_type=False)
+        hollow = hollow_columns(parsed["segs"], 1)
+        nets = _collect_networks(lines, parsed["segs"], hollow, 1)
+        travels = list(_added_travels(text, new))
+        self.assertGreater(len(travels), 0)
+        for layer, x0, y0, x1, y1 in travels:
+            self.assertTrue(
+                _dense_confined(hollow, layer, x0, y0, x1, y1, nets[layer]),
+                (layer, x0, y0, x1, y1),
+            )
+        # The bottom bead, and a chord that leaves the loop, are not confined.
+        self.assertFalse(_dense_confined(hollow, 1, 100.0, 0.40, 220.0, 0.40, nets[1]))
+        self.assertFalse(_dense_confined(hollow, 1, 140.0, 4.0, 260.0, 4.0, nets[1]))
 
     def test_layer_change_and_seam_lines_stay_byte_identical(self) -> None:
         text = _program([[";LAYER_CHANGE\n", ";Z:0.46000\n"], _thick()])

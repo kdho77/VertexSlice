@@ -1,17 +1,19 @@
 """Fill ApexLight forefoot hollows with Cura's sparse gyroid.
 
 This is the band fill already in ``postprocess_g2b`` (``_band_paths`` and
-``_band_block``): gyroid pieces in the empty columns. Each pocket is inserted
-at the live non-extruding travel that already meets it, not at the layer-end
-wall point. An added travel stays inside those columns, or within 0.02 mm of
-a non-extruding XY travel already in the file. It does not ride an outer or
-overhang wall bead, follow an extrusion centerline, or cut a chord across
-open air. Every existing line is copied unchanged. Nothing is extruded into a
-section the 0.25 mm hollow tool does not already call empty (outer thickness
->= 3 mm, air > 1 mm, no non-skin plastic in the air). Skins, seams, and
-layer-change lines are not rewritten, so their stations stay the bytes the
-slicer wrote. The ``; total filament used [g]`` footer is rewritten to the
-same grams as ``; filament used [g]``.
+``_band_block``): gyroid pieces in the empty columns. Every hollow column is
+filled. The block is spliced onto a live non-extruding travel and the nozzle
+is brought back to that splice point before the original line runs. The path
+from that travel into the pocket is combed inside the insole: inside the
+outer-wall loop, inset clear of every outer and overhang wall bead. An added
+travel stays in a hollow column, on a live non-extruding travel (within 0.02
+mm), or in that inset interior. It does not ride an outer or overhang wall
+bead and it does not cross open air outside the loop. Every existing line is
+copied unchanged. Nothing is extruded into a section the 0.25 mm hollow tool
+does not already call empty (outer thickness >= 3 mm, air > 1 mm, no non-skin
+plastic in the air). Skins, seams, and layer-change lines are not rewritten,
+so their stations stay the bytes the slicer wrote. The ``; total filament
+used [g]`` footer is rewritten to the same grams as ``; filament used [g]``.
 
 ApexCore does not import this module. ``finalize_apex_light`` runs first;
 this pass only sees the file that pass already emitted.
@@ -21,6 +23,7 @@ from __future__ import annotations
 import heapq
 import math
 import sys
+from collections import deque
 from pathlib import Path
 
 _COLUMN_MM = 0.25
@@ -259,6 +262,11 @@ def _newline(lines: list[str]) -> str:
 
 _ON_PATH_MM = 0.02
 _HOLLOW_SLACK = 0.05
+_CHECK_MM = 0.01
+_GRID_MM = 0.25
+# Grid cells stay this far outside an outer/overhang bead. Acceptance is the
+# tighter 0.02 mm, so a chord between two cells still clears the bead.
+_BEAD_MARGIN = 0.05
 
 
 def _rnd(v: float) -> float:
@@ -290,25 +298,101 @@ def _near_any(x: float, y: float, segs, tol: float) -> bool:
 
 
 def _sample_count(x0: float, y0: float, x1: float, y1: float) -> int:
-    return max(1, int(math.ceil(math.hypot(x1 - x0, y1 - y0) / _COLUMN_MM)))
+    return max(1, int(math.ceil(math.hypot(x1 - x0, y1 - y0) / _CHECK_MM)))
 
 
 def _in_hollow(hollow, layer: int, x: float, y: float) -> bool:
+    """Strictly on the closed column. The face is inside; past the face is not."""
     gap = hollow.get((layer, int(math.floor(x / _COLUMN_MM))))
-    return gap is not None and gap[0] - _HOLLOW_SLACK <= y <= gap[1] + _HOLLOW_SLACK
+    return gap is not None and gap[0] <= y <= gap[1]
+
+
+def _point_in_poly(poly, x: float, y: float) -> bool:
+    inside = False
+    j = len(poly) - 1
+    for i in range(len(poly)):
+        xi, yi = poly[i]
+        xj, yj = poly[j]
+        if (yi > y) != (yj > y):
+            xint = (xj - xi) * (y - yi) / (yj - yi) + xi
+            if x < xint:
+                inside = not inside
+        j = i
+    return inside
+
+
+def _chain_loops(segments, tol: float = 0.08) -> list[list[tuple[float, float]]]:
+    """Closed outer-wall loops. A gap bigger than ``tol`` ends the chain."""
+    unused = [tuple(seg) for seg in segments]
+    loops = []
+    while unused:
+        x0, y0, x1, y1 = unused.pop()
+        poly = [(x0, y0), (x1, y1)]
+        while math.hypot(poly[-1][0] - poly[0][0], poly[-1][1] - poly[0][1]) > tol:
+            bx, by = poly[-1]
+            best = None
+            for index, (ax, ay, bx2, by2) in enumerate(unused):
+                for end, other in (((ax, ay), (bx2, by2)), ((bx2, by2), (ax, ay))):
+                    dist = math.hypot(end[0] - bx, end[1] - by)
+                    if best is None or dist < best[0]:
+                        best = (dist, index, other)
+            if best is None or best[0] > tol:
+                break
+            unused.pop(best[1])
+            poly.append(best[2])
+        if math.hypot(poly[-1][0] - poly[0][0], poly[-1][1] - poly[0][1]) <= tol and len(poly) >= 4:
+            loops.append(poly)
+    return loops
+
+
+def _wall_clearance(walls, x: float, y: float) -> float:
+    """Signed distance outside the nearest outer/overhang bead. Negative is inside the bead."""
+    best = 1e18
+    for x0, y0, x1, y1, radius, xa, xb, ya, yb in walls:
+        if xb < x - 3.0 or xa > x + 3.0 or yb < y - 3.0 or ya > y + 3.0:
+            continue
+        dist = _dist_seg(x, y, x0, y0, x1, y1) - radius
+        if dist < best:
+            best = dist
+    return best
+
+
+def _in_interior(net: dict, x: float, y: float) -> bool:
+    """Inside the wall loop and at least 0.02 mm clear of every outer/overhang bead."""
+    walls = net.get("walls")
+    polys = net.get("polys")
+    if not walls or not polys:
+        return False
+    if _wall_clearance(walls, x, y) < _ON_PATH_MM:
+        return False
+    return any(_point_in_poly(poly, x, y) for poly in polys)
 
 
 def _sample_confined(hollow, layer: int, x: float, y: float, net: dict) -> bool:
-    """Inside a hollow column, or within 0.02 mm of a live non-extruding travel.
+    """Hollow column, inset interior, or within 0.02 mm of a live non-extruding travel.
 
-    A wall bead and an extrusion centerline are not that travel.
+    An outer or overhang wall bead is not a route, and neither is open air
+    outside the wall loop.
     """
     if _in_hollow(hollow, layer, x, y):
         return True
-    return _near_any(x, y, net["travels"], _ON_PATH_MM)
+    if _in_interior(net, x, y):
+        return True
+    return _near_any(x, y, net.get("travels", ()), _ON_PATH_MM)
+
+
+def _on_same_travel(x0: float, y0: float, x1: float, y1: float, travels, tol: float) -> bool:
+    """Both ends lie in the capsule of one live travel, so the chord does too."""
+    for seg in travels:
+        if _dist_seg(x0, y0, *seg) <= tol and _dist_seg(x1, y1, *seg) <= tol:
+            return True
+    return False
 
 
 def _segment_confined(hollow, layer: int, x0: float, y0: float, x1: float, y1: float, net: dict) -> bool:
+    travels = net.get("travels", ())
+    if travels and _on_same_travel(x0, y0, x1, y1, travels, _ON_PATH_MM):
+        return True
     n = _sample_count(x0, y0, x1, y1)
     for i in range(n):
         t = (i + 0.5) / n
@@ -386,26 +470,23 @@ def _inside_poly(hollow, layer: int, start, dest) -> list[tuple[float, float]] |
             return None
         lo = max(gap[0], ngap[0])
         hi = min(gap[1], ngap[1])
-        if lo > hi:
-            lo = max(gap[0], ngap[0]) - _HOLLOW_SLACK
-            hi = min(gap[1], ngap[1]) + _HOLLOW_SLACK
-        if lo > hi:
+        if hi - lo < 0.004:
             return None
-        # Stay off the exact edges so a midpoint still lands in the gap.
-        pad = min(_HOLLOW_SLACK * 0.5, max(0.0, (hi - lo) * 0.25))
+        # Stay off the exact edges so a 0.01 mm sample still lands in the gap.
+        pad = min(0.02, max(0.002, (hi - lo) * 0.25))
         ny = min(max(y1, lo + pad), hi - pad)
         boundary = nxt * _COLUMN_MM if step > 0 else binn * _COLUMN_MM
         # Vertical move inside the current bin, then across the shared edge.
-        vx = min(max(pts[-1][0], binn * _COLUMN_MM + 1e-3), (binn + 1) * _COLUMN_MM - 1e-3)
+        vx = min(max(pts[-1][0], binn * _COLUMN_MM + 0.002), (binn + 1) * _COLUMN_MM - 0.002)
         if abs(vx - pts[-1][0]) > 1e-6:
             pts.append((vx, pts[-1][1]))
         if abs(ny - pts[-1][1]) > 1e-6:
             pts.append((vx, ny))
-        hx = boundary - 1e-3 * step
+        hx = boundary - 0.002 * step
         pts.append((hx, ny))
         y = ny
         binn = nxt
-    end_x = min(max(x1, b1 * _COLUMN_MM + 1e-3), (b1 + 1) * _COLUMN_MM - 1e-3)
+    end_x = min(max(x1, b1 * _COLUMN_MM + 0.002), (b1 + 1) * _COLUMN_MM - 0.002)
     if abs(pts[-1][0] - end_x) > 1e-6 or abs(pts[-1][1] - y) > 1e-6:
         pts.append((end_x, y))
     if abs(y - y1) > 1e-6:
@@ -430,57 +511,154 @@ def _straight_inside(hollow, layer, x0, y0, x1, y1) -> bool:
     return True
 
 
-def _best_dock(travels, hollow, layer: int, bins: list[int]):
-    """Closest live-travel point to this component, and a point inside it.
+def _simplify_path(points, hollow, layer: int, net: dict):
+    """Drop waypoints whose chord stays inside the hollow, the interior, or a live travel."""
+    rounded = []
+    for px, py in points:
+        point = (round(px, 3), round(py, 3))
+        if not rounded or math.hypot(point[0] - rounded[-1][0], point[1] - rounded[-1][1]) > 1e-9:
+            rounded.append(point)
+    if len(rounded) < 2:
+        return rounded
 
-    The link is a legal added travel only when that distance is within 0.02 mm.
-    Sampling is 0.01 mm so a travel that merely grazes a column is not missed.
+    def visible(a, b) -> bool:
+        return _segment_confined(hollow, layer, rounded[a][0], rounded[a][1], rounded[b][0], rounded[b][1], net)
+
+    out = [rounded[0]]
+    index = 0
+    last = len(rounded) - 1
+    while index < last:
+        if not visible(index, index + 1):
+            return None
+        dest = index + 1
+        leap = 1
+        while dest < last:
+            nxt = min(last, dest + leap)
+            if nxt == dest or not visible(index, nxt):
+                break
+            dest = nxt
+            leap = min(leap * 2, 16)
+        while dest < last and visible(index, dest + 1):
+            dest += 1
+        out.append(rounded[dest])
+        index = dest
+    return out
+
+
+def _interior_docks(hollow, layer: int, travels, walls, polys) -> dict:
+    """A combing path from a live travel to every hollow component the interior can reach.
+
+    The path stays inside the outer-wall loop and at least 0.05 mm clear of every
+    outer and overhang bead, except where it is already inside a hollow column or
+    on the live travel it leaves from.
     """
-    wanted = set(bins)
-    xa0 = bins[0] * _COLUMN_MM - _ON_PATH_MM
-    xb0 = (bins[-1] + 1) * _COLUMN_MM + _ON_PATH_MM
-    ylo = min(hollow[(layer, b)][0] for b in bins) - _HOLLOW_SLACK - _ON_PATH_MM
-    yhi = max(hollow[(layer, b)][1] for b in bins) + _HOLLOW_SLACK + _ON_PATH_MM
-    best = None
-    for index, (x0, y0, x1, y1) in enumerate(travels):
-        if max(x0, x1) < xa0 or min(x0, x1) > xb0 or max(y0, y1) < ylo or min(y0, y1) > yhi:
+    if not walls or not polys or not travels:
+        return {}
+    xs = [coord for wall in walls for coord in (wall[0], wall[2])]
+    ys = [coord for wall in walls for coord in (wall[1], wall[3])]
+    origin_x = math.floor(min(xs) / _GRID_MM) * _GRID_MM
+    origin_y = math.floor(min(ys) / _GRID_MM) * _GRID_MM
+    span_x = math.ceil(max(xs) / _GRID_MM) * _GRID_MM
+    span_y = math.ceil(max(ys) / _GRID_MM) * _GRID_MM
+    nx = int(round((span_x - origin_x) / _GRID_MM)) + 1
+    ny = int(round((span_y - origin_y) / _GRID_MM)) + 1
+    if nx < 2 or ny < 2 or nx * ny > 200000:
+        return {}
+
+    def cell_of(px: float, py: float) -> tuple[int, int]:
+        return (
+            int(round((px - origin_x) / _GRID_MM)),
+            int(round((py - origin_y) / _GRID_MM)),
+        )
+
+    free = set()
+    for ix in range(nx):
+        px = origin_x + ix * _GRID_MM
+        for iy in range(ny):
+            py = origin_y + iy * _GRID_MM
+            if _wall_clearance(walls, px, py) < _BEAD_MARGIN:
+                continue
+            if any(_point_in_poly(poly, px, py) for poly in polys):
+                free.add((ix, iy))
+    for (lay, binn), (lo, hi) in hollow.items():
+        if lay != layer:
             continue
-        dx, dy = x1 - x0, y1 - y0
-        length = math.hypot(dx, dy)
-        steps = max(1, int(math.ceil(length / 0.01)))
+        cell = cell_of((binn + 0.5) * _COLUMN_MM, 0.5 * (lo + hi))
+        if 0 <= cell[0] < nx and 0 <= cell[1] < ny:
+            free.add(cell)
+    travel_at = {}
+    for index, (x0, y0, x1, y1) in enumerate(travels):
+        length = math.hypot(x1 - x0, y1 - y0)
+        steps = max(1, int(math.ceil(length / _GRID_MM)))
         for step in range(steps + 1):
             t = step / steps
-            px = x0 + dx * t
-            py = y0 + dy * t
-            binn = int(math.floor(px / _COLUMN_MM))
-            for near in (binn - 1, binn, binn + 1):
-                if near not in wanted:
-                    continue
-                lo, hi = hollow[(layer, near)]
-                xa, xb = near * _COLUMN_MM, (near + 1) * _COLUMN_MM
-                ya, yb = lo - _HOLLOW_SLACK, hi + _HOLLOW_SLACK
-                qx = min(max(px, xa), xb)
-                qy = min(max(py, ya), yb)
-                dist = math.hypot(px - qx, py - qy)
-                if best is None or dist < best[0]:
-                    best = (dist, index, (px, py), (qx, qy), near)
-    if best is None or best[0] > _ON_PATH_MM:
-        return None
-    _dist, index, on_travel, clamped, near = best
-    lo, hi = hollow[(layer, near)]
-    xa, xb = near * _COLUMN_MM, (near + 1) * _COLUMN_MM
-    cx = min(max(clamped[0], xa + 1e-3), xb - 1e-3)
-    ya = lo - _HOLLOW_SLACK + 1e-3
-    yb = hi + _HOLLOW_SLACK - 1e-3
-    cy = min(max(clamped[1], ya), yb) if ya <= yb else 0.5 * (lo + hi)
-    if not _in_hollow(hollow, layer, cx, cy):
-        return None
-    if not _segment_confined(hollow, layer, on_travel[0], on_travel[1], cx, cy, {"travels": travels}):
-        return None
-    return index, on_travel, (cx, cy)
+            px = x0 + (x1 - x0) * t
+            py = y0 + (y1 - y0) * t
+            if _wall_clearance(walls, px, py) < _BEAD_MARGIN:
+                continue
+            if not any(_point_in_poly(poly, px, py) for poly in polys):
+                continue
+            cell = cell_of(px, py)
+            if cell in free and cell not in travel_at:
+                travel_at[cell] = (index, px, py)
+    if not travel_at:
+        return {}
+    dist = {cell: 0 for cell in travel_at}
+    parent = {}
+    queue = deque(travel_at)
+    while queue:
+        cell = queue.popleft()
+        ix, iy = cell
+        base = dist[cell]
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nxt = (ix + dx, iy + dy)
+            if nxt in free and nxt not in dist:
+                dist[nxt] = base + 1
+                parent[nxt] = cell
+                queue.append(nxt)
+    net = {"travels": travels, "walls": walls, "polys": polys}
+    docks = {}
+    for cid, comp in enumerate(_components(hollow, layer)):
+        best = None
+        for binn in comp:
+            lo, hi = hollow[(layer, binn)]
+            cell = cell_of((binn + 0.5) * _COLUMN_MM, 0.5 * (lo + hi))
+            if cell not in dist:
+                continue
+            if best is None or dist[cell] < best[0]:
+                best = (dist[cell], cell, binn)
+        if best is None:
+            continue
+        _distance, cell, binn = best
+        chain = [cell]
+        guard = 0
+        while cell not in travel_at and guard <= nx * ny:
+            cell = parent[cell]
+            chain.append(cell)
+            guard += 1
+        if cell not in travel_at:
+            continue
+        chain.reverse()
+        index, tx, ty = travel_at[chain[0]]
+        lo, hi = hollow[(layer, binn)]
+        inside = (
+            round((binn + 0.5) * _COLUMN_MM, 3),
+            round(min(max(0.5 * (lo + hi), lo + 0.002), hi - 0.002), 3),
+        )
+        if not _in_hollow(hollow, layer, inside[0], inside[1]):
+            continue
+        points = [(round(tx, 3), round(ty, 3))]
+        for cx, cy in chain[1:]:
+            points.append((round(origin_x + cx * _GRID_MM, 3), round(origin_y + cy * _GRID_MM, 3)))
+        points.append(inside)
+        path = _simplify_path(points, hollow, layer, net)
+        if not path or len(path) < 2:
+            continue
+        docks[cid] = (path[-1], path[0], index, path)
+    return docks
 
 
-def _layer_network(hollow, layer: int, travels, meta: list[dict]) -> dict:
+def _layer_network(hollow, layer: int, travels, meta: list[dict], walls, polys) -> dict:
     comps = _components(hollow, layer)
     bin_comp = {}
     for cid, bins in enumerate(comps):
@@ -490,16 +668,11 @@ def _layer_network(hollow, layer: int, travels, meta: list[dict]) -> dict:
     for x0, y0, x1, y1 in travels:
         _link(adj, _node(x0, y0), _node(x1, y1), math.hypot(x1 - x0, y1 - y0))
     docks = {}
-    for cid, bins in enumerate(comps):
-        hit = _best_dock(travels, hollow, layer, bins)
-        if hit is None:
-            continue
-        index, on_travel, inside = hit
-        qx, qy = on_travel
-        cx, cy = inside
+    for cid, (inside, on_travel, index, path) in _interior_docks(hollow, layer, travels, walls, polys).items():
         x0, y0, x1, y1 = travels[index]
-        _split_segment(adj, x0, y0, x1, y1, qx, qy, 1.0)
-        _link(adj, _node(cx, cy), _node(qx, qy), math.hypot(qx - cx, qy - cy))
+        _split_segment(adj, x0, y0, x1, y1, on_travel[0], on_travel[1], 1.0)
+        for start, dest in zip(path, path[1:]):
+            _link(adj, _node(*start), _node(*dest), math.hypot(dest[0] - start[0], dest[1] - start[1]))
         docks[cid] = (inside, on_travel, index)
     return {
         "adj": adj,
@@ -507,15 +680,17 @@ def _layer_network(hollow, layer: int, travels, meta: list[dict]) -> dict:
         "docks": docks,
         "bin_comp": bin_comp,
         "travel_meta": meta,
+        "walls": walls,
+        "polys": polys,
     }
 
 
 def _collect_networks(lines: list[str], segs: list[dict], hollow, last_layer: int) -> dict[int, dict]:
-    """Live non-extruding XY travels, with the line where each one starts.
+    """Live non-extruding XY travels, plus the inset interior those travels can comb through.
 
-    ``segs`` is unused. Wall beads and extrusion centerlines are not a route.
+    Outer and overhang beads are the boundary the combing stays inside of. They
+    are not themselves a route, and neither are extrusion centerlines.
     """
-    del segs
     travels: dict[int, list] = {}
     meta: dict[int, list] = {}
     layer = -1
@@ -555,12 +730,24 @@ def _collect_networks(lines: list[str], segs: list[dict], hollow, last_layer: in
         if "F" in words:
             feed = words["F"]
         x, y = nx, ny
+    walls: dict[int, list] = {}
+    for seg in segs:
+        lay = seg["layer"]
+        if lay < 1 or lay > last_layer or seg["type"] not in ("Outer wall", "Overhang wall"):
+            continue
+        x0, y0, x1, y1 = seg["x0"], seg["y0"], seg["x1"], seg["y1"]
+        radius = seg["w"] * 0.5
+        walls.setdefault(lay, []).append(
+            (x0, y0, x1, y1, radius, min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1))
+        )
     out = {}
     layers = {lay for (lay, _b) in hollow if 1 <= lay <= last_layer}
     for lay in layers:
         if lay < 1 or lay > last_layer:
             continue
-        out[lay] = _layer_network(hollow, lay, travels.get(lay, []), meta.get(lay, []))
+        layer_walls = walls.get(lay, [])
+        polys = _chain_loops([(w[0], w[1], w[2], w[3]) for w in layer_walls])
+        out[lay] = _layer_network(hollow, lay, travels.get(lay, []), meta.get(lay, []), layer_walls, polys)
     return out
 
 
@@ -653,11 +840,11 @@ def _emit_travel(g2b, points, feed: str | None, nl: str) -> list[str]:
 
 
 def _confine_block(block: list[str], layer: int, start, net: dict, hollow, g2b, nl: str) -> list[str]:
-    """Replace sparse-infill travels that leave the hollow columns.
+    """Replace sparse-infill travels that leave the hollow, the inset interior, or a live travel.
 
-    A kept segment stays inside a hollow column or within 0.02 mm of a live
-    non-extruding travel. There is no wall-bead or centerline fallback: a
-    pocket with no such route is left unfilled.
+    A kept segment is sampled every 0.01 mm. It has to sit in a hollow column,
+    inside the wall loop and clear of outer/overhang beads, or within 0.02 mm
+    of a live non-extruding travel. A pocket with no such route is left unfilled.
     """
     if not net:
         return None
@@ -860,8 +1047,9 @@ def fill_forefoot_hollow(text: str, last_layer: int | None = None) -> tuple[str,
         net = networks.get(lay)
         if not net:
             continue
-        # One pocket at a time, spliced onto the live travel that already meets it.
-        # The nozzle is put back on that travel's start, so the original line is unchanged.
+        # One pocket at a time. The block is spliced onto the live travel the
+        # interior path leaves from, and the nozzle is back on that line's start
+        # before the original move runs.
         for cid, bins in enumerate(_components(hollow, lay)):
             dock = net["docks"].get(cid)
             if dock is None:
